@@ -1,0 +1,950 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © npg
+
+//@version=5
+indicator("NQ Statistical Mapper", "Stats Mapper", true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------- Inputs --------------------------------------------------
+
+var g_SESS = "========= Trading Sessions =========="
+show_sesa = input(true, '', inline='sesa', group=g_SESS)
+sesa_txt = input('New York', '', inline='sesa', group=g_SESS)
+sesa_css = input.color(color.rgb(255, 0, 55), '', inline='sesa', group=g_SESS)
+
+show_sesb = input(true, '', inline='sesb', group=g_SESS)
+sesb_txt = input('London', '', inline='sesb', group=g_SESS)
+sesb_css = input.color(color.rgb(33, 87, 243), '', inline='sesb', group=g_SESS)
+
+show_sesc = input(true, '', inline='sesc', group=g_SESS)
+sesc_txt = input('Asia', '', inline='sesc', group=g_SESS)
+sesc_css = input.color(color.rgb(255, 152, 0), '', inline='sesc', group=g_SESS)
+
+bg_transp = input.float(90, 'Range Area Transparency', group=g_SESS)
+show_outline = input(true, 'Range Outline', group=g_SESS)
+
+var g_LEVELS = "========= Hit Rate Levels =========="
+show_hit_levels = input(true, "Show Session Levels", group=g_LEVELS)
+show_intraday_levels = input(true, "Show Intraday Levels (NY only)", group=g_LEVELS)
+level_color = input.color(color.rgb(128, 128, 128), "Intraday Level Color", group=g_LEVELS)
+hourly_line_width = input.int(1, "Intraday Level Line Width", minval=1, maxval=5, group=g_LEVELS)
+hourly_line_style = input.string("Dashed", "Intraday Level Line Style", options=["Solid", "Dashed", "Dotted"], group=g_LEVELS)
+session_line_width = input.int(1, "Session High/Low Line Width", minval=1, maxval=5, group=g_LEVELS)
+session_line_style = input.string("Solid", "Session High/Low Line Style", options=["Solid", "Dashed", "Dotted"], group=g_LEVELS)
+label_text_size = input.string("small", "Label Text Size", options=["tiny", "small", "normal", "large"], group=g_LEVELS)
+
+var g_TABLES = "========= Table Settings ========="
+show_stats_table = input(true, "Show Statistics Table", group=g_TABLES)
+stats_table_pos = input.string("Bottom Right", "Stats Table Position", 
+     options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", 
+              "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+stats_table_size = input.string("Small", "Stats Table Size", 
+     options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+
+// ---------------------------------------------- Helper Functions --------------------------------------------------
+
+get_line_style(style_string) =>
+    switch style_string
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+get_label_size(size_string) =>
+    switch size_string
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        => size.small
+
+// ---------------------------------------------- Sessions --------------------------------------------------
+
+get_range(session, session_name, session_css)=>
+    var t = 0 
+    var max = high
+    var min = low
+    var sess_open = open
+    var box bx = na
+    var int start_idx = na
+    
+    if session > session[1]
+        t := time
+        max := high
+        min := low
+        sess_open := open
+        start_idx := bar_index
+        bx := box.new(bar_index, max, bar_index, min, 
+             bgcolor=color.new(session_css, bg_transp), 
+             border_color=show_outline ? session_css : na, 
+             border_style=line.style_dotted)
+    
+    if session and session == session[1]
+        max := math.max(high, max)
+        min := math.min(low, min)
+        box.set_top(bx, max)
+        box.set_rightbottom(bx, bar_index, min)
+    
+    [session ? na : max, session ? na : min, sess_open, start_idx]
+
+tf = timeframe.period
+var tz = "America/New_York"
+is_sesa = math.sign(nz(time(tf, "0800-1600", tz)))
+is_sesb = math.sign(nz(time(tf, "0200-0800", tz)))
+is_sesc = math.sign(nz(time(tf, "2000-0200", tz)))
+is_7to8 = math.sign(nz(time(tf, "0700-0800", tz)))
+is_2to3 = math.sign(nz(time(tf, "0200-0300", tz)))
+is_midnight = math.sign(nz(time(tf, "0000-0100", tz)))
+
+// Session Variables
+var float max_sesa = na
+var float min_sesa = na
+var float open_sesa = na
+var int sesa_start_idx = na
+
+var float max_sesb = na
+var float min_sesb = na
+var float open_sesb = na
+var int sesb_start_idx = na
+
+var float max_sesc = na
+var float min_sesc = na
+var float open_sesc = na
+var int sesc_start_idx = na
+
+var float max_7to8 = na
+var float min_7to8 = na
+var float max_2to3 = na
+var float min_2to3 = na
+var float midnight_open_price = na
+
+// London session tracking (tracks Asia levels)
+var string london_first_hit = "none"
+var bool london_seq_hit_asia_high = false
+var bool london_seq_hit_asia_low = false
+
+// Track whether Asia high/low were hit during London session
+// Persists into NY session to select the correct Section 8 hit rate
+var bool asia_high_hit_in_london = false
+var bool asia_low_hit_in_london = false
+
+// NY session tracking (tracks London levels + intraday)
+var string ny_first_hit = "none"
+var bool ny_seq_hit_london_high = false
+var bool ny_seq_hit_london_low = false
+var bool ny_seq_hit_7to8_mid = false
+var bool ny_seq_hit_midnight_open = false
+var bool ny_seq_hit_2to3_mid = false
+
+// Track whether Asia high/low are hit during NY session (for label deletion + table status)
+var bool asia_high_hit_in_ny = false
+var bool asia_low_hit_in_ny = false
+
+// Get hourly data
+if is_7to8 and is_7to8 > is_7to8[1]
+    max_7to8 := high
+    min_7to8 := low
+else if is_7to8
+    max_7to8 := math.max(high, max_7to8)
+    min_7to8 := math.min(low, min_7to8)
+
+if is_2to3 and is_2to3 > is_2to3[1]
+    max_2to3 := high
+    min_2to3 := low
+else if is_2to3
+    max_2to3 := math.max(high, max_2to3)
+    min_2to3 := math.min(low, min_2to3)
+
+if is_midnight and is_midnight > is_midnight[1]
+    midnight_open_price := open
+
+// Session Ranges
+if show_sesa
+    [max, min, sess_open, start] = get_range(is_sesa, sesa_txt, sesa_css)
+    max_sesa := max
+    min_sesa := min
+    open_sesa := sess_open
+    sesa_start_idx := start
+
+if show_sesb
+    [max, min, sess_open, start] = get_range(is_sesb, sesb_txt, sesb_css)
+    max_sesb := max
+    min_sesb := min
+    open_sesb := sess_open
+    sesb_start_idx := start
+
+if show_sesc
+    [max, min, sess_open, start] = get_range(is_sesc, sesc_txt, sesc_css)
+    max_sesc := max
+    min_sesc := min
+    open_sesc := sess_open
+    sesc_start_idx := start
+
+// Reset London flags at start of London session
+if is_sesb and is_sesb > is_sesb[1]
+    london_first_hit := "none"
+    london_seq_hit_asia_high := false
+    london_seq_hit_asia_low := false
+    asia_high_hit_in_london := false
+    asia_low_hit_in_london := false
+
+// Reset NY flags at start of NY session
+if is_sesa and is_sesa > is_sesa[1]
+    ny_first_hit := "none"
+    ny_seq_hit_london_high := false
+    ny_seq_hit_london_low := false
+    ny_seq_hit_7to8_mid := false
+    ny_seq_hit_midnight_open := false
+    ny_seq_hit_2to3_mid := false
+    asia_high_hit_in_ny := false
+    asia_low_hit_in_ny := false
+
+// Track first hit during LONDON session (Asia levels)
+if is_sesb and london_first_hit == "none"
+    if not na(max_sesc) and high >= max_sesc
+        london_first_hit := "asia_high"
+    else if not na(min_sesc) and low <= min_sesc
+        london_first_hit := "asia_low"
+
+// Track sequential hits during LONDON session
+if is_sesb and london_first_hit != "none"
+    if london_first_hit == "asia_high"
+        if not na(min_sesc) and low <= min_sesc
+            london_seq_hit_asia_low := true
+    else if london_first_hit == "asia_low"
+        if not na(max_sesc) and high >= max_sesc
+            london_seq_hit_asia_high := true
+
+// Track Asia high/low hit status throughout entire London session
+if is_sesb
+    if not na(max_sesc) and high >= max_sesc
+        asia_high_hit_in_london := true
+    if not na(min_sesc) and low <= min_sesc
+        asia_low_hit_in_london := true
+
+// Track first hit during NY session (London levels ONLY)
+if is_sesa and ny_first_hit == "none"
+    if not na(max_sesb) and high >= max_sesb
+        ny_first_hit := "london_high"
+    else if not na(min_sesb) and low <= min_sesb
+        ny_first_hit := "london_low"
+
+// Track sequential hits during NY session
+if is_sesa and ny_first_hit != "none"
+    if ny_first_hit == "london_high"
+        if not na(min_sesb) and low <= min_sesb
+            ny_seq_hit_london_low := true
+    else if ny_first_hit == "london_low"
+        if not na(max_sesb) and high >= max_sesb
+            ny_seq_hit_london_high := true
+
+// Track intraday levels during NY session
+if is_sesa
+    if not na(max_7to8) and not na(min_7to8)
+        mid_7to8 = (max_7to8 + min_7to8) / 2
+        if low <= mid_7to8 and mid_7to8 <= high
+            ny_seq_hit_7to8_mid := true
+    
+    if not na(midnight_open_price)
+        if low <= midnight_open_price and midnight_open_price <= high
+            ny_seq_hit_midnight_open := true
+    
+    if not na(max_2to3) and not na(min_2to3)
+        mid_2to3 = (max_2to3 + min_2to3) / 2
+        if low <= mid_2to3 and mid_2to3 <= high
+            ny_seq_hit_2to3_mid := true
+
+    // FIX: Use ta.crossover/ta.crossunder for Asia level hits during NY.
+    // This fires exactly once when price genuinely crosses the level,
+    // requires no open-based gap guards, and correctly handles price
+    // approaching from either direction.
+    if not na(max_sesc) and ta.crossover(high, max_sesc)
+        asia_high_hit_in_ny := true
+    if not na(min_sesc) and ta.crossunder(low, min_sesc)
+        asia_low_hit_in_ny := true
+
+// ---------------------------------------------- Pattern Detection --------------------------------------------------
+
+get_session_pattern(max_sesb, min_sesb, max_sesc, min_sesc) =>
+    var string pattern = ""
+    if not na(max_sesb) and not na(min_sesb) and not na(max_sesc) and not na(min_sesc)
+        if max_sesb > max_sesc and min_sesb < min_sesc
+            pattern := "London Engulfs Asia"
+        else if max_sesc >= max_sesb and min_sesc <= min_sesb
+            pattern := "Asia Engulfs London"
+        else if max_sesb > max_sesc and min_sesb >= min_sesc
+            pattern := "London Partial Up"
+        else if max_sesb <= max_sesc and min_sesb < min_sesc
+            pattern := "London Partial Down"
+    pattern
+
+// ---------------------------------------------- Statistical Data --------------------------------------------------
+
+get_london_vs_asia_stats(position) =>
+    hit_high_pct = position == "above" ? 73.84 : 25.54
+    hit_low_pct = position == "above" ? 20.39 : 68.75
+    sample_size = position == "above" ? 1785 : 1347
+    [hit_high_pct, hit_low_pct, sample_size]
+
+get_london_sequential_stats(position, first_hit) =>
+    seq_pct = 0.0
+    if position == "above"
+        seq_pct := first_hit == "asia_high" ? 25.27 : 29.67
+    else
+        seq_pct := first_hit == "asia_high" ? 25.29 : 29.48
+    seq_pct
+
+get_ny_vs_london_midpoint_stats(position) =>
+    london_high_first_pct = position == "above" ? 76.68 : 25.94
+    london_low_first_pct = position == "above" ? 22.48 : 73.32
+    sample_size = position == "above" ? 1775 : 1357
+    [london_high_first_pct, london_low_first_pct, sample_size]
+
+get_ny_sequential_london_stats(position, first_hit) =>
+    seq_pct = 0.0
+    if position == "above"
+        seq_pct := first_hit == "london_high" ? 47.98 : 46.87
+    else
+        seq_pct := first_hit == "london_high" ? 46.31 : 49.15
+    seq_pct
+
+get_hit_rates(ny_position, pattern) =>
+    hit_7to8_mid = 94.19
+    hit_midnight = 73.75
+    hit_2to3_mid = 76.68
+    
+    if ny_position == "above"
+        hit_7to8_mid := 94.42
+        hit_midnight := 72.39
+        hit_2to3_mid := 76.79
+    else if ny_position == "below"
+        hit_7to8_mid := 93.88
+        hit_midnight := 75.53
+        hit_2to3_mid := 76.57
+    
+    if pattern == "London Engulfs Asia"
+        if ny_position == "above"
+            hit_7to8_mid := 93.61
+            hit_midnight := 77.89
+            hit_2to3_mid := 74.94
+        else
+            hit_7to8_mid := 94.61
+            hit_midnight := 81.14
+            hit_2to3_mid := 76.65
+    else if pattern == "Asia Engulfs London"
+        if ny_position == "above"
+            hit_7to8_mid := 97.20
+            hit_midnight := 85.98
+            hit_2to3_mid := 91.59
+        else
+            hit_7to8_mid := 97.92
+            hit_midnight := 85.42
+            hit_2to3_mid := 88.54
+    else if pattern == "London Partial Up"
+        if ny_position == "above"
+            hit_7to8_mid := 94.53
+            hit_midnight := 62.61
+            hit_2to3_mid := 70.42
+        else
+            hit_7to8_mid := 93.77
+            hit_midnight := 87.82
+            hit_2to3_mid := 87.82
+    else if pattern == "London Partial Down"
+        if ny_position == "above"
+            hit_7to8_mid := 94.25
+            hit_midnight := 86.30
+            hit_2to3_mid := 90.14
+        else
+            hit_7to8_mid := 92.86
+            hit_midnight := 63.07
+            hit_2to3_mid := 67.60
+    
+    [hit_7to8_mid, hit_midnight, hit_2to3_mid]
+
+get_asia_in_ny_stats(level, hit_in_london) =>
+    rate = 0.0
+    if level == "asia_high"
+        rate := hit_in_london ? 78.41 : 59.69
+    else if level == "asia_low"
+        rate := hit_in_london ? 78.54 : 54.64
+    rate
+
+get_current_session() =>
+    if is_sesa
+        "New York"
+    else if is_sesb
+        "London"
+    else if is_sesc
+        "Asia"
+    else
+        "None"
+
+// ---------------------------------------------- Current Conditions --------------------------------------------------
+
+var string london_vs_asia = "unknown"
+var string ny_vs_london = "unknown"
+var string current_pattern = "unknown"
+
+if not na(max_sesc) and not na(min_sesc) and not na(open_sesb)
+    asia_mid = (max_sesc + min_sesc) / 2
+    london_vs_asia := open_sesb > asia_mid ? "above" : "below"
+
+if not na(max_sesb) and not na(min_sesb) and not na(open_sesa)
+    london_mid = (max_sesb + min_sesb) / 2
+    ny_vs_london := open_sesa > london_mid ? "above" : "below"
+
+if not na(max_sesb) and not na(min_sesb) and not na(max_sesc) and not na(min_sesc)
+    current_pattern := get_session_pattern(max_sesb, min_sesb, max_sesc, min_sesc)
+
+// ---------------------------------------------- Draw Hit Rate Levels --------------------------------------------------
+
+var line line_asia_high = na
+var label label_asia_high = na
+var line line_asia_low = na
+var label label_asia_low = na
+var line line_london_high = na
+var label label_london_high = na
+var line line_london_low = na
+var label label_london_low = na
+var line line_7to8_mid = na
+var label label_7to8_mid = na
+var line line_midnight = na
+var label label_midnight = na
+var line line_2to3_mid = na
+var label label_2to3_mid = na
+
+if show_hit_levels
+    sess_line_style = get_line_style(session_line_style)
+    lbl_size = get_label_size(label_text_size)
+
+    // -----------------------------------------------------------------------
+    // ASIA SESSION END: draw Asia High/Low lines with London first-hit probs
+    // -----------------------------------------------------------------------
+    if not na(max_sesc) and is_sesc[1] and not is_sesc
+        var int asia_end_bar = na
+        asia_end_bar := bar_index
+
+        [london_hit_asia_high_pct, london_hit_asia_low_pct, london_sample] = get_london_vs_asia_stats(london_vs_asia)
+
+        line.delete(line_asia_high)
+        label.delete(label_asia_high)
+        line_asia_high := line.new(asia_end_bar, max_sesc, asia_end_bar, max_sesc, color=sesc_css, style=sess_line_style, width=session_line_width)
+        label_asia_high := label.new(asia_end_bar, max_sesc, str.format("Asia High: {0,number,#.##}%", london_hit_asia_high_pct),
+             style=label.style_none, textcolor=sesc_css, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+        line.delete(line_asia_low)
+        label.delete(label_asia_low)
+        line_asia_low := line.new(asia_end_bar, min_sesc, asia_end_bar, min_sesc, color=sesc_css, style=sess_line_style, width=session_line_width)
+        label_asia_low := label.new(asia_end_bar, min_sesc, str.format("Asia Low: {0,number,#.##}%", london_hit_asia_low_pct),
+             style=label.style_none, textcolor=sesc_css, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+    // -----------------------------------------------------------------------
+    // DURING LONDON: update Asia labels based on first-hit status
+    // -----------------------------------------------------------------------
+    if is_sesb and london_first_hit != "none"
+        if london_first_hit == "asia_high"
+            if not na(label_asia_low)
+                seq_pct = get_london_sequential_stats(london_vs_asia, london_first_hit)
+                label.set_text(label_asia_low, str.format("Asia Low: {0,number,#.##}%", seq_pct))
+        else if london_first_hit == "asia_low"
+            if not na(label_asia_high)
+                seq_pct = get_london_sequential_stats(london_vs_asia, london_first_hit)
+                label.set_text(label_asia_high, str.format("Asia High: {0,number,#.##}%", seq_pct))
+
+    // Extend Asia lines during London session
+    if is_sesb
+        curr_bar = bar_index
+        if not na(line_asia_high)
+            line.set_x2(line_asia_high, curr_bar)
+            if not na(label_asia_high)
+                label.set_x(label_asia_high, curr_bar)
+        if not na(line_asia_low)
+            line.set_x2(line_asia_low, curr_bar)
+            if not na(label_asia_low)
+                label.set_x(label_asia_low, curr_bar)
+
+    // -----------------------------------------------------------------------
+    // LONDON SESSION END: switch Asia labels to NY hit rates (Section 8)
+    // -----------------------------------------------------------------------
+    if not na(max_sesb) and is_sesb[1] and not is_sesb
+        var int london_end_bar = na
+        london_end_bar := bar_index
+
+        if not na(label_asia_high)
+            asia_high_ny_rate = get_asia_in_ny_stats("asia_high", asia_high_hit_in_london)
+            label.set_text(label_asia_high, str.format("Asia High: {0,number,#.##}%", asia_high_ny_rate))
+
+        if not na(label_asia_low)
+            asia_low_ny_rate = get_asia_in_ny_stats("asia_low", asia_low_hit_in_london)
+            label.set_text(label_asia_low, str.format("Asia Low: {0,number,#.##}%", asia_low_ny_rate))
+
+        [ny_hit_london_high_pct, ny_hit_london_low_pct, ny_sample] = get_ny_vs_london_midpoint_stats(ny_vs_london)
+
+        line.delete(line_london_high)
+        label.delete(label_london_high)
+        line_london_high := line.new(london_end_bar, max_sesb, london_end_bar, max_sesb, color=sesb_css, style=sess_line_style, width=session_line_width)
+        label_london_high := label.new(london_end_bar, max_sesb, str.format("London High: {0,number,#.##}%", ny_hit_london_high_pct),
+             style=label.style_none, textcolor=sesb_css, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+        line.delete(line_london_low)
+        label.delete(label_london_low)
+        line_london_low := line.new(london_end_bar, min_sesb, london_end_bar, min_sesb, color=sesb_css, style=sess_line_style, width=session_line_width)
+        label_london_low := label.new(london_end_bar, min_sesb, str.format("London Low: {0,number,#.##}%", ny_hit_london_low_pct),
+             style=label.style_none, textcolor=sesb_css, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+    // -----------------------------------------------------------------------
+    // DURING NY: manage label visibility and London label updates
+    // -----------------------------------------------------------------------
+    if is_sesa
+        // Delete Asia labels only once the level is genuinely crossed in NY
+        if not na(max_sesc) and asia_high_hit_in_ny and not na(label_asia_high)
+            label.delete(label_asia_high)
+        if not na(min_sesc) and asia_low_hit_in_ny and not na(label_asia_low)
+            label.delete(label_asia_low)
+
+        // Update London labels based on first-hit status
+        if ny_first_hit != "none"
+            if ny_first_hit == "london_high"
+                label.delete(label_london_high)
+                if not na(label_london_low)
+                    seq_pct = get_ny_sequential_london_stats(ny_vs_london, ny_first_hit)
+                    label.set_text(label_london_low, str.format("London Low: {0,number,#.##}%", seq_pct))
+            else if ny_first_hit == "london_low"
+                label.delete(label_london_low)
+                if not na(label_london_high)
+                    seq_pct = get_ny_sequential_london_stats(ny_vs_london, ny_first_hit)
+                    label.set_text(label_london_high, str.format("London High: {0,number,#.##}%", seq_pct))
+
+    // Extend all lines during NY session
+    is_4pm = math.sign(nz(time(tf, "1600-1601", tz)))
+
+    if is_sesa or is_4pm
+        curr_bar = bar_index
+
+        if not na(line_asia_high)
+            line.set_x2(line_asia_high, curr_bar)
+        if not na(line_asia_low)
+            line.set_x2(line_asia_low, curr_bar)
+        if not na(label_asia_high)
+            label.set_x(label_asia_high, curr_bar)
+        if not na(label_asia_low)
+            label.set_x(label_asia_low, curr_bar)
+        if not na(line_london_high)
+            line.set_x2(line_london_high, curr_bar)
+            if not na(label_london_high)
+                label.set_x(label_london_high, curr_bar)
+        if not na(line_london_low)
+            line.set_x2(line_london_low, curr_bar)
+            if not na(label_london_low)
+                label.set_x(label_london_low, curr_bar)
+        if not na(line_7to8_mid)
+            line.set_x2(line_7to8_mid, curr_bar)
+            if not na(label_7to8_mid)
+                label.set_x(label_7to8_mid, curr_bar)
+        if not na(line_midnight)
+            line.set_x2(line_midnight, curr_bar)
+            if not na(label_midnight)
+                label.set_x(label_midnight, curr_bar)
+        if not na(line_2to3_mid)
+            line.set_x2(line_2to3_mid, curr_bar)
+            if not na(label_2to3_mid)
+                label.set_x(label_2to3_mid, curr_bar)
+
+// Draw intraday levels at 8am open (NY session only)
+if show_intraday_levels and show_hit_levels and is_sesa and bar_index - sesa_start_idx == 0
+    hourly_style = get_line_style(hourly_line_style)
+    lbl_size = get_label_size(label_text_size)
+
+    [hit_7to8, hit_mid, hit_2to3] = get_hit_rates(ny_vs_london, current_pattern)
+
+    end_bar = bar_index
+
+    if not na(max_7to8) and not na(min_7to8)
+        mid_7to8 = (max_7to8 + min_7to8) / 2
+        line.delete(line_7to8_mid)
+        label.delete(label_7to8_mid)
+        line_7to8_mid := line.new(bar_index, mid_7to8, end_bar, mid_7to8, color=level_color, style=hourly_style, width=hourly_line_width)
+        label_7to8_mid := label.new(end_bar, mid_7to8, str.format("7-8AM Mid: {0,number,#.##}%", hit_7to8),
+             style=label.style_none, textcolor=level_color, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+    if not na(midnight_open_price)
+        line.delete(line_midnight)
+        label.delete(label_midnight)
+        line_midnight := line.new(bar_index, midnight_open_price, end_bar, midnight_open_price, color=level_color, style=hourly_style, width=hourly_line_width)
+        label_midnight := label.new(end_bar, midnight_open_price, str.format("Midnight: {0,number,#.##}%", hit_mid),
+             style=label.style_none, textcolor=level_color, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+    if not na(max_2to3) and not na(min_2to3)
+        mid_2to3 = (max_2to3 + min_2to3) / 2
+        line.delete(line_2to3_mid)
+        label.delete(label_2to3_mid)
+        line_2to3_mid := line.new(bar_index, mid_2to3, end_bar, mid_2to3, color=level_color, style=hourly_style, width=hourly_line_width)
+        label_2to3_mid := label.new(end_bar, mid_2to3, str.format("2-3AM Mid: {0,number,#.##}%", hit_2to3),
+             style=label.style_none, textcolor=level_color, size=lbl_size, textalign=text.align_left, text_font_family=font.family_monospace)
+
+// ---------------------------------------------- Statistics Table --------------------------------------------------
+
+get_table_position(pos) =>
+    switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+if show_stats_table and (is_sesb or is_sesa)
+    var table stats_table = na
+    table.delete(stats_table[1])
+
+    table_pos = get_table_position(stats_table_pos)
+    table_size = get_table_text_size(stats_table_size)
+
+    header_bg = color.rgb(64, 64, 64)
+    subheader_bg = color.rgb(96, 96, 96)
+    header_text = color.white
+    cell_bg = color.white
+    cell_text = color.rgb(64, 64, 64)
+    validated_bg = color.teal
+    validated_text = color.white
+    possible_bg = color.yellow
+    possible_text = color.rgb(64, 64, 64)
+
+    current_session = get_current_session()
+
+    stats_table := table.new(table_pos, 3, 28, border_width=1, border_color=color.rgb(64, 64, 64), bgcolor=cell_bg)
+
+    row = 0
+
+    // ===== LONDON SESSION TABLE =====
+    if is_sesb
+        bool show_sequential = london_first_hit != "none"
+
+        table.cell(stats_table, 0, row, "━━━ LONDON SESSION ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Active", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, current_session, bgcolor=sesb_css, text_color=color.white,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "━━━ SETUP ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "London vs Asia Mid", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("Opens {0}", london_vs_asia), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        [london_hit_asia_high_pct, london_hit_asia_low_pct, london_sample] = get_london_vs_asia_stats(london_vs_asia)
+
+        table.cell(stats_table, 0, row, "━━━ FIRST HIT PROBABILITIES ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, str.format("Sample: {0} days", london_sample),
+             bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Level", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "Probability", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "Status", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Asia High First", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", london_hit_asia_high_pct), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg = london_first_hit == "asia_high" ? validated_bg : (london_first_hit == "none" ? possible_bg : cell_bg)
+        val_text = london_first_hit == "asia_high" ? validated_text : (london_first_hit == "none" ? possible_text : color.rgb(160, 160, 160))
+        val_label = london_first_hit == "asia_high" ? "Hit ✓" : (london_first_hit == "none" ? "Pending" : "Invalidated")
+        table.cell(stats_table, 2, row, val_label, bgcolor=val_bg, text_color=val_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Asia Low First", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", london_hit_asia_low_pct), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg := london_first_hit == "asia_low" ? validated_bg : (london_first_hit == "none" ? possible_bg : cell_bg)
+        val_text := london_first_hit == "asia_low" ? validated_text : (london_first_hit == "none" ? possible_text : color.rgb(160, 160, 160))
+        val_label := london_first_hit == "asia_low" ? "Hit ✓" : (london_first_hit == "none" ? "Pending" : "Invalidated")
+        table.cell(stats_table, 2, row, val_label, bgcolor=val_bg, text_color=val_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        if show_sequential
+            target_level = london_first_hit == "asia_high" ? "Asia Low" : "Asia High"
+            target_validated = london_first_hit == "asia_high" ? london_seq_hit_asia_low : london_seq_hit_asia_high
+            seq_pct = get_london_sequential_stats(london_vs_asia, london_first_hit)
+
+            table.cell(stats_table, 0, row, "━━━ SEQUENTIAL HIT ━━━", bgcolor=header_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.merge_cells(stats_table, 0, row, 2, row)
+            row := row + 1
+
+            first_hit_label = london_first_hit == "asia_high" ? "Asia High" : "Asia Low"
+            table.cell(stats_table, 0, row, str.format("✓ {0} hit first", first_hit_label),
+                 bgcolor=validated_bg, text_color=validated_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.merge_cells(stats_table, 0, row, 2, row)
+            row := row + 1
+
+            table.cell(stats_table, 0, row, "Next Target", bgcolor=subheader_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, "Hit Rate", bgcolor=subheader_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 2, row, "Status", bgcolor=subheader_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+
+            table.cell(stats_table, 0, row, target_level, bgcolor=cell_bg, text_color=cell_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", seq_pct), bgcolor=cell_bg, text_color=cell_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+
+            val_bg_seq = target_validated ? validated_bg : possible_bg
+            val_text_seq = target_validated ? validated_text : possible_text
+            val_label_seq = target_validated ? "Hit ✓" : "Pending"
+
+            table.cell(stats_table, 2, row, val_label_seq, bgcolor=val_bg_seq, text_color=val_text_seq,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+
+    // ===== NY SESSION TABLE =====
+    if is_sesa
+        bool show_sequential = ny_first_hit != "none"
+        [hit_7to8, hit_mid, hit_2to3] = get_hit_rates(ny_vs_london, current_pattern)
+
+        table.cell(stats_table, 0, row, "━━━ NY SESSION ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Active", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, current_session, bgcolor=sesa_css, text_color=color.white,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "━━━ SETUP ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Pattern", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, current_pattern, bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "NY vs London Mid", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("Opens {0}", ny_vs_london), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        [ny_hit_london_high_pct, ny_hit_london_low_pct, ny_sample] = get_ny_vs_london_midpoint_stats(ny_vs_london)
+
+        table.cell(stats_table, 0, row, "━━━ FIRST HIT PROBABILITIES ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, str.format("Sample: {0} days", ny_sample),
+             bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Level", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "Probability", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "Status", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "London High First", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", ny_hit_london_high_pct), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg = ny_first_hit == "london_high" ? validated_bg : (ny_first_hit == "none" ? possible_bg : cell_bg)
+        val_text = ny_first_hit == "london_high" ? validated_text : (ny_first_hit == "none" ? possible_text : color.rgb(160, 160, 160))
+        val_label = ny_first_hit == "london_high" ? "Hit ✓" : (ny_first_hit == "none" ? "Pending" : "Invalidated")
+        table.cell(stats_table, 2, row, val_label, bgcolor=val_bg, text_color=val_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "London Low First", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", ny_hit_london_low_pct), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg := ny_first_hit == "london_low" ? validated_bg : (ny_first_hit == "none" ? possible_bg : cell_bg)
+        val_text := ny_first_hit == "london_low" ? validated_text : (ny_first_hit == "none" ? possible_text : color.rgb(160, 160, 160))
+        val_label := ny_first_hit == "london_low" ? "Hit ✓" : (ny_first_hit == "none" ? "Pending" : "Invalidated")
+        table.cell(stats_table, 2, row, val_label, bgcolor=val_bg, text_color=val_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        if show_sequential
+            target_level = ny_first_hit == "london_high" ? "London Low" : "London High"
+            target_validated = ny_first_hit == "london_high" ? ny_seq_hit_london_low : ny_seq_hit_london_high
+            seq_pct = get_ny_sequential_london_stats(ny_vs_london, ny_first_hit)
+
+            table.cell(stats_table, 0, row, "━━━ SEQUENTIAL HIT ━━━", bgcolor=header_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.merge_cells(stats_table, 0, row, 2, row)
+            row := row + 1
+
+            first_hit_label = ny_first_hit == "london_high" ? "London High" : "London Low"
+            table.cell(stats_table, 0, row, str.format("✓ {0} hit first", first_hit_label),
+                 bgcolor=validated_bg, text_color=validated_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.merge_cells(stats_table, 0, row, 2, row)
+            row := row + 1
+
+            table.cell(stats_table, 0, row, "Next Target", bgcolor=subheader_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, "Hit Rate", bgcolor=subheader_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 2, row, "Status", bgcolor=subheader_bg, text_color=header_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+
+            table.cell(stats_table, 0, row, target_level, bgcolor=cell_bg, text_color=cell_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", seq_pct), bgcolor=cell_bg, text_color=cell_text,
+                 text_size=table_size, text_font_family=font.family_monospace)
+
+            val_bg_seq = target_validated ? validated_bg : possible_bg
+            val_text_seq = target_validated ? validated_text : possible_text
+            val_label_seq = target_validated ? "Hit ✓" : "Pending"
+
+            table.cell(stats_table, 2, row, val_label_seq, bgcolor=val_bg_seq, text_color=val_text_seq,
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+
+        table.cell(stats_table, 0, row, "", bgcolor=cell_bg, text_color=cell_text, text_size=table_size)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        // ===== INTRADAY LEVELS =====
+        table.cell(stats_table, 0, row, "━━━ INTRADAY LEVELS ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Level", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "Hit Rate", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "Status", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "7-8 AM Mid", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", hit_7to8), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg_7to8 = ny_seq_hit_7to8_mid ? validated_bg : possible_bg
+        val_text_7to8 = ny_seq_hit_7to8_mid ? validated_text : possible_text
+        val_label_7to8 = ny_seq_hit_7to8_mid ? "Hit ✓" : "Pending"
+        table.cell(stats_table, 2, row, val_label_7to8, bgcolor=val_bg_7to8, text_color=val_text_7to8,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Midnight Open", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", hit_mid), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg_mid = ny_seq_hit_midnight_open ? validated_bg : possible_bg
+        val_text_mid = ny_seq_hit_midnight_open ? validated_text : possible_text
+        val_label_mid = ny_seq_hit_midnight_open ? "Hit ✓" : "Pending"
+        table.cell(stats_table, 2, row, val_label_mid, bgcolor=val_bg_mid, text_color=val_text_mid,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "2-3 AM Mid", bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", hit_2to3), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        val_bg_2to3 = ny_seq_hit_2to3_mid ? validated_bg : possible_bg
+        val_text_2to3 = ny_seq_hit_2to3_mid ? validated_text : possible_text
+        val_label_2to3 = ny_seq_hit_2to3_mid ? "Hit ✓" : "Pending"
+        table.cell(stats_table, 2, row, val_label_2to3, bgcolor=val_bg_2to3, text_color=val_text_2to3,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        // ===== ASIA LEVELS IN NY =====
+        table.cell(stats_table, 0, row, "━━━ ASIA LEVELS IN NY ━━━", bgcolor=header_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+
+        table.cell(stats_table, 0, row, "Level", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "Hit Rate", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "Status", bgcolor=subheader_bg, text_color=header_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        asia_high_rate = get_asia_in_ny_stats("asia_high", asia_high_hit_in_london)
+        asia_high_london_tag = asia_high_hit_in_london ? "Asia High (hit Lon)" : "Asia High (no Lon)"
+        val_bg_ah = asia_high_hit_in_ny ? validated_bg : possible_bg
+        val_text_ah = asia_high_hit_in_ny ? validated_text : possible_text
+        val_label_ah = asia_high_hit_in_ny ? "Hit ✓" : "Pending"
+        table.cell(stats_table, 0, row, asia_high_london_tag, bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", asia_high_rate), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, val_label_ah, bgcolor=val_bg_ah, text_color=val_text_ah,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+
+        asia_low_rate = get_asia_in_ny_stats("asia_low", asia_low_hit_in_london)
+        asia_low_london_tag = asia_low_hit_in_london ? "Asia Low (hit Lon)" : "Asia Low (no Lon)"
+        val_bg_al = asia_low_hit_in_ny ? validated_bg : possible_bg
+        val_text_al = asia_low_hit_in_ny ? validated_text : possible_text
+        val_label_al = asia_low_hit_in_ny ? "Hit ✓" : "Pending"
+        table.cell(stats_table, 0, row, asia_low_london_tag, bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, str.format("{0,number,#.##}%", asia_low_rate), bgcolor=cell_bg, text_color=cell_text,
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, val_label_al, bgcolor=val_bg_al, text_color=val_text_al,
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
