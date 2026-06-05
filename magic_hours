@@ -1,0 +1,950 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+indicator("Magic Hours", "MagicHrs", true,
+     max_boxes_count  = 500,
+     max_lines_count  = 500,
+     max_labels_count = 500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+var g_STRAT = "Strategy"
+i_strategy = input.string("07:00 Golden Hour", "Magic Hour",
+     options=["07:00 Golden Hour","08:00 Continuation","06:00 Pre-Market",
+              "00:00 Asia Open","01:00 Asia Continuation","02:00 London Pre",
+              "23:00 Asia Pre-Game"],
+     group=g_STRAT)
+i_history  = input.int(3, "Setups to show", minval=1, maxval=10, group=g_STRAT)
+i_col      = input.color(color.new(color.gray, 0), "Box Colour", group=g_STRAT)
+i_lbl_size = input.string("Tiny", "Label Size",
+     options=["Tiny","Small","Normal"], group=g_STRAT)
+
+
+var g_TIME = "Time Lines"
+i_show_tlines  = input.bool(true,  "Show Time Lines",   group=g_TIME)
+i_tline_col    = input.color(color.new(color.gray, 30), "Line Colour",  group=g_TIME)
+i_tline_width  = input.int(1, "Line Width", minval=1, maxval=4, group=g_TIME)
+i_tline_style  = input.string("Dashed", "Line Style",
+     options=["Solid","Dashed","Dotted"], group=g_TIME)
+i_tline_lbl_size = input.string("Tiny", "Label Size",
+     options=["Tiny","Small","Normal"], group=g_TIME)
+i_show_ctbl    = input.bool(true,  "Show Countdown Table", group=g_TIME)
+i_ctbl_pos     = input.string("Bottom Left", "Countdown Table Position",
+     options=["Top Right","Top Left","Top Center",
+              "Middle Right","Middle Left","Bottom Right","Bottom Left"],
+     group=g_TIME)
+i_ctbl_size    = input.string("Small", "Countdown Table Text Size",
+     options=["Tiny","Small","Normal"], group=g_TIME)
+
+var g_TBL = "Table"
+i_show_table = input.bool(true, "Show Table", group=g_TBL)
+i_tbl_pos    = input.string("Top Right", "Position",
+     options=["Top Right","Top Left","Top Center",
+              "Middle Right","Middle Left","Bottom Right","Bottom Left"],
+     group=g_TBL)
+i_tbl_size   = input.string("Small", "Text Size",
+     options=["Tiny","Small","Normal"], group=g_TBL)
+
+// ============================================================================
+// STRATEGY CONFIG
+// ============================================================================
+
+get_cfg(h) =>
+    // [rank, name, win_rate, inv_pct, hard_stop_hr,
+    //  z1w..z6w, r75..r200, time_p50]
+    if h == 7
+        [1, "07:00 Golden Hour",       82.8, 100, 11,
+         100.0, 99.1, 95.4, 87.0, 61.0, 18.1,
+         89.9, 79.8, 71.5, 63.9, 50.0, 30]
+    else if h == 8
+        [2, "08:00 Continuation",      80.6,  75, 12,
+         99.2, 96.9, 96.4, 81.9, 46.4, 13.4,
+         88.5, 77.4, 68.8, 60.7, 46.1, 17]
+    else if h == 6
+        [3, "06:00 Pre-Market",        77.7, 100, 10,
+         99.3, 97.4, 91.3, 75.0, 53.7, 13.1,
+         88.7, 77.6, 68.4, 59.6, 44.9, 46]
+    else if h == 0
+        [4, "00:00 Asia Open",         77.1, 100,  4,
+         99.1, 97.4, 90.8, 71.3, 42.7, 12.9,
+         87.1, 75.5, 66.3, 57.6, 42.8, 30]
+    else if h == 1
+        [5, "01:00 Asia Continuation", 73.6, 100,  5,
+         98.8, 95.9, 85.6, 64.6, 35.1,  9.5,
+         84.8, 71.7, 60.3, 51.3, 37.7, 29]
+    else if h == 2
+        [6, "02:00 London Pre",        71.2,  75,  6,
+         96.5, 91.1, 80.3, 52.9, 22.4,  4.2,
+         79.5, 62.7, 51.4, 41.6, 27.0, 16]
+    else
+        [7, "23:00 Asia Pre-Game",     68.5,  75,  3,
+         97.1, 87.9, 78.2, 50.1, 22.5,  8.6,
+         79.7, 62.9, 51.1, 41.3, 26.1, 35]
+
+
+// Time-to-target percentiles per magic hour [p25, p50, p75, p90] in minutes
+get_time_pcts(h) =>
+    if h == 7
+        [13, 30, 73, 97]
+    else if h == 8
+        [5,  17, 31, 53]
+    else if h == 6
+        [17, 46, 95, 144]
+    else if h == 0
+        [12, 30, 61, 110]
+    else if h == 1
+        [11, 29, 61, 97]
+    else if h == 2
+        [5,  16, 44, 83]
+    else // 23
+        [16, 35, 67, 107]
+
+MAGIC_HOURS_ARR = array.from(0, 1, 2, 6, 7, 8, 23)
+
+strategy_to_hour(s) =>
+    switch s
+        "07:00 Golden Hour"       => 7
+        "08:00 Continuation"      => 8
+        "06:00 Pre-Market"        => 6
+        "00:00 Asia Open"         => 0
+        "01:00 Asia Continuation" => 1
+        "02:00 London Pre"        => 2
+        "23:00 Asia Pre-Game"     => 23
+        => -1
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+
+line_style_from(s) =>
+    switch s
+        "Solid"  => line.style_solid
+        "Dotted" => line.style_dotted
+        => line.style_dashed
+
+tbl_pos(s) =>
+    switch s
+        "Top Left"     => position.top_left
+        "Top Center"   => position.top_center
+        "Middle Right" => position.middle_right
+        "Middle Left"  => position.middle_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+tbl_sz(s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Normal" => size.normal
+        => size.small
+
+ext_to_zone(ep, ip) =>
+    if ep < 25.0
+        0
+    else if ep < 50.0
+        1
+    else if ep < float(ip)
+        2
+    else if ep < 150.0
+        3
+    else if ep < 300.0
+        4
+    else
+        5
+
+zone_win(z, z1w, z2w, z3w, z4w, z5w, z6w) =>
+    switch z
+        0 => z1w
+        1 => z2w
+        2 => z3w
+        3 => z4w
+        4 => z5w
+        => z6w
+
+zone_name(z) =>
+    switch z
+        0 => "Z1"
+        1 => "Z2"
+        2 => "Z3"
+        3 => "Z4"
+        4 => "Z5"
+        => "Z6"
+
+zone_status(z) =>
+    switch z
+        0 => "IDEAL"
+        1 => "PRIME"
+        2 => "DEEP"
+        3 => "RISK"
+        4 => "LAST STAND"
+        => "GRAVEYARD"
+
+zone_fill(z) =>
+    switch z
+        0 => color.new(color.gray,   75)
+        1 => color.new(color.blue,   75)
+        2 => color.new(color.green,  75)
+        3 => color.new(color.orange, 75)
+        4 => color.new(color.red,    75)
+        => color.new(#37474f,        75)
+
+zone_border(z) =>
+    switch z
+        0 => color.new(color.gray,   40)
+        1 => color.new(color.blue,   40)
+        2 => color.new(color.green,  40)
+        3 => color.new(color.orange, 40)
+        4 => color.new(color.red,    40)
+        => color.new(#37474f,        40)
+
+// ============================================================================
+// STATE
+// ============================================================================
+
+var float v_mh_high    = na
+var float v_mh_low     = na
+var float v_mh_mid     = na
+var float v_mh_range   = na
+var int   v_inv_pct    = 100
+var int   v_bar_mh_s   = 0
+var int   v_bar_mh_e   = 0
+var int   v_bar_aw_e   = 0
+var bool  v_live       = false
+var int   v_outcome    = 0      // 0=pending 1=won 2=invalidated 3=no break
+var int   v_break_side = 0      // 0=none 1=HIGH 2=LOW
+var int   v_cur_zone   = -1
+var bool  v_tgt_hit    = false
+var bool  v_setup_rdy  = false
+
+var float v_z1w  = na
+var float v_z2w  = na
+var float v_z3w  = na
+var float v_z4w  = na
+var float v_z5w  = na
+var float v_z6w  = na
+var float v_r75  = na
+var float v_r100 = na
+var float v_r125 = na
+var float v_r150 = na
+var float v_r200 = na
+var string v_name    = ""
+var float  v_winrate = na
+var int    v_t50     = na
+
+// Drawing handles
+var box   d_mh_box       = na
+var line  d_mid_line     = na
+var label d_mid_lbl      = na
+var label d_mh_lbl       = na
+var line  d_mh_hi_line   = na
+var line  d_mh_lo_line   = na
+var label d_mh_hi_lbl    = na
+var label d_mh_lo_lbl    = na
+var line  d_inv_line     = na
+var label d_inv_lbl      = na
+
+
+// Time-line and countdown state
+var int   v_break_time  = na   // unix ms of exact 1m break bar
+var int   v_tp25        = na   // time percentiles in minutes
+var int   v_tp50        = na
+var int   v_tp75        = na
+var int   v_tp90        = na
+var int   v_hard_stop_ts = na  // unix ms of hard stop
+
+// Time-line drawing handles (4 lines + 4 labels)
+var array<line>  d_tlines = array.new<line>()
+var array<label> d_tlbls  = array.new<label>()
+
+var array<box>   d_zone_boxes  = array.new<box>()
+var array<label> d_zone_labels = array.new<label>()
+var array<line>  d_run_lines   = array.new<line>()
+var array<label> d_run_labels  = array.new<label>()
+
+// ============================================================================
+// CLEAR HELPERS
+// ============================================================================
+
+
+clear_tlines() =>
+    if array.size(d_tlines) > 0
+        for ti = 0 to array.size(d_tlines) - 1
+            line.delete(array.get(d_tlines, ti))
+        array.clear(d_tlines)
+    if array.size(d_tlbls) > 0
+        for ti = 0 to array.size(d_tlbls) - 1
+            label.delete(array.get(d_tlbls, ti))
+        array.clear(d_tlbls)
+
+clear_zones() =>
+    if array.size(d_zone_boxes) > 0
+        for zi = 0 to array.size(d_zone_boxes) - 1
+            box.delete(array.get(d_zone_boxes, zi))
+        array.clear(d_zone_boxes)
+    if array.size(d_zone_labels) > 0
+        for zi = 0 to array.size(d_zone_labels) - 1
+            label.delete(array.get(d_zone_labels, zi))
+        array.clear(d_zone_labels)
+
+clear_runners() =>
+    if array.size(d_run_lines) > 0
+        for ri = 0 to array.size(d_run_lines) - 1
+            line.delete(array.get(d_run_lines, ri))
+        array.clear(d_run_lines)
+    if array.size(d_run_labels) > 0
+        for ri = 0 to array.size(d_run_labels) - 1
+            label.delete(array.get(d_run_labels, ri))
+        array.clear(d_run_labels)
+
+clear_all() =>
+    box.delete(d_mh_box)
+    line.delete(d_mid_line)
+    label.delete(d_mid_lbl)
+    label.delete(d_mh_lbl)
+    line.delete(d_mh_hi_line)
+    line.delete(d_mh_lo_line)
+    label.delete(d_mh_hi_lbl)
+    label.delete(d_mh_lo_lbl)
+    line.delete(d_inv_line)
+    label.delete(d_inv_lbl)
+    clear_zones()
+    clear_runners()
+    clear_tlines()
+
+// ============================================================================
+// DRAW ZONES — both sides
+// ============================================================================
+
+draw_zones(b_s, b_e, mh_hi, mh_lo, mh_rng, inv_pct,
+           z1w, z2w, z3w, z4w, z5w, z6w) =>
+    clear_zones()
+    pct_lo = array.from(0.0,  25.0, 50.0,           float(inv_pct), 150.0, 300.0)
+    pct_hi = array.from(25.0, 50.0, float(inv_pct),   150.0,         300.0, 400.0)
+    wins   = array.from(z1w, z2w, z3w, z4w, z5w, z6w)
+
+    for side = 0 to 1
+        for z = 0 to 5
+            plo = array.get(pct_lo, z)
+            phi = array.get(pct_hi, z)
+            win = array.get(wins, z)
+
+            float price_lo = na
+            float price_hi = na
+            if side == 0
+                price_lo := mh_hi + mh_rng * plo / 100.0
+                price_hi := mh_hi + mh_rng * phi / 100.0
+            else
+                price_lo := mh_lo - mh_rng * phi / 100.0
+                price_hi := mh_lo - mh_rng * plo / 100.0
+
+            bx = box.new(b_s, price_hi, b_e, price_lo,
+                 border_color=zone_border(z), bgcolor=zone_fill(z), border_width=1)
+            array.push(d_zone_boxes, bx)
+
+            lbl_txt = zone_name(z) + " | " + str.tostring(win, "#.#") + "%  " + zone_status(z)
+            lbl = label.new(b_e, (price_lo + price_hi) / 2.0, lbl_txt,
+                 xloc=xloc.bar_index, yloc=yloc.price,
+                 style=label.style_label_left,
+                 color=color.new(color.white, 10),
+                 textcolor=zone_border(z), size=tbl_sz(i_lbl_size),
+                 text_font_family=font.family_monospace)
+            array.push(d_zone_labels, lbl)
+
+// Dim the non-broken side after a break is detected
+dim_side(break_side) =>
+    n = array.size(d_zone_boxes)
+    if n == 12
+        for z = 0 to 5
+            // above = indices 0-5, below = indices 6-11
+            dim_idx = break_side == 1 ? 6 + z : z
+            box.set_bgcolor(array.get(d_zone_boxes, dim_idx),
+                 color.new(zone_fill(z), 93))
+            box.set_border_color(array.get(d_zone_boxes, dim_idx),
+                 color.new(zone_border(z), 80))
+
+// ============================================================================
+// DRAW RUNNERS
+// ============================================================================
+
+draw_runners(bside, mh_hi, mh_lo, mh_rng, b_e,
+             r75, r100, r125, r150, r200) =>
+    clear_runners()
+    r_pcts = array.from(75.0, 100.0, 125.0, 150.0, 200.0)
+    r_vals = array.from(r75, r100, r125, r150, r200)
+    r_acts = array.from("Hold", "Hold", "Trail", "Trail/Partial", "Take Partial")
+
+    for r = 0 to 4
+        pct  = array.get(r_pcts, r)
+        rval = array.get(r_vals, r)
+        act  = array.get(r_acts, r)
+
+        float rp = na
+        if bside == 1
+            rp := mh_hi - mh_rng * pct / 100.0
+        else
+            rp := mh_lo + mh_rng * pct / 100.0
+
+        rc = r < 2 ? color.new(color.green,  20) : 
+             r < 4 ? color.new(color.yellow, 20) : 
+                     color.new(color.orange, 20)
+
+        rl = line.new(bar_index, rp, b_e, rp,
+             color=rc, width=1, style=line.style_dotted)
+        array.push(d_run_lines, rl)
+
+        lbl = label.new(b_e, rp,
+             str.tostring(pct, "#") + "% → " + str.tostring(rval, "#.#") + "%  " + act,
+             xloc=xloc.bar_index, yloc=yloc.price,
+             style=label.style_label_left,
+             color=color.new(color.white, 10),
+             textcolor=rc, size=tbl_sz(i_lbl_size),
+             text_font_family=font.family_monospace)
+        array.push(d_run_labels, lbl)
+
+
+// ============================================================================
+// DRAW TIME LINES  — vertical lines from break bar at each percentile time
+// ============================================================================
+
+draw_tlines(break_time_ms, p25, p50, p75, p90,
+             zone_top, zone_bot) =>
+    clear_tlines()
+    ms_per_min  = 60000
+    pcts        = array.from(p25, p50, p75, p90)
+    pct_names   = array.from("25%", "Median", "75%", "90%")
+    pct_cols    = array.from(
+         color.new(color.green,  20),
+         color.new(color.white,  10),
+         color.new(color.orange, 20),
+         color.new(color.red,    20))
+    lstyle = line_style_from(i_tline_style)
+
+    for pi = 0 to 3
+        mins    = array.get(pcts,     pi)
+        pname   = array.get(pct_names, pi)
+        pcol    = array.get(pct_cols,  pi)
+        tgt_ms  = break_time_ms + mins * ms_per_min
+
+        ln = line.new(tgt_ms, zone_top, tgt_ms, zone_bot,
+             xloc=xloc.bar_time,
+             color=i_show_tlines ? pcol : color.new(color.white, 100),
+             width=i_tline_width, style=lstyle)
+        array.push(d_tlines, ln)
+
+        lbl = label.new(tgt_ms, zone_top, pname + " (" + str.tostring(mins) + "m)",
+             xloc=xloc.bar_time, yloc=yloc.price,
+             style=label.style_none,
+             color=color.new(color.white, 100),
+             textcolor=i_show_tlines ? pcol : color.new(color.white, 100),
+             size=tbl_sz(i_tline_lbl_size),
+             text_font_family=font.family_monospace)
+        array.push(d_tlbls, lbl)
+
+// ============================================================================
+// MAIN
+// ============================================================================
+
+int   NY_HOUR = hour(time,   "America/New_York")
+int   NY_MIN  = minute(time, "America/New_York")
+float C_HIGH  = high
+float C_LOW   = low
+
+
+// ── LTF 1-minute data for precise break detection ────────────────────────────
+// Pine evaluates this once per chart bar; arrays contain all 1m sub-bars
+[ltf_high_arr, ltf_low_arr, ltf_time_arr] =
+     request.security_lower_tf(syminfo.tickerid, "1",
+          [high, low, time], ignore_invalid_symbol=true)
+
+// Scan intrabar array to find first 1m bar that breaks MH boundary
+// Returns the unix ms timestamp of that bar, or na if no break yet
+find_ltf_break_time(mh_hi, mh_lo) =>
+    result = int(na)
+    n = array.size(ltf_high_arr)
+    if n > 0
+        for bi = 0 to n - 1
+            h1 = array.get(ltf_high_arr, bi)
+            l1 = array.get(ltf_low_arr,  bi)
+            t1 = array.get(ltf_time_arr,  bi)
+            if h1 > mh_hi or l1 < mh_lo
+                result := t1
+                break
+    result
+
+active_h = strategy_to_hour(i_strategy)
+
+// ── Strategy dropdown change → full reset ────────────────────────────────────
+var string prev_strategy = ""
+if i_strategy != prev_strategy
+    clear_all()
+    v_break_time   := na
+    v_hard_stop_ts := na
+    v_live       := false
+    v_setup_rdy  := false
+    v_outcome    := 0
+    v_break_side := 0
+    v_cur_zone   := -1
+    v_tgt_hit    := false
+    prev_strategy := i_strategy
+
+// ── Update config cache whenever active hour changes ─────────────────────────
+// In Auto mode this happens each hour — we just refresh the stats, no clearing.
+var int prev_h = -99
+if active_h != prev_h
+    prev_h := active_h
+    if active_h >= 0
+        [_rk, cfg_name, wr, inv, _hs,
+         z1w, z2w, z3w, z4w, z5w, z6w,
+         r75, r100, r125, r150, r200, t50] = get_cfg(active_h)
+        v_name    := cfg_name
+        v_winrate := wr
+        v_inv_pct := inv
+        v_z1w := z1w   
+        v_z2w := z2w   
+        v_z3w := z3w
+        v_z4w := z4w   
+        v_z5w := z5w   
+        v_z6w := z6w
+        v_r75 := r75   
+        v_r100 := r100  
+        v_r125 := r125
+        v_r150 := r150  
+        v_r200 := r200
+        v_t50 := t50
+
+if active_h >= 0
+    mh = active_h
+    [_rk, _nm, _wr, inv_pct, hard_stop,
+     z1w, z2w, z3w, z4w, z5w, z6w,
+     r75, r100, r125, r150, r200, _t] = get_cfg(mh)
+    col = i_col
+
+    // ── Phase 1: Start of Magic Hour ─────────────────────────────────────────
+    if NY_HOUR == mh and NY_MIN == 0 and not v_live
+        clear_all()
+        v_break_time   := na
+        v_hard_stop_ts := na
+        v_live       := true
+        v_setup_rdy  := false
+        v_outcome    := 0
+        v_break_side := 0
+        v_cur_zone   := -1
+        v_tgt_hit    := false
+        v_mh_high    := C_HIGH
+        v_mh_low     := C_LOW
+        v_bar_mh_s   := bar_index
+
+        d_mh_box := box.new(bar_index, C_HIGH, bar_index, C_LOW,
+             border_color=col, border_width=2,
+             bgcolor=color.new(col, 88))
+
+        mid0 = (C_HIGH + C_LOW) / 2.0
+
+        d_mh_lbl := label.new(bar_index, mid0, "MAGIC HOUR",
+             xloc=xloc.bar_index, yloc=yloc.price,
+             style=label.style_none,
+             textcolor=col, size=size.small,
+             text_font_family=font.family_monospace)
+
+        d_mid_line := line.new(bar_index, mid0, bar_index, mid0,
+             color=color.fuchsia, width=1, style=line.style_dashed)
+
+        d_mid_lbl := label.new(bar_index, mid0, "MH Mid",
+             xloc=xloc.bar_index, yloc=yloc.price,
+             style=label.style_label_left,
+             color=color.new(color.white, 10),
+             textcolor=color.fuchsia, size=tbl_sz(i_lbl_size),
+             text_font_family=font.family_monospace)
+
+    // ── Update live box ───────────────────────────────────────────────────────
+    if v_live and NY_HOUR == mh
+        v_mh_high := math.max(v_mh_high, C_HIGH)
+        v_mh_low  := math.min(v_mh_low,  C_LOW)
+        cur_mid    = (v_mh_high + v_mh_low) / 2.0
+
+        if not na(d_mh_box)
+            box.set_top(d_mh_box,    v_mh_high)
+            box.set_bottom(d_mh_box, v_mh_low)
+            box.set_right(d_mh_box,  bar_index)
+        if not na(d_mid_line)
+            line.set_y1(d_mid_line, cur_mid)
+            line.set_y2(d_mid_line, cur_mid)
+            line.set_x2(d_mid_line, bar_index)
+        if not na(d_mh_lbl)
+            label.set_x(d_mh_lbl, bar_index)
+            label.set_y(d_mh_lbl, cur_mid)
+        if not na(d_mid_lbl)
+            label.set_x(d_mid_lbl, bar_index)
+            label.set_y(d_mid_lbl, cur_mid)
+
+    // ── Phase 2: Magic Hour closes ────────────────────────────────────────────
+    if v_live and NY_HOUR == (mh + 1) % 24 and NY_MIN == 0
+        v_live       := false
+        v_setup_rdy  := true
+        v_bar_mh_e   := bar_index - 1
+        v_mh_range   := v_mh_high - v_mh_low
+        v_mh_mid     := (v_mh_high + v_mh_low) / 2.0
+        v_inv_pct    := inv_pct
+
+        mpb = timeframe.in_seconds() / 60
+        bph = mpb > 0 ? int(60 / mpb) : 60
+        aw_hrs = hard_stop > mh ? math.min(3, hard_stop - mh - 1) : 3
+        v_bar_aw_e := bar_index + aw_hrs * bph
+
+        if not na(d_mh_box)
+            box.set_right(d_mh_box, v_bar_mh_e)
+
+        // MH boundary lines
+        line.delete(d_mh_hi_line)
+        line.delete(d_mh_lo_line)
+        d_mh_hi_line := line.new(v_bar_mh_s, v_mh_high, v_bar_aw_e, v_mh_high,
+             color=color.new(col, 30), width=1)
+        d_mh_lo_line := line.new(v_bar_mh_s, v_mh_low,  v_bar_aw_e, v_mh_low,
+             color=color.new(col, 30), width=1)
+
+        label.delete(d_mh_hi_lbl)
+        label.delete(d_mh_lo_lbl)
+        d_mh_hi_lbl := label.new(v_bar_aw_e, v_mh_high, "MH High",
+             xloc=xloc.bar_index, yloc=yloc.price,
+             style=label.style_label_left,
+             color=color.new(color.white, 10),
+             textcolor=color.new(col, 20), size=tbl_sz(i_lbl_size),
+             text_font_family=font.family_monospace)
+        d_mh_lo_lbl := label.new(v_bar_aw_e, v_mh_low, "MH Low",
+             xloc=xloc.bar_index, yloc=yloc.price,
+             style=label.style_label_left,
+             color=color.new(color.white, 10),
+             textcolor=color.new(col, 20), size=tbl_sz(i_lbl_size),
+             text_font_family=font.family_monospace)
+
+        // Extend mid line
+        if not na(d_mid_line)
+            line.set_x2(d_mid_line, v_bar_aw_e)
+        if not na(d_mid_lbl)
+            label.set_x(d_mid_lbl, v_bar_aw_e)
+            label.set_text(d_mid_lbl, "TARGET: MID")
+
+
+        // Store time percentiles for this strategy
+        [tp25, tp50, tp75, tp90] = get_time_pcts(mh)
+        v_tp25 := tp25
+        v_tp50 := tp50
+        v_tp75 := tp75
+        v_tp90 := tp90
+        // Hard stop timestamp (unix ms)
+        // hard_stop_hr can cross midnight for mh=23
+        hs_offset_mins = hard_stop > mh ? (hard_stop - mh) * 60 : (24 - mh + hard_stop) * 60
+        v_hard_stop_ts := time + hs_offset_mins * 60000
+
+        // Zones both sides
+        draw_zones(bar_index, v_bar_aw_e,
+             v_mh_high, v_mh_low, v_mh_range, inv_pct,
+             z1w, z2w, z3w, z4w, z5w, z6w)
+
+    // ── Phase 3: Analysis window ──────────────────────────────────────────────
+    if v_setup_rdy and v_outcome == 0
+        if bar_index > v_bar_aw_e
+            if v_break_side == 0
+                v_outcome := 3
+                clear_tlines()
+                if not na(d_mid_lbl)
+                    label.set_text(d_mid_lbl, "NO BREAK")
+                    label.set_textcolor(d_mid_lbl, color.gray)
+            else
+                v_outcome := 2
+                clear_tlines()
+                if not na(d_mid_lbl)
+                    label.set_text(d_mid_lbl, "OBJECTIVE FAILED ✗")
+                    label.set_textcolor(d_mid_lbl, color.red)
+        else
+            // Detect break
+            if v_break_side == 0
+                new_side = C_HIGH > v_mh_high ? 1 : C_LOW < v_mh_low ? 2 : 0
+                if new_side != 0
+                    v_break_side := new_side
+
+                    // Detect exact 1m break timestamp via LTF
+                    ltf_t = find_ltf_break_time(v_mh_high, v_mh_low)
+                    v_break_time := na(ltf_t) ? time : ltf_t
+
+                    // Zone extents for vertical line height
+                    z6_top = v_mh_high + v_mh_range * 4.0   // 400% above = Z6 top
+                    z6_bot = v_mh_low  - v_mh_range * 4.0   // 400% below = Z6 bot
+                    draw_tlines(v_break_time, v_tp25, v_tp50, v_tp75, v_tp90,
+                         z6_top, z6_bot)
+
+                    dim_side(new_side)
+                    float inv_p = new_side == 1 ?
+                         v_mh_high + v_mh_range * v_inv_pct / 100.0 :
+                         v_mh_low  - v_mh_range * v_inv_pct / 100.0
+                    line.delete(d_inv_line)
+                    label.delete(d_inv_lbl)
+                    d_inv_line := line.new(v_bar_mh_e, inv_p, v_bar_aw_e, inv_p,
+                         color=color.red, width=1, style=line.style_dashed)
+                    d_inv_lbl := label.new(v_bar_aw_e, inv_p,
+                         "INVALIDATION (" + str.tostring(v_inv_pct) + "%)",
+                         xloc=xloc.bar_index, yloc=yloc.price,
+                         style=label.style_label_left,
+                         color=color.new(color.white, 10),
+                         textcolor=color.red, size=tbl_sz(i_lbl_size),
+                         text_font_family=font.family_monospace)
+            else
+                // Track zone
+                float ep = v_break_side == 1 ?
+                     (C_HIGH - v_mh_high) / v_mh_range * 100.0 :
+                     (v_mh_low - C_LOW)   / v_mh_range * 100.0
+                v_cur_zone := ext_to_zone(ep, v_inv_pct)
+
+                // Invalidation
+                if ep >= float(v_inv_pct) and not v_tgt_hit
+                    v_outcome := 2
+                    if not na(d_mid_lbl)
+                        label.set_text(d_mid_lbl, "INVALIDATED ✗")
+                        label.set_textcolor(d_mid_lbl, color.red)
+
+                // Target hit
+                else if not v_tgt_hit
+                    hit = (v_break_side == 1 and C_LOW  <= v_mh_mid) or
+                          (v_break_side == 2 and C_HIGH >= v_mh_mid)
+                    if hit
+                        v_tgt_hit := true
+                        v_outcome  := 1
+                        if not na(d_mid_lbl)
+                            label.set_text(d_mid_lbl,
+                                 "OBJECTIVE COMPLETE ✓ (Rev: " + zone_name(v_cur_zone) + ")")
+                            label.set_textcolor(d_mid_lbl, color.green)
+                        draw_runners(v_break_side,
+                             v_mh_high, v_mh_low, v_mh_range, v_bar_aw_e,
+                             r75, r100, r125, r150, r200)
+
+// ============================================================================
+// TABLE
+// ============================================================================
+
+var table tbl = na
+
+if i_show_table and barstate.islast
+    table.delete(tbl)
+    ts     = tbl_sz(i_tbl_size)
+    HDR_BG = color.rgb(30, 30, 30)
+    SUB_BG = color.rgb(60, 60, 60)
+    CEL_BG = color.white
+    HDR_TX = color.white
+    CEL_TX = color.rgb(40, 40, 40)
+
+    tbl := table.new(tbl_pos(i_tbl_pos), 2, 22,
+         bgcolor=CEL_BG, border_color=color.rgb(64,64,64),
+         border_width=1, frame_color=color.rgb(64,64,64), frame_width=2)
+    row = 0
+
+    // Header
+    table.cell(tbl, 0, row, "MAGIC HOURS", bgcolor=HDR_BG, text_color=HDR_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, row, "MagicHrs", bgcolor=HDR_BG, text_color=color.fuchsia,
+         text_size=ts, text_font_family=font.family_monospace)
+    row += 1
+
+    // Strategy
+    table.cell(tbl, 0, row, "Strategy", bgcolor=SUB_BG, text_color=HDR_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, row, v_name, bgcolor=SUB_BG, text_color=color.yellow,
+         text_size=ts, text_font_family=font.family_monospace)
+    row += 1
+
+    // Win Rate
+    table.cell(tbl, 0, row, "Win Rate", bgcolor=CEL_BG, text_color=CEL_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, row, str.tostring(v_winrate, "#.#") + "%",
+         bgcolor=CEL_BG, text_color=CEL_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    row += 1
+
+    // Outcome
+    outc_str = v_outcome == 0 and v_live    ? "Forming…" : 
+               v_outcome == 0               ? "In Progress…" : 
+               v_outcome == 1               ? "Won ✓" : 
+               v_outcome == 2               ? "Invalidated ✗" : 
+                                              "No Break"
+    outc_bg  = v_outcome == 1 ? color.new(color.green, 60) : 
+                 v_outcome == 2 ? color.new(color.red,   60) : 
+                 v_outcome == 0 ? color.new(color.blue,  85) : 
+                                  color.new(color.gray,  70)
+    outc_tx  = v_outcome == 1 or v_outcome == 2 ? color.white : CEL_TX
+    table.cell(tbl, 0, row, "Outcome", bgcolor=CEL_BG, text_color=CEL_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, row, outc_str, bgcolor=outc_bg, text_color=outc_tx,
+         text_size=ts, text_font_family=font.family_monospace)
+    row += 1
+
+    // Break side
+    bstr = v_break_side == 0 ? "Awaiting break" : 
+           v_break_side == 1  ? "HIGH Break ↑" : "LOW Break ↓"
+    table.cell(tbl, 0, row, "Break", bgcolor=CEL_BG, text_color=CEL_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, row, bstr, bgcolor=CEL_BG, text_color=CEL_TX,
+         text_size=ts, text_font_family=font.family_monospace)
+    row += 1
+
+    // Zone
+    if v_break_side != 0 and v_cur_zone >= 0
+        zw  = zone_win(v_cur_zone, v_z1w, v_z2w, v_z3w, v_z4w, v_z5w, v_z6w)
+        zn  = zone_name(v_cur_zone)
+        zst = zone_status(v_cur_zone)
+        zbg = v_cur_zone == 0 ? color.new(color.gray,   60) : 
+                 v_cur_zone == 1 ? color.new(color.blue,   60) : 
+                 v_cur_zone == 2 ? color.new(color.green,  60) : 
+                 v_cur_zone == 3 ? color.new(color.orange, 60) : 
+                 v_cur_zone == 4 ? color.new(color.red,    60) : 
+                                   color.new(#37474f,      60)
+        table.cell(tbl, 0, row, "Zone | Win Rate", bgcolor=CEL_BG, text_color=CEL_TX,
+             text_size=ts, text_font_family=font.family_monospace)
+        table.cell(tbl, 1, row,
+             zn + " — " + zst + " | " + str.tostring(zw, "#.#") + "%",
+             bgcolor=zbg, text_color=color.white,
+             text_size=ts, text_font_family=font.family_monospace)
+        row += 1
+
+    // Runners
+    if v_tgt_hit
+        table.cell(tbl, 0, row, "── RUNNERS ──", bgcolor=SUB_BG, text_color=HDR_TX,
+             text_size=ts, text_font_family=font.family_monospace)
+        table.cell(tbl, 1, row, "Conditional %", bgcolor=SUB_BG, text_color=HDR_TX,
+             text_size=ts, text_font_family=font.family_monospace)
+        row += 1
+
+        r_pcts = array.from(v_r75, v_r100, v_r125, v_r150, v_r200)
+        r_lvls = array.from("75%", "100%", "125%", "150%", "200%")
+        r_acts = array.from("Hold", "Hold", "Trail Stop", "Trail/Partial", "Take Partial")
+
+        for r = 0 to 4
+            rp  = array.get(r_pcts, r)
+            rl  = array.get(r_lvls, r)
+            ra  = array.get(r_acts, r)
+            rbg = rp >= 80.0 ? color.new(color.green,  70) : 
+                  rp >= 60.0 ? color.new(color.teal,   70) : 
+                  rp >= 40.0 ? color.new(color.yellow, 70) : 
+                               color.new(color.red,    70)
+            table.cell(tbl, 0, row, rl + "  " + ra, bgcolor=CEL_BG,
+                 text_color=CEL_TX, text_size=ts, text_font_family=font.family_monospace)
+            table.cell(tbl, 1, row, str.tostring(rp, "#.#") + "%",
+                 bgcolor=rbg, text_color=CEL_TX,
+                 text_size=ts, text_font_family=font.family_monospace)
+            row += 1
+
+    // Median time
+    if v_setup_rdy and not na(v_t50)
+        table.cell(tbl, 0, row, "Median Time", bgcolor=CEL_BG, text_color=CEL_TX,
+             text_size=ts, text_font_family=font.family_monospace)
+        table.cell(tbl, 1, row, str.tostring(v_t50) + " min",
+             bgcolor=CEL_BG, text_color=CEL_TX,
+             text_size=ts, text_font_family=font.family_monospace)
+
+// ============================================================================
+// COUNTDOWN TABLE
+// ============================================================================
+
+var table ctbl = na
+
+if i_show_ctbl and barstate.islast
+    table.delete(ctbl)
+
+    // Show whenever a break has been recorded — fixes Auto mode
+    // where active_h drops to -1 after the analysis window closes
+    has_break = v_setup_rdy and not na(v_break_time) and
+         (v_outcome == 0 or v_outcome == 1 or v_outcome == 2)
+
+    if has_break
+        ctbl := table.new(tbl_pos(i_ctbl_pos), 3, 8,
+             bgcolor=color.white,
+             border_color=color.rgb(180, 180, 180),
+             border_width=1,
+             frame_color=color.rgb(120, 120, 120),
+             frame_width=2)
+
+        ts     = tbl_sz(i_ctbl_size)
+        now_ms = timenow
+
+        // Header
+        table.cell(ctbl, 0, 0, "TIME TO TARGET", bgcolor=color.rgb(40,40,40),
+             text_color=color.white, text_size=ts,
+             text_font_family=font.family_monospace)
+        table.cell(ctbl, 1, 0, "", bgcolor=color.rgb(40,40,40), text_size=ts)
+        table.cell(ctbl, 2, 0, "", bgcolor=color.rgb(40,40,40), text_size=ts)
+
+        // Break time row
+        break_str = "Break: " + str.format_time(v_break_time, "HH:mm", "America/New_York") + " NY"
+        table.cell(ctbl, 0, 1, break_str, bgcolor=color.rgb(240,240,240),
+             text_color=color.rgb(60,60,60), text_size=ts,
+             text_font_family=font.family_monospace)
+        table.cell(ctbl, 1, 1, "", bgcolor=color.rgb(240,240,240), text_size=ts)
+        table.cell(ctbl, 2, 1, "", bgcolor=color.rgb(240,240,240), text_size=ts)
+
+        // Column headers
+        table.cell(ctbl, 0, 2, "Percentile", bgcolor=color.rgb(40,40,40),
+             text_color=color.rgb(150,150,150), text_size=ts,
+             text_font_family=font.family_monospace)
+        table.cell(ctbl, 1, 2, "Target",     bgcolor=color.rgb(40,40,40),
+             text_color=color.rgb(150,150,150), text_size=ts,
+             text_font_family=font.family_monospace)
+        table.cell(ctbl, 2, 2, "Status",     bgcolor=color.rgb(40,40,40),
+             text_color=color.rgb(150,150,150), text_size=ts,
+             text_font_family=font.family_monospace)
+
+        // Percentile rows
+        pct_labels = array.from("25% (fast)", "Median", "75% (slow)", "90% (grind)")
+        pct_mins   = array.from(v_tp25, v_tp50, v_tp75, v_tp90)
+
+        for pi = 0 to 3
+            plbl = array.get(pct_labels, pi)
+            pmin = array.get(pct_mins,   pi)
+            tgt_ms  = v_break_time + pmin * 60000
+            tgt_str = str.format_time(tgt_ms, "HH:mm", "America/New_York")
+            elapsed_m   = (now_ms - tgt_ms) / 60000
+            remaining_m = math.round(-elapsed_m)
+            passed      = elapsed_m >= 0
+
+            status_str = passed ?
+                 str.tostring(math.round(elapsed_m)) + "m ago ✓" : 
+                 str.tostring(remaining_m) + "m left"
+
+            remaining_frac = passed ? 0.0 : remaining_m / float(pmin)
+            cell_bg = passed ?
+                 color.new(color.green,  50) : 
+                 remaining_frac > 0.5 ?
+                 color.new(#1a3a5c,      20) : 
+                 remaining_frac > 0.2 ?
+                 color.new(color.orange, 60) : 
+                 color.new(color.red,    50)
+            txt_col = passed ? color.new(color.green, 20) : color.white
+
+            table.cell(ctbl, 0, 3 + pi, plbl, bgcolor=color.white,
+                 text_color=color.rgb(40,40,40), text_size=ts,
+                 text_font_family=font.family_monospace)
+            table.cell(ctbl, 1, 3 + pi, tgt_str, bgcolor=color.white,
+                 text_color=color.rgb(80,80,80), text_size=ts,
+                 text_font_family=font.family_monospace)
+            table.cell(ctbl, 2, 3 + pi, status_str,
+                 bgcolor=cell_bg, text_color=txt_col, text_size=ts,
+                 text_font_family=font.family_monospace)
+
+        // Hard stop row
+        if not na(v_hard_stop_ts)
+            hs_elapsed   = (now_ms - v_hard_stop_ts) / 60000
+            hs_remaining = math.round(-hs_elapsed)
+            hs_passed    = hs_elapsed >= 0
+            hs_str  = hs_passed ? "EXPIRED" : str.tostring(hs_remaining) + "m left"
+            hs_bg   = hs_passed ? color.new(color.red, 40) : color.rgb(40, 20, 20)
+            hs_tc   = hs_passed ? color.white : color.new(color.red, 20)
+            hs_time = str.format_time(v_hard_stop_ts, "HH:mm", "America/New_York")
+            table.cell(ctbl, 0, 7, "Hard Stop", bgcolor=color.rgb(255,235,235),
+                 text_color=color.rgb(180,0,0), text_size=ts,
+                 text_font_family=font.family_monospace)
+            table.cell(ctbl, 1, 7, hs_time, bgcolor=color.rgb(255,235,235),
+                 text_color=color.rgb(180,0,0), text_size=ts,
+                 text_font_family=font.family_monospace)
+            table.cell(ctbl, 2, 7, hs_str, bgcolor=hs_bg, text_color=hs_tc,
+                 text_
