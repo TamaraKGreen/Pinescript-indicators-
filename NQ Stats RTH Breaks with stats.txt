@@ -1,0 +1,157 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("NQ Stats - RTH Breaks w/stats", "RTH breaks", true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------- Inputs --------------------------------------------------
+
+// Previous Day RTH Settings
+var g_YRTH = "========= Yesterday's RTH Settings ========="
+rthhi = input.bool(true, 'High', inline='yrthhi', group=g_YRTH)
+rthhicol = input.color(color.new(color.gray, 20), '', inline='yrthhi', group=g_YRTH)
+rthhiwidth = input.int(1, '', inline='yrthhi', group=g_YRTH)
+rthlo = input.bool(true, 'Low', inline='yrthlo', group=g_YRTH)
+rthlocol = input.color(color.new(color.gray, 20), '', inline='yrthlo', group=g_YRTH)
+rthlowidth = input.int(1, '', inline='yrthlo', group=g_YRTH)
+
+// Today's RTH Settings
+var g_TRTH = "========= Today's RTH Settings ========="
+todop = input.bool(true, 'Open', inline='trthop', group=g_TRTH)
+todopcol = input.color(color.new(color.purple, 20), '', inline='trthop', group=g_TRTH)
+todopwidth = input.int(1, '', inline='trthop', group=g_TRTH)
+
+// RTH Session Settings
+var g_RTH = "========= RTH Session Settings ========="
+session_type = input.string(defval='Custom', options=['Day Session (RTH)', 'Custom'], title='Session Type', group=g_RTH)
+custom_session_times = input.session(defval="0830-1600", title='Custom Session', group=g_RTH, tooltip = 'Times are EST but daylight savings is not accounted for, if you find the RTH session opens an hour late, switch to custom and set it accordingly')
+
+// Table Settings
+var g_TABLE = "========= Statistics Table Settings ========="
+table_position = input.string("Top-Right", "Table Position", options=["Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right"], group=g_TABLE)
+table_size = input.string("Small", "Table Size", options=["Tiny", "Small", "Normal"], group=g_TABLE)
+
+// Additional Settings
+nbarsforward = input.int(20, 'Offset Labels N Bars Right', group="More Settings")
+multforward = input.float(1, "Multiply Offset for Yesterday's Labels", minval=0.25, step=0.25, group="More Settings")
+label_size = input.string('small', options=['auto', 'tiny', 'small', 'normal', 'large', 'huge'], title='Label Size', group="More Settings")
+
+// ---------------------------------------------- Variable Declarations -----------------------------------
+
+var float rth_op = na
+var float rth_hi = na
+var float rth_lo = na
+var float yest_rth_hi = na
+var float yest_rth_lo = na
+var int index_rth_start = na
+var int index_on_start = na
+var int yest_offset = na  // Added declaration
+var line rthhi_line = na
+var line rthlo_line = na
+var line op_line = na
+var label label_rth_hi = na
+var label label_rth_lo = na
+var label label_op = na
+var table stats_table = na
+var string open_status = na
+
+// ---------------------------------------------- Logic --------------------------------------------------
+
+// RTH Session Logic
+session_times = session_type == "Custom" ? custom_session_times : "0930-1600"
+session = na(time(timeframe.period, session_times)) ? false : true
+
+if timeframe.isintraday and time > last_bar_time - 5 * 24 * 60 * 60 * 1000
+    yest_offset := math.round(multforward * nbarsforward)  // Calculate yest_offset
+    if session
+        rth_op := na(rth_op) ? open : rth_op
+        rth_hi := na(rth_hi) or high > rth_hi[1] ? high : rth_hi[1]
+        rth_lo := na(rth_lo) or low < rth_lo[1] ? low : rth_lo[1]
+        if not session[1]
+            index_rth_start := bar_index
+            // Determine open status
+            if not na(yest_rth_hi) and not na(yest_rth_lo)
+                if rth_op > yest_rth_hi
+                    open_status := "Above Previous RTH"
+                else if rth_op < yest_rth_lo
+                    open_status := "Below Previous RTH"
+                else
+                    open_status := "Inside Previous RTH"
+    else
+        if session[1]
+            index_on_start := bar_index
+            yest_rth_hi := rth_hi
+            yest_rth_lo := rth_lo
+            rth_op := na
+            rth_hi := na
+            rth_lo := na
+
+// Label Size
+l_size = label_size == 'auto' ? size.auto : label_size == 'tiny' ? size.tiny : label_size == 'small' ? size.small : label_size == 'normal' ? size.normal : label_size == 'large' ? size.large : size.huge
+
+// Table Size
+t_size = table_size == "Tiny" ? size.tiny : table_size == "Small" ? size.small : size.normal
+
+// Table Position
+t_pos = table_position == "Top-Left" ? position.top_left : table_position == "Top-Right" ? position.top_right : table_position == "Bottom-Left" ? position.bottom_left : position.bottom_right
+
+// Drawing
+if barstate.islast
+    // Yesterday's RTH High
+    if rthhi and not na(yest_rth_hi)
+        if na(rthhi_line)
+            rthhi_line := line.new(index_on_start, yest_rth_hi, bar_index + yest_offset, yest_rth_hi, xloc=xloc.bar_index, color=rthhicol, width=rthhiwidth)
+            label_rth_hi := label.new(bar_index + yest_offset, yest_rth_hi, "Y.Hi " + str.tostring(yest_rth_hi), style=label.style_none, textcolor=rthhicol, size=l_size)
+        line.set_y1(rthhi_line, yest_rth_hi)
+        line.set_y2(rthhi_line, yest_rth_hi)
+        line.set_x2(rthhi_line, bar_index + yest_offset)
+        label.set_y(label_rth_hi, yest_rth_hi)
+        label.set_x(label_rth_hi, bar_index + yest_offset)
+        label.set_text(label_rth_hi, "Y.Hi " + str.tostring(yest_rth_hi))
+    
+    // Yesterday's RTH Low
+    if rthlo and not na(yest_rth_lo)
+        if na(rthlo_line)
+            rthlo_line := line.new(index_on_start, yest_rth_lo, bar_index + yest_offset, yest_rth_lo, xloc=xloc.bar_index, color=rthlocol, width=rthlowidth)
+            label_rth_lo := label.new(bar_index + yest_offset, yest_rth_lo, "Y.Lo " + str.tostring(yest_rth_lo), style=label.style_none, textcolor=rthlocol, size=l_size)
+        line.set_y1(rthlo_line, yest_rth_lo)
+        line.set_y2(rthlo_line, yest_rth_lo)
+        line.set_x2(rthlo_line, bar_index + yest_offset)
+        label.set_y(label_rth_lo, yest_rth_lo)
+        label.set_x(label_rth_lo, bar_index + yest_offset)
+        label.set_text(label_rth_lo, "Y.Lo " + str.tostring(yest_rth_lo))
+    
+    // Today's RTH Open
+    if todop and not na(rth_op)
+        if na(op_line)
+            op_line := line.new(index_rth_start, rth_op, bar_index + nbarsforward, rth_op, xloc=xloc.bar_index, color=todopcol, width=todopwidth, style=line.style_dashed)
+            label_op := label.new(bar_index + nbarsforward, rth_op, "RTH Op " + str.tostring(rth_op), style=label.style_none, textcolor=todopcol, size=l_size)
+        line.set_y1(op_line, rth_op)
+        line.set_y2(op_line, rth_op)
+        line.set_x2(op_line, bar_index + nbarsforward)
+        label.set_y(label_op, rth_op)
+        label.set_x(label_op, bar_index + nbarsforward)
+        label.set_text(label_op, "RTH Op " + str.tostring(rth_op))
+    
+    // Statistics Table
+    if not na(rth_op) and not na(open_status)
+        if na(stats_table)
+            stats_table := table.new(t_pos, 2, 4, border_width=1, border_color=color.black)
+        
+        // Table Formatting
+        table.cell(stats_table, 0, 0, "Current RTH Open Status", bgcolor=color.black, text_color=color.white, text_size=t_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 0, 1, open_status, bgcolor=color.white, text_color=color.black, text_size=t_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, 0, "Probabilities", bgcolor=color.black, text_color=color.white, text_size=t_size, text_font_family=font.family_monospace)
+        
+        // Populate Statistics
+        var string stats_text = ""
+        if open_status == "Above Previous RTH"
+            stats_text := "Doesn't break prev RTH low: 84.11%\nBreaks prev RTH low: 15.89%"
+        else if open_status == "Below Previous RTH"
+            stats_text := "Doesn't break prev RTH high: 81.82%\nBreaks prev RTH high: 18.18%"
+        else if open_status == "Inside Previous RTH"
+            stats_text := "Stays inside prev RTH: 14.30%\nBreaks one side: 72.66%\nBreaks both sides: 13.04%"
+        else
+            stats_text := "No data available"
+        
+        table.cell(stats_table, 1, 1, stats_text, bgcolor=color.white, text_color=color.black, text_size=t_size, text_font_family=font.family_monospace)

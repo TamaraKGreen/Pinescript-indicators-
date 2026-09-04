@@ -1,0 +1,680 @@
+//@version=6
+indicator(title = "6-9 session & levels", shorttitle = "6-9", overlay=true)
+
+// === Input Definitions ===
+
+// Input Groups
+var g_SESS = "========= Session Settings =========="
+var g_ANCHOR = "========= Anchor Settings =========="
+var g_RANGE = "========= Range Box Settings =========="
+var g_RANGE_LEVELS = "========= Range Levels (25%/50%/75%) =========="
+var g_RANGE_DEVIATIONS = "========= Range Deviations =========="
+var g_PREV_RTH = "========= Previous Day RTH Levels =========="
+var g_TIME_ZONES = "========= Time Zones =========="
+var g_FIB = "========= Fibonacci Extension Settings =========="
+var g_SESSION_HL = "========= Session High/Low Settings =========="
+var g_EXT_STATS = "========= Extension Stats Settings =========="
+var g_TABLES = "========= Tables =========="
+var g_DISPLAY = "========= Display Settings =========="
+
+// Session Settings
+session_time_levels = input.string("0600-0900", "Levels Session Time (HHMM-HHMM)", tooltip="Session range for calculating range levels", group=g_SESS)
+time_zone = input.string("America/New_York", "Time Zone", options=["UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"], group=g_SESS)
+
+// Anchor Settings
+show_anchor = input.bool(true, "Show Session Anchor", inline="anchor", group=g_ANCHOR)
+anchor_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="anchor", group=g_ANCHOR)
+anchor_color = input.color(color.black, "", inline="anchor", group=g_ANCHOR)
+anchor_width = input.int(1, "", minval=1, maxval=4, inline="anchor", group=g_ANCHOR)
+show_anchor_label = input.bool(true, "Show Anchor Label", group=g_ANCHOR)
+
+// Session Open Line Settings
+show_session_open = input.bool(false, "Show Session Open Line", inline="session_open", group=g_ANCHOR)
+session_open_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="session_open", group=g_ANCHOR)
+session_open_color = input.color(color.gray, "", inline="session_open", group=g_ANCHOR)
+session_open_width = input.int(1, "", minval=1, maxval=4, inline="session_open", group=g_ANCHOR)
+show_session_open_label = input.bool(true, "Show Session Open Label", group=g_ANCHOR)
+
+// Range Box Settings
+show_range_box = input.bool(true, "Show Range Box", inline="range_box", group=g_RANGE)
+range_box_color = input.color(color.new(color.blue, 80), "", inline="range_box", group=g_RANGE)
+
+// Range Levels Settings
+show_range_levels = input.bool(true, "Show Range Levels", group=g_RANGE_LEVELS)
+range_25_color = input.color(color.teal, "25% Level Color", inline="range_25", group=g_RANGE_LEVELS)
+range_25_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="range_25", group=g_RANGE_LEVELS)
+range_25_width = input.int(1, "", minval=1, maxval=4, inline="range_25", group=g_RANGE_LEVELS)
+range_50_color = input.color(color.purple, "50% Level Color", inline="range_50", group=g_RANGE_LEVELS)
+range_50_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="range_50", group=g_RANGE_LEVELS)
+range_50_width = input.int(1, "", minval=1, maxval=4, inline="range_50", group=g_RANGE_LEVELS)
+range_75_color = input.color(color.teal, "75% Level Color", inline="range_75", group=g_RANGE_LEVELS)
+range_75_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="range_75", group=g_RANGE_LEVELS)
+range_75_width = input.int(1, "", minval=1, maxval=4, inline="range_75", group=g_RANGE_LEVELS)
+show_range_level_labels = input.bool(true, "Show Range Level Labels", group=g_RANGE_LEVELS)
+
+// Range Deviations Settings
+show_range_deviations = input.bool(true, "Show Range Deviations", group=g_RANGE_DEVIATIONS)
+dev_05_color = input.color(color.silver, "0.5x Range Deviation Color", inline="dev_05", group=g_RANGE_DEVIATIONS)
+dev_05_style = input.string("Dashed", "", options=["Solid", "Dashed", "Dotted"], inline="dev_05", group=g_RANGE_DEVIATIONS)
+dev_05_width = input.int(1, "", minval=1, maxval=4, inline="dev_05", group=g_RANGE_DEVIATIONS)
+dev_10_color = input.color(color.silver, "1.0x Range Deviation Color", inline="dev_10", group=g_RANGE_DEVIATIONS)
+dev_10_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="dev_10", group=g_RANGE_DEVIATIONS)
+dev_10_width = input.int(1, "", minval=1, maxval=4, inline="dev_10", group=g_RANGE_DEVIATIONS)
+dev_20_color = input.color(color.silver, "2.0x Range Deviation Color", inline="dev_20", group=g_RANGE_DEVIATIONS)
+dev_20_style = input.string("Dashed", "", options=["Solid", "Dashed", "Dotted"], inline="dev_20", group=g_RANGE_DEVIATIONS)
+dev_20_width = input.int(1, "", minval=1, maxval=4, inline="dev_20", group=g_RANGE_DEVIATIONS)
+show_range_deviation_labels = input.bool(true, "Show Range Deviation Labels", group=g_RANGE_DEVIATIONS)
+
+// Previous Day RTH Levels Settings
+show_prev_rth = input.bool(true, "Show Previous Day RTH Levels", group=g_PREV_RTH)
+prev_rth_high_color = input.color(color.red, "Previous RTH High Color", inline="prev_rth_high", group=g_PREV_RTH)
+prev_rth_high_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="prev_rth_high", group=g_PREV_RTH)
+prev_rth_high_width = input.int(1, "", minval=1, maxval=4, inline="prev_rth_high", group=g_PREV_RTH)
+prev_rth_low_color = input.color(color.lime, "Previous RTH Low Color", inline="prev_rth_low", group=g_PREV_RTH)
+prev_rth_low_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="prev_rth_low", group=g_PREV_RTH)
+prev_rth_low_width = input.int(1, "", minval=1, maxval=4, inline="prev_rth_low", group=g_PREV_RTH)
+show_prev_rth_labels = input.bool(true, "Show Previous RTH Labels", group=g_PREV_RTH)
+
+// Time Zones Settings
+show_940_950_zone = input.bool(true, "Show 9:40-9:50 AM Zone", group=g_TIME_ZONES)
+zone_940_950_color = input.color(color.new(color.blue, 85), "9:40-9:50 AM Zone Color", group=g_TIME_ZONES)
+zone_940_950_label_color = input.color(color.blue, "Zone Label Color", group=g_TIME_ZONES)
+zone_label_text = input.string("9:40-9:50am reversal zone", "Zone Label Text", group=g_TIME_ZONES)
+
+// Fibonacci Extension Settings
+show_fib_ext = input.bool(true, "Show Fibonacci Extensions", group=g_FIB)
+fib_ext_color = input.color(color.gray, "Fib Extension Color", group=g_FIB)
+fib_ext_style = input.string("Dashed", "Fib Extension Style", options=["Solid", "Dashed", "Dotted"], group=g_FIB)
+fib_ext_width = input.int(1, "Fib Extension Width", minval=1, maxval=4, group=g_FIB)
+show_fib_ext_labels = input.bool(true, "Show Fib Extension Labels", group=g_FIB)
+fib_ext_level_1 = input.float(1.33, "Fib Ext Level 1", minval=0, maxval=5, step=0.1, group=g_FIB)
+fib_ext_level_2 = input.float(1.66, "Fib Ext Level 2", minval=0, maxval=5, step=0.1, group=g_FIB)
+show_fib_fills = input.bool(true, "Show Fibonacci Extension Fills", group=g_FIB)
+fib_fill_color = input.color(color.new(color.gray, 90), "Fib Extension Fill Color", group=g_FIB)
+
+// Session High/Low Line Settings
+show_session_hl = input.bool(true, "Show Session High/Low Lines", inline="session_hl", group=g_SESSION_HL)
+session_hl_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="session_hl", group=g_SESSION_HL)
+session_hl_color = input.color(color.blue, "", inline="session_hl", group=g_SESSION_HL)
+session_hl_width = input.int(1, "", minval=1, maxval=4, inline="session_hl", group=g_SESSION_HL)
+show_session_hl_label = input.bool(true, "Show Session High/Low Labels", group=g_SESSION_HL)
+
+// Extension Stats Settings
+show_extension_stats = input.bool(false, "Show Statistical Levels on Chart", group=g_EXT_STATS)
+extension_anchor = input.string("High/Low", "Extension Anchor Point", options=["Open", "High/Low"], group=g_EXT_STATS)
+sample_size = input.int(60, "Number of Sessions for Statistics", minval=1, maxval=100, tooltip="Number of previous sessions to use for calculating mean and median extensions", group=g_EXT_STATS)
+mean_high_color = input.color(color.gray, "Mean High Extension Color", inline="mean_high", group=g_EXT_STATS)
+mean_high_style = input.string("Dashed", "", options=["Solid", "Dashed", "Dotted"], inline="mean_high", group=g_EXT_STATS)
+mean_high_width = input.int(1, "", minval=1, maxval=4, inline="mean_high", group=g_EXT_STATS)
+median_high_color = input.color(color.gray, "Median High Extension Color", inline="median_high", group=g_EXT_STATS)
+median_high_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="median_high", group=g_EXT_STATS)
+median_high_width = input.int(1, "", minval=1, maxval=4, inline="median_high", group=g_EXT_STATS)
+mean_low_color = input.color(color.gray, "Mean Low Extension Color", inline="mean_low", group=g_EXT_STATS)
+mean_low_style = input.string("Dashed", "", options=["Solid", "Dashed", "Dotted"], inline="mean_low", group=g_EXT_STATS)
+mean_low_width = input.int(1, "", minval=1, maxval=4, inline="mean_low", group=g_EXT_STATS)
+median_low_color = input.color(color.gray, "Median Low Extension Color", inline="median_low", group=g_EXT_STATS)
+median_low_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="median_low", group=g_EXT_STATS)
+median_low_width = input.int(1, "", minval=1, maxval=4, inline="median_low", group=g_EXT_STATS)
+
+// Tables Settings
+show_stats_table = input.bool(true, "Show Statistics Table", group=g_TABLES)
+table_position = input.string("Bottom Right", "Table Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+table_text_size = input.string("Small", "Table Text Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+
+// Display Settings
+projection_offset = input.int(24, "Projection Offset (Bars)", minval=0, group=g_DISPLAY)
+label_size = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_DISPLAY)
+price_precision = input.int(2, "Price Decimal Precision", minval=0, maxval=6, group=g_DISPLAY)
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_label_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size_string == "Normal" ? size.normal : size.large
+
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+get_label_style() =>
+    label.style_label_left
+
+format_price(price) =>
+    str.tostring(price, "#." + str.repeat("0", price_precision))
+
+// === Session Detection ===
+is_in_session_levels = not na(time(timeframe.period, session_time_levels, time_zone))
+is_session_start_levels = is_in_session_levels and not is_in_session_levels[1]
+is_session_end_levels = not is_in_session_levels and is_in_session_levels[1]
+
+// Previous Day RTH Session Detection (9:30 AM to 4:00 PM ET)
+rth_session = "0930-1600"
+rth_timezone = "America/New_York"
+is_in_rth_session = not na(time(timeframe.period, rth_session, rth_timezone))
+is_rth_session_start = is_in_rth_session and not is_in_rth_session[1]
+is_rth_session_end = not is_in_rth_session and is_in_rth_session[1]
+
+// 9:40-9:50 AM NY Time Zone Detection
+zone_940_950_session = "0940-0950"
+zone_940_950_timezone = "America/New_York"
+is_in_940_950_zone = not na(time(timeframe.period, zone_940_950_session, zone_940_950_timezone))
+is_940_950_zone_start = is_in_940_950_zone and not is_in_940_950_zone[1]
+is_940_950_zone_end = not is_in_940_950_zone and is_in_940_950_zone[1]
+
+// === Session Data Tracking for Levels ===
+var float session_open = na
+var float session_high = na
+var float session_low = na
+var int session_start_bar = na
+var int session_end_bar = na
+
+// Previous Day RTH Session Data Tracking
+var float prev_rth_high = na
+var float prev_rth_low = na
+var float current_rth_high = na
+var float current_rth_low = na
+
+// 9:40-9:50 AM Zone Tracking
+var int zone_940_950_start_bar = na
+var int zone_940_950_end_bar = na
+var float zone_940_950_high = na
+var float zone_940_950_low = na
+
+if is_rth_session_start
+    current_rth_high := high
+    current_rth_low := low
+else if is_in_rth_session
+    current_rth_high := math.max(current_rth_high, high)
+    current_rth_low := math.min(current_rth_low, low)
+if is_rth_session_end
+    prev_rth_high := current_rth_high
+    prev_rth_low := current_rth_low
+
+// 9:40-9:50 AM Zone Session Tracking
+if is_940_950_zone_start
+    zone_940_950_start_bar := bar_index
+    zone_940_950_high := high
+    zone_940_950_low := low
+else if is_in_940_950_zone
+    zone_940_950_high := math.max(zone_940_950_high, high)
+    zone_940_950_low := math.min(zone_940_950_low, low)
+if is_940_950_zone_end
+    zone_940_950_end_bar := bar_index
+
+if is_session_start_levels
+    session_open := open
+    session_high := high
+    session_low := low
+    session_start_bar := bar_index
+else if is_in_session_levels
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+if is_session_end_levels
+    session_end_bar := bar_index
+
+// === Range Box Plotting ===
+if show_range_box and is_session_end_levels and not na(session_high) and not na(session_low)
+    box.new(left=session_start_bar, top=session_high, right=session_end_bar, bottom=session_low, bgcolor=range_box_color, border_color=color.gray)
+
+// === 9:40-9:50 AM Zone Highlighting ===
+if show_940_950_zone and is_940_950_zone_end and not na(zone_940_950_start_bar) and not na(zone_940_950_end_bar)
+    // Create vertical lines at start and end of the time zone
+    start_line = line.new(x1=zone_940_950_start_bar, y1=low, x2=zone_940_950_start_bar, y2=high, xloc=xloc.bar_index, extend=extend.both, color=zone_940_950_label_color, style=line.style_solid, width=1)
+    end_line = line.new(x1=zone_940_950_end_bar, y1=low, x2=zone_940_950_end_bar, y2=high, xloc=xloc.bar_index, extend=extend.both, color=zone_940_950_label_color, style=line.style_solid, width=1)
+    
+    // Create gray shading between the lines using linefill
+    zone_fill = linefill.new(start_line, end_line, color=zone_940_950_color)
+    
+    // Add label to describe the zone - positioned well above the current high
+    label_y_position = zone_940_950_high + (zone_940_950_high - zone_940_950_low) * 0.5  // 50% of range above the high
+    zone_label = label.new(x=math.round((zone_940_950_start_bar + zone_940_950_end_bar) / 2), y=label_y_position, text=zone_label_text, style=label.style_none, color=color.new(color.white, 20), textcolor=zone_940_950_label_color, size=get_label_size(label_size))
+
+// === Range and Extension Calculations ===
+var float[] range_distances = array.new_float(0)
+var float[] high_extensions = array.new_float(0)
+var float[] low_extensions = array.new_float(0)
+
+if is_session_end_levels
+    float sess_range = session_high - session_low
+    float high_ext = session_high - session_open
+    float low_ext = session_open - session_low
+    if not na(sess_range)
+        array.push(range_distances, sess_range)
+        // Keep only the specified number of sessions
+        if array.size(range_distances) > sample_size
+            array.shift(range_distances)
+    if not na(high_ext)
+        array.push(high_extensions, high_ext)
+        // Keep only the specified number of sessions
+        if array.size(high_extensions) > sample_size
+            array.shift(high_extensions)
+    if not na(low_ext)
+        array.push(low_extensions, low_ext)
+        // Keep only the specified number of sessions
+        if array.size(low_extensions) > sample_size
+            array.shift(low_extensions)
+
+// === Calculate Range and Extension Statistics ===
+avg_range = array.size(range_distances) > 0 ? array.avg(range_distances) : na
+std_dev_range = array.size(range_distances) > 1 ? array.stdev(range_distances) : na
+mean_high_extension = array.size(high_extensions) > 0 ? array.avg(high_extensions) : na
+median_high_extension = array.size(high_extensions) > 0 ? array.median(high_extensions) : na
+mean_low_extension = array.size(low_extensions) > 0 ? array.avg(low_extensions) : na
+median_low_extension = array.size(low_extensions) > 0 ? array.median(low_extensions) : na
+
+// Mean and Median Extension Levels
+float mean_high_level = na
+float median_high_level = na
+float mean_low_level = na
+float median_low_level = na
+if extension_anchor == "Open"
+    mean_high_level := not na(mean_high_extension) ? session_open + mean_high_extension : na
+    median_high_level := not na(median_high_extension) ? session_open + median_high_extension : na
+    mean_low_level := not na(mean_low_extension) ? session_open - mean_low_extension : na
+    median_low_level := not na(median_low_extension) ? session_open - median_low_extension : na
+else if extension_anchor == "High/Low"
+    mean_high_level := not na(mean_high_extension) ? session_high + mean_high_extension : na
+    median_high_level := not na(median_high_extension) ? session_high + median_high_extension : na
+    mean_low_level := not na(mean_low_extension) ? session_low - mean_low_extension : na
+    median_low_level := not na(median_low_extension) ? session_low - median_low_extension : na
+
+// Range Level Calculations
+float sess_range = session_high - session_low
+float range_25_level = session_low + (sess_range * 0.25)
+float range_50_level = session_low + (sess_range * 0.50)
+float range_75_level = session_low + (sess_range * 0.75)
+
+// Range Deviation Calculations
+float dev_05_upper = session_high + (sess_range * 0.5)
+float dev_05_lower = session_low - (sess_range * 0.5)
+float dev_10_upper = session_high + (sess_range * 1.0)
+float dev_10_lower = session_low - (sess_range * 1.0)
+float dev_20_upper = session_high + (sess_range * 2.0)
+float dev_20_lower = session_low - (sess_range * 2.0)
+
+// Fibonacci Extension Levels
+float fib_ext_1_upper = session_high + (sess_range * fib_ext_level_1)
+float fib_ext_1_lower = session_low - (sess_range * fib_ext_level_1)
+float fib_ext_2_upper = session_high + (sess_range * fib_ext_level_2)
+float fib_ext_2_lower = session_low - (sess_range * fib_ext_level_2)
+
+// === Plotting Levels and Labels ===
+var line anchor_line = na
+var label anchor_label = na
+var line session_open_line = na
+var label session_open_label = na
+var line upper_range_std1_line = na
+var label upper_range_std1_label = na
+var line lower_range_std1_line = na
+var label lower_range_std1_label = na
+var line upper_range_std2_line = na
+var label upper_range_std2_label = na
+var line lower_range_std2_line = na
+var label lower_range_std2_label = na
+var line fib_level_1_line = na
+var label fib_level_1_label = na
+var line fib_level_2_line = na
+var label fib_level_2_label = na
+var line fib_level_3_line = na
+var label fib_level_3_label = na
+var line fib_ext_1_upper_line = na
+var label fib_ext_1_upper_label = na
+var line fib_ext_1_lower_line = na
+var label fib_ext_1_lower_label = na
+var line fib_ext_2_upper_line = na
+var label fib_ext_2_upper_label = na
+var line fib_ext_2_lower_line = na
+var label fib_ext_2_lower_label = na
+var line session_high_line = na
+var label session_high_label = na
+var line session_low_line = na
+var label session_low_label = na
+var line mean_high_line = na
+var label mean_high_label = na
+var line median_high_line = na
+var label median_high_label = na
+var line mean_low_line = na
+var label mean_low_label = na
+var line median_low_line = na
+var label median_low_label = na
+var line range_25_line = na
+var label range_25_label = na
+var line range_50_line = na
+var label range_50_label = na
+var line range_75_line = na
+var label range_75_label = na
+var line dev_05_upper_line = na
+var label dev_05_upper_label = na
+var line dev_05_lower_line = na
+var label dev_05_lower_label = na
+var line dev_10_upper_line = na
+var label dev_10_upper_label = na
+var line dev_10_lower_line = na
+var label dev_10_lower_label = na
+var line dev_20_upper_line = na
+var label dev_20_upper_label = na
+var line dev_20_lower_line = na
+var label dev_20_lower_label = na
+var line prev_rth_high_line = na
+var label prev_rth_high_label = na
+var line prev_rth_low_line = na
+var label prev_rth_low_label = na
+var linefill upper_fib_fill = na
+var linefill lower_fib_fill = na
+var table stats_table = na
+
+if bar_index == 0
+    anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
+    anchor_label := label.new(bar_index, na, "Anchor", style=get_label_style(), color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
+    session_open_line := line.new(bar_index, na, bar_index+1, na, color=session_open_color, style=get_line_style(session_open_style), width=session_open_width)
+    session_open_label := label.new(bar_index, na, "Session Open", style=get_label_style(), color=color.new(session_open_color, 100), textcolor=session_open_color, size=get_label_size(label_size))
+    fib_ext_1_upper_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_1_upper_label := label.new(bar_index, na, "+" + str.tostring(fib_ext_level_1) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    fib_ext_1_lower_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_1_lower_label := label.new(bar_index, na, "-" + str.tostring(fib_ext_level_1) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    fib_ext_2_upper_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_2_upper_label := label.new(bar_index, na, "+" + str.tostring(fib_ext_level_2) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    fib_ext_2_lower_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_2_lower_label := label.new(bar_index, na, "-" + str.tostring(fib_ext_level_2) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    session_high_line := line.new(bar_index, na, bar_index+1, na, color=session_hl_color, style=get_line_style(session_hl_style), width=session_hl_width)
+    session_high_label := label.new(bar_index, na, "Session High", style=get_label_style(), color=color.new(session_hl_color, 100), textcolor=session_hl_color, size=get_label_size(label_size))
+    session_low_line := line.new(bar_index, na, bar_index+1, na, color=session_hl_color, style=get_line_style(session_hl_style), width=session_hl_width)
+    session_low_label := label.new(bar_index, na, "Session Low", style=get_label_style(), color=color.new(session_hl_color, 100), textcolor=session_hl_color, size=get_label_size(label_size))
+    mean_high_line := line.new(bar_index, na, bar_index + 1, na, color=mean_high_color, style=get_line_style(mean_high_style), width=mean_high_width)
+    median_high_line := line.new(bar_index, na, bar_index + 1, na, color=median_high_color, style=get_line_style(median_high_style), width=median_high_width)
+    mean_low_line := line.new(bar_index, na, bar_index + 1, na, color=mean_low_color, style=get_line_style(mean_low_style), width=mean_low_width)
+    median_low_line := line.new(bar_index, na, bar_index + 1, na, color=median_low_color, style=get_line_style(median_low_style), width=median_low_width)
+    mean_high_label := label.new(bar_index, na, "Mean High Ext", style=get_label_style(), color=color.new(mean_high_color, 100), textcolor=mean_high_color, size=get_label_size(label_size))
+    median_high_label := label.new(bar_index, na, "Median High Ext", style=get_label_style(), color=color.new(median_high_color, 100), textcolor=median_high_color, size=get_label_size(label_size))
+    mean_low_label := label.new(bar_index, na, "Mean Low Ext", style=get_label_style(), color=color.new(mean_low_color, 100), textcolor=mean_low_color, size=get_label_size(label_size))
+    median_low_label := label.new(bar_index, na, "Median Low Ext", style=get_label_style(), color=color.new(median_low_color, 100), textcolor=median_low_color, size=get_label_size(label_size))
+    
+    // Range level lines and labels
+    range_25_line := line.new(bar_index, na, bar_index+1, na, color=range_25_color, style=get_line_style(range_25_style), width=range_25_width)
+    range_25_label := label.new(bar_index, na, "25% Range", style=get_label_style(), color=color.new(range_25_color, 100), textcolor=range_25_color, size=get_label_size(label_size))
+    range_50_line := line.new(bar_index, na, bar_index+1, na, color=range_50_color, style=get_line_style(range_50_style), width=range_50_width)
+    range_50_label := label.new(bar_index, na, "50% Range", style=get_label_style(), color=color.new(range_50_color, 100), textcolor=range_50_color, size=get_label_size(label_size))
+    range_75_line := line.new(bar_index, na, bar_index+1, na, color=range_75_color, style=get_line_style(range_75_style), width=range_75_width)
+    range_75_label := label.new(bar_index, na, "75% Range", style=get_label_style(), color=color.new(range_75_color, 100), textcolor=range_75_color, size=get_label_size(label_size))
+    
+    // Range deviation lines and labels
+    dev_05_upper_line := line.new(bar_index, na, bar_index+1, na, color=dev_05_color, style=get_line_style(dev_05_style), width=dev_05_width)
+    dev_05_upper_label := label.new(bar_index, na, "+0.5x Range", style=get_label_style(), color=color.new(dev_05_color, 100), textcolor=dev_05_color, size=get_label_size(label_size))
+    dev_05_lower_line := line.new(bar_index, na, bar_index+1, na, color=dev_05_color, style=get_line_style(dev_05_style), width=dev_05_width)
+    dev_05_lower_label := label.new(bar_index, na, "-0.5x Range", style=get_label_style(), color=color.new(dev_05_color, 100), textcolor=dev_05_color, size=get_label_size(label_size))
+    dev_10_upper_line := line.new(bar_index, na, bar_index+1, na, color=dev_10_color, style=get_line_style(dev_10_style), width=dev_10_width)
+    dev_10_upper_label := label.new(bar_index, na, "+1.0x Range", style=get_label_style(), color=color.new(dev_10_color, 100), textcolor=dev_10_color, size=get_label_size(label_size))
+    dev_10_lower_line := line.new(bar_index, na, bar_index+1, na, color=dev_10_color, style=get_line_style(dev_10_style), width=dev_10_width)
+    dev_10_lower_label := label.new(bar_index, na, "-1.0x Range", style=get_label_style(), color=color.new(dev_10_color, 100), textcolor=dev_10_color, size=get_label_size(label_size))
+    dev_20_upper_line := line.new(bar_index, na, bar_index+1, na, color=dev_20_color, style=get_line_style(dev_20_style), width=dev_20_width)
+    dev_20_upper_label := label.new(bar_index, na, "+2.0x Range", style=get_label_style(), color=color.new(dev_20_color, 100), textcolor=dev_20_color, size=get_label_size(label_size))
+    dev_20_lower_line := line.new(bar_index, na, bar_index+1, na, color=dev_20_color, style=get_line_style(dev_20_style), width=dev_20_width)
+    dev_20_lower_label := label.new(bar_index, na, "-2.0x Range", style=get_label_style(), color=color.new(dev_20_color, 100), textcolor=dev_20_color, size=get_label_size(label_size))
+    
+    // Previous RTH level lines and labels
+    prev_rth_high_line := line.new(bar_index, na, bar_index+1, na, color=prev_rth_high_color, style=get_line_style(prev_rth_high_style), width=prev_rth_high_width)
+    prev_rth_high_label := label.new(bar_index, na, "Prev RTH High", style=get_label_style(), color=color.new(prev_rth_high_color, 100), textcolor=prev_rth_high_color, size=get_label_size(label_size))
+    prev_rth_low_line := line.new(bar_index, na, bar_index+1, na, color=prev_rth_low_color, style=get_line_style(prev_rth_low_style), width=prev_rth_low_width)
+    prev_rth_low_label := label.new(bar_index, na, "Prev RTH Low", style=get_label_style(), color=color.new(prev_rth_low_color, 100), textcolor=prev_rth_low_color, size=get_label_size(label_size))
+    
+    upper_fib_fill := linefill.new(fib_ext_1_upper_line, fib_ext_2_upper_line, color=fib_fill_color)
+    lower_fib_fill := linefill.new(fib_ext_1_lower_line, fib_ext_2_lower_line, color=fib_fill_color)
+    
+    // Initialize statistics table
+    if show_stats_table
+        stats_table := table.new(get_table_position(table_position), 2, 3, bgcolor=color.white, border_width=1, border_color=color.gray)
+        
+        // Header row
+        table.cell(stats_table, 0, 0, "Statistic", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size), bgcolor=color.new(color.gray, 90))
+        table.cell(stats_table, 1, 0, "Value", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size), bgcolor=color.new(color.gray, 90))
+        
+        // Static row headers
+        table.cell(stats_table, 0, 1, "Range (pts)", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+        table.cell(stats_table, 0, 2, "Sample Size", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+
+// === Plotting Levels and Labels ===
+
+// Session Anchor (at 06:00 EST)
+if is_session_start_levels and show_anchor
+    line.set_xy1(anchor_line, bar_index, session_open)
+    line.set_xy2(anchor_line, bar_index, session_open)
+    if show_anchor_label and not na(avg_range)
+        label.set_xy(anchor_label, bar_index, session_open + avg_range)
+        label.set_text(anchor_label, "Anchor - " + format_price(session_open))
+
+// Plot Levels at Session End (09:00 EST)
+if is_session_end_levels and show_session_open
+    line.set_xy1(session_open_line, bar_index, session_open)
+    line.set_xy2(session_open_line, bar_index + projection_offset, session_open)
+    if show_session_open_label
+        label.set_xy(session_open_label, bar_index + projection_offset, session_open)
+        label.set_text(session_open_label, "Session Open - " + format_price(session_open))
+
+// Range Levels
+if is_session_end_levels and show_range_levels and not na(sess_range)
+    line.set_xy1(range_25_line, bar_index, range_25_level)
+    line.set_xy2(range_25_line, bar_index + projection_offset, range_25_level)
+    line.set_xy1(range_50_line, bar_index, range_50_level)
+    line.set_xy2(range_50_line, bar_index + projection_offset, range_50_level)
+    line.set_xy1(range_75_line, bar_index, range_75_level)
+    line.set_xy2(range_75_line, bar_index + projection_offset, range_75_level)
+    if show_range_level_labels
+        label.set_xy(range_25_label, bar_index + projection_offset, range_25_level)
+        label.set_text(range_25_label, "25% Range - " + format_price(range_25_level))
+        label.set_xy(range_50_label, bar_index + projection_offset, range_50_level)
+        label.set_text(range_50_label, "50% Range - " + format_price(range_50_level))
+        label.set_xy(range_75_label, bar_index + projection_offset, range_75_level)
+        label.set_text(range_75_label, "75% Range - " + format_price(range_75_level))
+
+// Range Deviations
+if is_session_end_levels and show_range_deviations and not na(sess_range)
+    line.set_xy1(dev_05_upper_line, bar_index, dev_05_upper)
+    line.set_xy2(dev_05_upper_line, bar_index + projection_offset, dev_05_upper)
+    line.set_xy1(dev_05_lower_line, bar_index, dev_05_lower)
+    line.set_xy2(dev_05_lower_line, bar_index + projection_offset, dev_05_lower)
+    line.set_xy1(dev_10_upper_line, bar_index, dev_10_upper)
+    line.set_xy2(dev_10_upper_line, bar_index + projection_offset, dev_10_upper)
+    line.set_xy1(dev_10_lower_line, bar_index, dev_10_lower)
+    line.set_xy2(dev_10_lower_line, bar_index + projection_offset, dev_10_lower)
+    line.set_xy1(dev_20_upper_line, bar_index, dev_20_upper)
+    line.set_xy2(dev_20_upper_line, bar_index + projection_offset, dev_20_upper)
+    line.set_xy1(dev_20_lower_line, bar_index, dev_20_lower)
+    line.set_xy2(dev_20_lower_line, bar_index + projection_offset, dev_20_lower)
+    if show_range_deviation_labels
+        label.set_xy(dev_05_upper_label, bar_index + projection_offset, dev_05_upper)
+        label.set_text(dev_05_upper_label, "+0.5x Range - " + format_price(dev_05_upper))
+        label.set_xy(dev_05_lower_label, bar_index + projection_offset, dev_05_lower)
+        label.set_text(dev_05_lower_label, "-0.5x Range - " + format_price(dev_05_lower))
+        label.set_xy(dev_10_upper_label, bar_index + projection_offset, dev_10_upper)
+        label.set_text(dev_10_upper_label, "+1.0x Range - " + format_price(dev_10_upper))
+        label.set_xy(dev_10_lower_label, bar_index + projection_offset, dev_10_lower)
+        label.set_text(dev_10_lower_label, "-1.0x Range - " + format_price(dev_10_lower))
+        label.set_xy(dev_20_upper_label, bar_index + projection_offset, dev_20_upper)
+        label.set_text(dev_20_upper_label, "+2.0x Range - " + format_price(dev_20_upper))
+        label.set_xy(dev_20_lower_label, bar_index + projection_offset, dev_20_lower)
+        label.set_text(dev_20_lower_label, "-2.0x Range - " + format_price(dev_20_lower))
+
+// Previous Day RTH Levels - Plot continuously when available
+if show_prev_rth and not na(prev_rth_high) and not na(prev_rth_low)
+    line.set_xy1(prev_rth_high_line, bar_index, prev_rth_high)
+    line.set_xy2(prev_rth_high_line, bar_index + projection_offset, prev_rth_high)
+    line.set_xy1(prev_rth_low_line, bar_index, prev_rth_low)
+    line.set_xy2(prev_rth_low_line, bar_index + projection_offset, prev_rth_low)
+    if show_prev_rth_labels
+        label.set_xy(prev_rth_high_label, bar_index + projection_offset, prev_rth_high)
+        label.set_text(prev_rth_high_label, "Prev RTH High - " + format_price(prev_rth_high))
+        label.set_xy(prev_rth_low_label, bar_index + projection_offset, prev_rth_low)
+        label.set_text(prev_rth_low_label, "Prev RTH Low - " + format_price(prev_rth_low))
+
+// Fibonacci Extensions
+if is_session_end_levels and show_fib_ext and not na(sess_range)
+    line.set_xy1(fib_ext_1_upper_line, bar_index, fib_ext_1_upper)
+    line.set_xy2(fib_ext_1_upper_line, bar_index + projection_offset, fib_ext_1_upper)
+    line.set_xy1(fib_ext_1_lower_line, bar_index, fib_ext_1_lower)
+    line.set_xy2(fib_ext_1_lower_line, bar_index + projection_offset, fib_ext_1_lower)
+    line.set_xy1(fib_ext_2_upper_line, bar_index, fib_ext_2_upper)
+    line.set_xy2(fib_ext_2_upper_line, bar_index + projection_offset, fib_ext_2_upper)
+    line.set_xy1(fib_ext_2_lower_line, bar_index, fib_ext_2_lower)
+    line.set_xy2(fib_ext_2_lower_line, bar_index + projection_offset, fib_ext_2_lower)
+    
+    // Update the fills
+    if show_fib_fills
+        linefill.delete(upper_fib_fill)
+        linefill.delete(lower_fib_fill)
+        upper_fib_fill := linefill.new(fib_ext_1_upper_line, fib_ext_2_upper_line, color=fib_fill_color)
+        lower_fib_fill := linefill.new(fib_ext_1_lower_line, fib_ext_2_lower_line, color=fib_fill_color)
+    
+    if show_fib_ext_labels
+        label.set_xy(fib_ext_1_upper_label, bar_index + projection_offset, fib_ext_1_upper)
+        label.set_text(fib_ext_1_upper_label, "+" + str.tostring(fib_ext_level_1) + " Range - " + format_price(fib_ext_1_upper))
+        label.set_xy(fib_ext_1_lower_label, bar_index + projection_offset, fib_ext_1_lower)
+        label.set_text(fib_ext_1_lower_label, "-" + str.tostring(fib_ext_level_1) + " Range - " + format_price(fib_ext_1_lower))
+        label.set_xy(fib_ext_2_upper_label, bar_index + projection_offset, fib_ext_2_upper)
+        label.set_text(fib_ext_2_upper_label, "+" + str.tostring(fib_ext_level_2) + " Range - " + format_price(fib_ext_2_upper))
+        label.set_xy(fib_ext_2_lower_label, bar_index + projection_offset, fib_ext_2_lower)
+        label.set_text(fib_ext_2_lower_label, "-" + str.tostring(fib_ext_level_2) + " Range - " + format_price(fib_ext_2_lower))
+
+// Session High/Low Lines
+if is_session_end_levels and show_session_hl and not na(session_high) and not na(session_low)
+    line.set_xy1(session_high_line, bar_index, session_high)
+    line.set_xy2(session_high_line, bar_index + projection_offset, session_high)
+    line.set_xy1(session_low_line, bar_index, session_low)
+    line.set_xy2(session_low_line, bar_index + projection_offset, session_low)
+    if show_session_hl_label
+        label.set_xy(session_high_label, bar_index + projection_offset, session_high)
+        label.set_text(session_high_label, "Session High - " + format_price(session_high))
+        label.set_xy(session_low_label, bar_index + projection_offset, session_low)
+        label.set_text(session_low_label, "Session Low - " + format_price(session_low))
+
+// Extension Stats Lines and Labels
+if is_session_end_levels and show_extension_stats and not na(session_open) and not na(mean_high_level) and not na(median_high_level) and not na(mean_low_level) and not na(median_low_level)
+    line.set_xy1(mean_high_line, bar_index, mean_high_level)
+    line.set_xy2(mean_high_line, bar_index + projection_offset, mean_high_level)
+    line.set_xy1(median_high_line, bar_index, median_high_level)
+    line.set_xy2(median_high_line, bar_index + projection_offset, median_high_level)
+    line.set_xy1(mean_low_line, bar_index, mean_low_level)
+    line.set_xy2(mean_low_line, bar_index + projection_offset, mean_low_level)
+    line.set_xy1(median_low_line, bar_index, median_low_level)
+    line.set_xy2(median_low_line, bar_index + projection_offset, median_low_level)
+    if show_extension_stats
+        label.set_xy(mean_high_label, bar_index + projection_offset, mean_high_level)
+        label.set_text(mean_high_label, "Mean High Ext (" + str.tostring(array.size(high_extensions)) + ") - " + format_price(mean_high_level))
+        label.set_xy(median_high_label, bar_index + projection_offset, median_high_level)
+        label.set_text(median_high_label, "Median High Ext (" + str.tostring(array.size(high_extensions)) + ") - " + format_price(median_high_level))
+        label.set_xy(mean_low_label, bar_index + projection_offset, mean_low_level)
+        label.set_text(mean_low_label, "Mean Low Ext (" + str.tostring(array.size(low_extensions)) + ") - " + format_price(mean_low_level))
+        label.set_xy(median_low_label, bar_index + projection_offset, median_low_level)
+        label.set_text(median_low_label, "Median Low Ext (" + str.tostring(array.size(low_extensions)) + ") - " + format_price(median_low_level))
+
+// Range Statistics Table
+if show_stats_table and is_session_end_levels and not na(sess_range)
+    // Calculate range difference (current vs average)
+    range_difference = not na(avg_range) ? sess_range - avg_range : na
+    
+    // Calculate z-score
+    z_score = not na(avg_range) and not na(std_dev_range) and std_dev_range > 0 ? (sess_range - avg_range) / std_dev_range : na
+    
+    // Delete old table and create new one (now with 6 rows instead of 5)
+    table.delete(stats_table)
+    stats_table := table.new(get_table_position(table_position), 2, 6, bgcolor=color.white, border_width=1, border_color=color.gray)
+    
+    // Header row
+    table.cell(stats_table, 0, 0, "Statistic", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size), bgcolor=color.new(color.gray, 90))
+    table.cell(stats_table, 1, 0, "Value", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size), bgcolor=color.new(color.gray, 90))
+    
+    // Data rows
+    table.cell(stats_table, 0, 1, "Current Range (pts)", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    table.cell(stats_table, 1, 1, str.tostring(math.round(sess_range, 1)), text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    
+    table.cell(stats_table, 0, 2, "Avg Range (pts)", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    table.cell(stats_table, 1, 2, not na(avg_range) ? str.tostring(math.round(avg_range, 1)) : "N/A", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    
+    table.cell(stats_table, 0, 3, "Range Diff (pts)", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    range_diff_text = not na(range_difference) ? (range_difference > 0 ? "+" : "") + str.tostring(math.round(range_difference, 1)) : "N/A"
+    table.cell(stats_table, 1, 3, range_diff_text, text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    
+    // Add Z-Score row
+    table.cell(stats_table, 0, 4, "Z-Score", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    z_score_text = not na(z_score) ? str.tostring(math.round(z_score, 2)) : "N/A"
+    table.cell(stats_table, 1, 4, z_score_text, text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    
+    table.cell(stats_table, 0, 5, "Sample Size", text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+    table.cell(stats_table, 1, 5, str.tostring(array.size(range_distances)), text_color=color.new(color.gray, 20), text_size=get_table_text_size(table_text_size))
+
+// Extend Lines and Labels
+if bar_index > bar_index[1]
+    if show_session_open
+        line.set_x2(session_open_line, bar_index + projection_offset)
+        if show_session_open_label
+            label.set_x(session_open_label, bar_index + projection_offset)
+    if show_range_levels
+        line.set_x2(range_25_line, bar_index + projection_offset)
+        line.set_x2(range_50_line, bar_index + projection_offset)
+        line.set_x2(range_75_line, bar_index + projection_offset)
+        if show_range_level_labels
+            label.set_x(range_25_label, bar_index + projection_offset)
+            label.set_x(range_50_label, bar_index + projection_offset)
+            label.set_x(range_75_label, bar_index + projection_offset)
+    if show_range_deviations
+        line.set_x2(dev_05_upper_line, bar_index + projection_offset)
+        line.set_x2(dev_05_lower_line, bar_index + projection_offset)
+        line.set_x2(dev_10_upper_line, bar_index + projection_offset)
+        line.set_x2(dev_10_lower_line, bar_index + projection_offset)
+        line.set_x2(dev_20_upper_line, bar_index + projection_offset)
+        line.set_x2(dev_20_lower_line, bar_index + projection_offset)
+        if show_range_deviation_labels
+            label.set_x(dev_05_upper_label, bar_index + projection_offset)
+            label.set_x(dev_05_lower_label, bar_index + projection_offset)
+            label.set_x(dev_10_upper_label, bar_index + projection_offset)
+            label.set_x(dev_10_lower_label, bar_index + projection_offset)
+            label.set_x(dev_20_upper_label, bar_index + projection_offset)
+            label.set_x(dev_20_lower_label, bar_index + projection_offset)
+    if show_prev_rth and not na(prev_rth_high) and not na(prev_rth_low)
+        line.set_x2(prev_rth_high_line, bar_index + projection_offset)
+        line.set_x2(prev_rth_low_line, bar_index + projection_offset)
+        if show_prev_rth_labels
+            label.set_x(prev_rth_high_label, bar_index + projection_offset)
+            label.set_x(prev_rth_low_label, bar_index + projection_offset)
+    if show_fib_ext
+        line.set_x2(fib_ext_1_upper_line, bar_index + projection_offset)
+        line.set_x2(fib_ext_1_lower_line, bar_index + projection_offset)
+        line.set_x2(fib_ext_2_upper_line, bar_index + projection_offset)
+        line.set_x2(fib_ext_2_lower_line, bar_index + projection_offset)
+        if show_fib_ext_labels
+            label.set_x(fib_ext_1_upper_label, bar_index + projection_offset)
+            label.set_x(fib_ext_1_lower_label, bar_index + projection_offset)
+            label.set_x(fib_ext_2_upper_label, bar_index + projection_offset)
+            label.set_x(fib_ext_2_lower_label, bar_index + projection_offset)
+    if show_session_hl
+        line.set_x2(session_high_line, bar_index + projection_offset)
+        line.set_x2(session_low_line, bar_index + projection_offset)
+        if show_session_hl_label
+            label.set_x(session_high_label, bar_index + projection_offset)
+            label.set_x(session_low_label, bar_index + projection_offset)
+    if show_extension_stats and not na(mean_high_level) and not na(median_high_level) and not na(mean_low_level) and not na(median_low_level)
+        line.set_x2(mean_high_line, bar_index + projection_offset)
+        line.set_x2(median_high_line, bar_index + projection_offset)
+        line.set_x2(mean_low_line, bar_index + projection_offset)
+        line.set_x2(median_low_line, bar_index + projection_offset)
+        label.set_x(mean_high_label, bar_index + projection_offset)
+        label.set_x(median_high_label, bar_index + projection_offset)
+        label.set_x(mean_low_label, bar_index + projection_offset)
+        label.set_x(median_low_label, bar_index + projection_offset)

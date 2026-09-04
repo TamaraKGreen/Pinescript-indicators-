@@ -1,0 +1,430 @@
+//@version=6
+indicator("CISD with fib/range extensions and stats", "cisd", overlay=true)
+
+// User Inputs for Customization
+bullishBreakColor = input.color(color.black, "Bull CISD", inline="bup")
+bearishBreakColor = input.color(color.black, "Bear CISD", inline="bep")
+bullStr = input.string("+CISD", " ", tooltip="Text to be displayed next to the CISD level.", inline="bup")
+bearStr = input.string("-CISD", " ", tooltip="Text to be displayed next to the CISD level.", inline="bep")
+bullishAlerts = input.bool(false, "Alert?", "When set up through Tradingview, the script will send an alert when price closes ABOVE the current '+CISD' level.", inline="bup")
+bearishAlerts = input.bool(false, "Alert?", "When set up through Tradingview, the script will send an alert when price closes ABOVE the current '-CISD' level.", inline="bep")
+lineWidth = input.int(1, "Line Width", minval=1, maxval=5)
+lookAheadBars = input.int(5, "Line Extension Bars", minval=1, maxval=5)
+styleOption = input.string("Solid (─)", title="Line Style", options=["Solid (─)", "Dotted (┈)", "Dashed (╌)"])
+keepLevels = input.bool(false, "Keep old CISD levels")
+showTable = input.bool(true, title="Enable stat table", group="Table")
+tablePosition = input.string(defval="Top Right", title="Table Position", options=["Top Right", "Bottom Right", "Middle Right", "Bottom Center", "Middle Left"], group="Table")
+pullbackBodyPct = input.int(20, "Min Pullback Body % of Prev Range", minval=1, maxval=100, group="Pullback Settings") / 100.0
+
+// Volume and ATR Filter Inputs
+useVolumeFilter = input.bool(false, "Use Volume Filter", group="Filter Settings")
+volumeLookback = input.int(20, "Volume Lookback Period", minval=1, group="Filter Settings")
+volumeThreshold = input.float(1.5, "Volume Threshold Multiplier", minval=1.0, step=0.1, group="Filter Settings")
+useATRFilter = input.bool(false, "Use ATR Filter", group="Filter Settings")
+atrLength = input.int(14, "ATR Length", minval=1, group="Filter Settings")
+atrMultiplier = input.float(1.0, "ATR Multiplier", minval=0.1, step=0.1, group="Filter Settings")
+
+// Extension Level Inputs
+extensionType = input.string("None", "Extension Type", options=["None", "Fibonacci", "Range Multiples"], group="Extension Settings")
+fibLevels = input.string("1.618, 2.618, 4.236", "Fibonacci Extension Levels", group="Extension Settings")
+rangeMultiples = input.string("1, 2, 3", "Range Multiples", group="Extension Settings")
+extBarLength = input.int(5, "Extension Line Length (Bars)", minval=1, group="Extension Settings")
+fibLineColor = input.color(color.blue, "Fibonacci Extension Color", group="Extension Settings")
+rangeLineColor = input.color(color.purple, "Range Multiples Color", group="Extension Settings")
+hitTolerance = input.float(0.5, "Hit Tolerance (ATR Multiplier)", minval=0.1, step=0.1, group="Extension Settings")
+
+// Structure Definitions
+type MarketStructure
+    float topPrice
+    float bottomPrice
+    bool isBullish
+
+type cisd
+    line level
+    label txt
+    bool completed
+
+type extension
+    line level
+    label txt
+    float price
+    string name
+
+// Variable Declarations
+var line lastTopLine = na
+var line lastBottomLine = na
+var MarketStructure currentStructure = MarketStructure.new(0, 0, false)
+var cisdLevelsBu = array.new<cisd>()
+var cisdLevelsBe = array.new<cisd>()
+var bool isBullishPullback = false
+var bool isBearishPullback = false
+var float potentialTopPrice = na
+var float potentialBottomPrice = na
+var int bullishBreakIndex = na
+var int bearishBreakIndex = na
+var float bullishChangeLevel = na
+var float bearishChangeLevel = na
+var bool currentState = false
+var extensionsUp = array.new<extension>()
+var extensionsDown = array.new<extension>()
+var int[] currFibHitsUp = array.new_int(0)
+var int[] currFibHitsDown = array.new_int(0)
+var int[] currRangeHitsUp = array.new_int(0)
+var int[] currRangeHitsDown = array.new_int(0)
+var int[] cumFibHitsUp = array.new_int(0)
+var int[] cumFibHitsDown = array.new_int(0)
+var int[] cumRangeHitsUp = array.new_int(0)
+var int[] cumRangeHitsDown = array.new_int(0)
+var bool[] fibHitOnceUp = array.new_bool(0)
+var bool[] fibHitOnceDown = array.new_bool(0)
+var bool[] rangeHitOnceUp = array.new_bool(0)
+var bool[] rangeHitOnceDown = array.new_bool(0)
+var float[] fibHitPctUp = array.new_float(0)
+var float[] fibHitPctDown = array.new_float(0)
+var float[] rangeHitPctUp = array.new_float(0)
+var float[] rangeHitPctDown = array.new_float(0)
+var int totalCisdSets = 0
+var bool newBullishCisd = false
+var bool newBearishCisd = false
+var int lastExtensionBar = -1  // Track the bar index of the last extension plot
+
+// Define Line Style
+lineStyle = styleOption == "Dotted (┈)" ? line.style_dotted : styleOption == "Dashed (╌)" ? line.style_dashed : line.style_solid
+
+// Table Position Function
+gettablePos(pos) =>
+    switch pos
+        "Top Right" => position.top_right
+        "Bottom Right" => position.bottom_right
+        "Middle Right" => position.middle_right
+        "Bottom Center" => position.bottom_center
+        "Middle Left" => position.bottom_left
+
+// Calculate Volume and ATR
+avgVolume = ta.sma(volume, volumeLookback)
+atr = ta.atr(atrLength)
+
+// Pullback Detection with Volume and ATR Filters
+prevRange = high[1] - low[1]
+bearishPullbackCandleBody = math.abs(open[1] - close[1])
+bullishPullbackCandleBody = math.abs(open[1] - close[1])
+bearishPullbackVolume = useVolumeFilter ? volume[1] >= avgVolume * volumeThreshold : true
+bullishPullbackVolume = useVolumeFilter ? volume[1] >= avgVolume * volumeThreshold : true
+bearishPullbackSize = useATRFilter ? bearishPullbackCandleBody >= atr * atrMultiplier : bearishPullbackCandleBody >= prevRange * pullbackBodyPct
+bullishPullbackSize = useATRFilter ? bullishPullbackCandleBody >= atr * atrMultiplier : bullishPullbackCandleBody >= prevRange * pullbackBodyPct
+bearishPullbackDetected = close[1] < open[1] and open[1] > close[2] and bearishPullbackSize and bearishPullbackVolume
+bullishPullbackDetected = close[1] > open[1] and open[1] < close[2] and bullishPullbackSize and bullishPullbackVolume
+
+// Parse Fibonacci and Range Multiples
+fibArray = str.split(fibLevels, ",")
+fibValues = array.new_float(0)
+for i = 0 to array.size(fibArray) - 1
+    array.push(fibValues, str.tonumber(array.get(fibArray, i)))
+
+rangeArray = str.split(rangeMultiples, ",")
+rangeValues = array.new_float(0)
+for i = 0 to array.size(rangeArray) - 1
+    array.push(rangeValues, str.tonumber(array.get(rangeArray, i)))
+
+// Function to Clear Extension Levels
+clearExtensions(array<extension> exts) =>
+    for ext in exts
+        line.delete(ext.level)
+        label.delete(ext.txt)
+    array.clear(exts)
+
+// Function to Plot Extensions
+plotExtensions(latestBullish, latestBearish, startBar) =>
+    cisdRange = math.abs(latestBullish.level.get_y2() - latestBearish.level.get_y2())
+    clearExtensions(extensionsUp)
+    clearExtensions(extensionsDown)
+    // Clear current set hit counts and hitOnce flags, but preserve cumulative counts
+    array.clear(currFibHitsUp)
+    array.clear(currFibHitsDown)
+    array.clear(currRangeHitsUp)
+    array.clear(currRangeHitsDown)
+    array.clear(fibHitOnceUp)
+    array.clear(fibHitOnceDown)
+    array.clear(rangeHitOnceUp)
+    array.clear(rangeHitOnceDown)
+    
+    if extensionType == "Fibonacci"
+        // Initialize cumulative arrays if empty
+        if array.size(cumFibHitsUp) == 0
+            for i = 0 to array.size(fibValues) - 1
+                array.push(cumFibHitsUp, 0)
+                array.push(cumFibHitsDown, 0)
+                array.push(fibHitPctUp, 0.0)
+                array.push(fibHitPctDown, 0.0)
+        for i = 0 to array.size(fibValues) - 1
+            fibLevel = array.get(fibValues, i)
+            fibPriceUp = latestBullish.level.get_y2() + cisdRange * fibLevel
+            fibLineUp = line.new(startBar, fibPriceUp, startBar + extBarLength, fibPriceUp, color=fibLineColor, width=lineWidth, style=line.style_dashed)
+            fibLabelUp = label.new(startBar + extBarLength, fibPriceUp, "Fib " + str.tostring(fibLevel), color=color.new(color.white, 100), textcolor=fibLineColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+            extensionsUp.push(extension.new(fibLineUp, fibLabelUp, fibPriceUp, "Fib " + str.tostring(fibLevel)))
+            array.push(currFibHitsUp, 0)
+            array.push(fibHitOnceUp, false)
+            fibPriceDown = latestBearish.level.get_y2() - cisdRange * fibLevel
+            fibLineDown = line.new(startBar, fibPriceDown, startBar + extBarLength, fibPriceDown, color=fibLineColor, width=lineWidth, style=line.style_dashed)
+            fibLabelDown = label.new(startBar + extBarLength, fibPriceDown, "Fib " + str.tostring(fibLevel), color=color.new(color.white, 100), textcolor=fibLineColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+            extensionsDown.push(extension.new(fibLineDown, fibLabelDown, fibPriceDown, "Fib " + str.tostring(fibLevel)))
+            array.push(currFibHitsDown, 0)
+            array.push(fibHitOnceDown, false)
+    
+    if extensionType == "Range Multiples"
+        // Initialize cumulative arrays if empty
+        if array.size(cumRangeHitsUp) == 0
+            for i = 0 to array.size(rangeValues) - 1
+                array.push(cumRangeHitsUp, 0)
+                array.push(cumRangeHitsDown, 0)
+                array.push(rangeHitPctUp, 0.0)
+                array.push(rangeHitPctDown, 0.0)
+        for i = 0 to array.size(rangeValues) - 1
+            rangeLevel = array.get(rangeValues, i)
+            rangePriceUp = latestBearish.level.get_y2() + cisdRange * rangeLevel
+            rangeLineUp = line.new(startBar, rangePriceUp, startBar + extBarLength, rangePriceUp, color=rangeLineColor, width=lineWidth, style=line.style_dotted)
+            rangeLabelUp = label.new(startBar + extBarLength, rangePriceUp, "Range " + str.tostring(rangeLevel) + "x", color=color.new(color.white, 100), textcolor=rangeLineColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+            extensionsUp.push(extension.new(rangeLineUp, rangeLabelUp, rangePriceUp, "Range " + str.tostring(rangeLevel) + "x"))
+            array.push(currRangeHitsUp, 0)
+            array.push(rangeHitOnceUp, false)
+            rangePriceDown = latestBullish.level.get_y2() - cisdRange * rangeLevel
+            rangeLineDown = line.new(startBar, rangePriceDown, startBar + extBarLength, rangePriceDown, color=rangeLineColor, width=lineWidth, style=line.style_dotted)
+            rangeLabelDown = label.new(startBar + extBarLength, rangePriceDown, "Range " + str.tostring(rangeLevel) + "x", color=color.new(color.white, 100), textcolor=rangeLineColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+            extensionsDown.push(extension.new(rangeLineDown, rangeLabelDown, rangePriceDown, "Range " + str.tostring(rangeLevel) + "x"))
+            array.push(currRangeHitsDown, 0)
+            array.push(rangeHitOnceDown, false)
+
+// Bearish Pullback Logic
+if bearishPullbackDetected and not isBearishPullback
+    isBearishPullback := true
+    potentialTopPrice := open[1]
+    bullishBreakIndex := bar_index[1]
+
+// Bullish Pullback Logic
+if bullishPullbackDetected and not isBullishPullback
+    isBullishPullback := true
+    potentialBottomPrice := open[1]
+    bearishBreakIndex := bar_index[1]
+
+// Update Potential Levels During Pullbacks
+if isBullishPullback
+    if open < potentialBottomPrice
+        potentialBottomPrice := open
+        bearishBreakIndex := bar_index
+    if (close < open) and (open > potentialBottomPrice)
+        potentialBottomPrice := open
+        bearishBreakIndex := bar_index
+
+if isBearishPullback
+    if open > potentialTopPrice
+        potentialTopPrice := open
+        bullishBreakIndex := bar_index
+    if (close > open) and open < potentialTopPrice
+        potentialTopPrice := open
+        bullishBreakIndex := bar_index
+
+// Structure Updates - Bearish Break
+if low < currentStructure.bottomPrice
+    currentStructure.bottomPrice := low
+    currentStructure.isBullish := false
+
+    if isBearishPullback and (bar_index - bullishBreakIndex != 0)
+        currentStructure.topPrice := math.max(high[bar_index - bullishBreakIndex], high[bar_index - bullishBreakIndex + 1])
+        isBearishPullback := false
+        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=bearishBreakColor, width=lineWidth, style=lineStyle)
+        bearishLabel = label.new(bar_index + lookAheadBars, potentialTopPrice, bullStr, color=color.new(color.white, 100), textcolor=bearishBreakColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+        b = cisd.new(bearishLine, bearishLabel, false)
+        cisdLevelsBe.push(b)
+        newBearishCisd := true
+    else if close[1] > open[1] and close < open
+        currentStructure.topPrice := high[1]
+        isBearishPullback := false
+        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=bearishBreakColor, width=lineWidth, style=lineStyle)
+        bearishLabel = label.new(bar_index + lookAheadBars, potentialTopPrice, bullStr, color=color.new(color.white, 100), textcolor=bearishBreakColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+        b = cisd.new(bearishLine, bearishLabel, false)
+        cisdLevelsBe.push(b)
+        newBearishCisd := true
+
+// Structure Updates - Bullish Break
+if high > currentStructure.topPrice
+    currentStructure.isBullish := true
+    currentStructure.topPrice := high
+
+    if isBullishPullback and (bar_index - bearishBreakIndex != 0)
+        currentStructure.bottomPrice := math.min(low[bar_index - bearishBreakIndex], low[bar_index - bearishBreakIndex + 1])
+        isBullishPullback := false
+        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=bullishBreakColor, width=lineWidth, style=lineStyle)
+        bullishLabel = label.new(bar_index + lookAheadBars, potentialBottomPrice, bearStr, color=color.new(color.white, 100), textcolor=bullishBreakColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+        bu = cisd.new(bullishLine, bullishLabel, false)
+        cisdLevelsBu.push(bu)
+        newBullishCisd := true
+    else if close[1] < open[1] and close > open
+        currentStructure.bottomPrice := low[1]
+        isBullishPullback := false
+        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=bullishBreakColor, width=lineWidth, style=lineStyle)
+        bullishLabel = label.new(bar_index + lookAheadBars, potentialBottomPrice, bearStr, color=color.new(color.white, 100), textcolor=bullishBreakColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+        bu = cisd.new(bullishLine, bullishLabel, false)
+        cisdLevelsBu.push(bu)
+        newBullishCisd := true
+
+// Plot Extensions on New CISD Levels
+if (newBullishCisd or newBearishCisd) and array.size(cisdLevelsBu) >= 1 and array.size(cisdLevelsBe) >= 1 and bar_index != lastExtensionBar
+    totalCisdSets := totalCisdSets + 1
+    if not keepLevels
+        clearExtensions(extensionsUp)
+        clearExtensions(extensionsDown)
+        array.clear(currFibHitsUp)
+        array.clear(currFibHitsDown)
+        array.clear(currRangeHitsUp)
+        array.clear(currRangeHitsDown)
+        array.clear(fibHitOnceUp)
+        array.clear(fibHitOnceDown)
+        array.clear(rangeHitOnceUp)
+        array.clear(rangeHitOnceDown)
+    latestBullish = array.get(cisdLevelsBu, array.size(cisdLevelsBu) - 1)
+    latestBearish = array.get(cisdLevelsBe, array.size(cisdLevelsBe) - 1)
+    plotExtensions(latestBullish, latestBearish, bar_index)
+    lastExtensionBar := bar_index
+
+// Track First Hits of Extension Levels
+if extensionType != "None" and array.size(extensionsUp) > 0 and array.size(extensionsDown) > 0
+    for i = 0 to array.size(extensionsUp) - 1
+        extUp = array.get(extensionsUp, i)
+        if math.abs(close - extUp.price) <= atr * hitTolerance
+            if extensionType == "Fibonacci" and not array.get(fibHitOnceUp, i)
+                array.set(currFibHitsUp, i, array.get(currFibHitsUp, i) + 1)
+                array.set(cumFibHitsUp, i, array.get(cumFibHitsUp, i) + 1)
+                array.set(fibHitOnceUp, i, true)
+                array.set(fibHitPctUp, i, array.get(cumFibHitsUp, i) / math.max(1, totalCisdSets) * 100)
+            else if extensionType == "Range Multiples" and not array.get(rangeHitOnceUp, i)
+                array.set(currRangeHitsUp, i, array.get(currRangeHitsUp, i) + 1)
+                array.set(cumRangeHitsUp, i, array.get(cumRangeHitsUp, i) + 1)
+                array.set(rangeHitOnceUp, i, true)
+                array.set(rangeHitPctUp, i, array.get(cumRangeHitsUp, i) / math.max(1, totalCisdSets) * 100)
+    
+    for i = 0 to array.size(extensionsDown) - 1
+        extDown = array.get(extensionsDown, i)
+        if math.abs(close - extDown.price) <= atr * hitTolerance
+            if extensionType == "Fibonacci" and not array.get(fibHitOnceDown, i)
+                array.set(currFibHitsDown, i, array.get(currFibHitsDown, i) + 1)
+                array.set(cumFibHitsDown, i, array.get(cumFibHitsDown, i) + 1)
+                array.set(fibHitOnceDown, i, true)
+                array.set(fibHitPctDown, i, array.get(cumFibHitsDown, i) / math.max(1, totalCisdSets) * 100)
+            else if extensionType == "Range Multiples" and not array.get(rangeHitOnceDown, i)
+                array.set(currRangeHitsDown, i, array.get(currRangeHitsDown, i) + 1)
+                array.set(cumRangeHitsDown, i, array.get(cumRangeHitsDown, i) + 1)
+                array.set(rangeHitOnceDown, i, true)
+                array.set(rangeHitPctDown, i, array.get(cumRangeHitsDown, i) / math.max(1, totalCisdSets) * 100)
+
+// Reset New CISD Flags
+newBullishCisd := false
+newBearishCisd := false
+
+// CISD Level Management
+if array.size(cisdLevelsBu) > 1 and not keepLevels
+    latest = array.shift(cisdLevelsBu)
+    line.delete(latest.level)
+    label.delete(latest.txt)
+
+if array.size(cisdLevelsBe) > 1 and not keepLevels
+    latest = array.shift(cisdLevelsBe)
+    line.delete(latest.level)
+    label.delete(latest.txt)
+
+// Alert Logic
+if array.size(cisdLevelsBu) >= 1
+    latest = array.get(cisdLevelsBu, 0)
+    if not (close < latest.level.get_y2()) and not latest.completed
+        line.set_x2(latest.level, bar_index + lookAheadBars)
+        label.set_x(latest.txt, bar_index + lookAheadBars)
+    if close < latest.level.get_y2() and not latest.completed and bullishAlerts
+        latest.completed := true
+        alert("Bearish CISD Formed")
+        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=bearishBreakColor, width=lineWidth, style=lineStyle)
+        bearishLabel = label.new(bar_index + lookAheadBars, potentialTopPrice, bullStr, color=color.new(color.white, 100), textcolor=bearishBreakColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+        b = cisd.new(bearishLine, bearishLabel, false)
+        cisdLevelsBe.push(b)
+        currentState := false
+        newBearishCisd := true
+
+if array.size(cisdLevelsBe) >= 1
+    latest = array.get(cisdLevelsBe, 0)
+    if not (close > latest.level.get_y2()) and not latest.completed
+        line.set_x2(latest.level, bar_index + lookAheadBars)
+        label.set_x(latest.txt, bar_index + lookAheadBars)
+    if close > latest.level.get_y2() and not latest.completed and bearishAlerts
+        latest.completed := true
+        alert("Bullish CISD Formed")
+        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=bullishBreakColor, width=lineWidth, style=lineStyle)
+        bullishLabel = label.new(bar_index + lookAheadBars, potentialBottomPrice, bearStr, color=color.new(color.white, 100), textcolor=bullishBreakColor, style=label.style_label_left, text_font_family=font.family_monospace, size=size.small)
+        bu = cisd.new(bullishLine, bullishLabel, false)
+        cisdLevelsBu.push(bu)
+        currentState := true
+        newBullishCisd := true
+
+// Plot Extensions on Alert-Triggered CISD Levels
+if (newBullishCisd or newBearishCisd) and array.size(cisdLevelsBu) >= 1 and array.size(cisdLevelsBe) >= 1 and bar_index != lastExtensionBar
+    totalCisdSets := totalCisdSets + 1
+    if not keepLevels
+        clearExtensions(extensionsUp)
+        clearExtensions(extensionsDown)
+        array.clear(currFibHitsUp)
+        array.clear(currFibHitsDown)
+        array.clear(currRangeHitsUp)
+        array.clear(currRangeHitsDown)
+        array.clear(fibHitOnceUp)
+        array.clear(fibHitOnceDown)
+        array.clear(rangeHitOnceUp)
+        array.clear(rangeHitOnceDown)
+    latestBullish = array.get(cisdLevelsBu, array.size(cisdLevelsBu) - 1)
+    latestBearish = array.get(cisdLevelsBe, array.size(cisdLevelsBe) - 1)
+    plotExtensions(latestBullish, latestBearish, bar_index)
+    lastExtensionBar := bar_index
+
+// Table Display
+if showTable and barstate.islast
+    // Calculate required rows: 4 fixed (ticker, state, total sessions, header) + number of levels
+    rows = extensionType == "None" ? 10 : 10 + (extensionType == "Fibonacci" ? array.size(fibValues) : array.size(rangeValues))
+    var tbl = table.new(gettablePos(tablePosition), 6, rows, bgcolor=chart.bg_color, border_color=chart.fg_color, frame_color=chart.fg_color, frame_width=1, border_width=1)
+    table.cell(tbl, 0, 0, syminfo.ticker + ", " + timeframe.period, text_size=size.tiny, text_color=chart.fg_color, text_font_family=font.family_monospace)
+    table.cell(tbl, 0, 1, "Current State", text_color=chart.bg_color, text_size=size.small, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+    table.cell(tbl, 0, 2, currentState ? "Bullish" : "Bearish", text_color=chart.fg_color, text_size=size.small, text_font_family=font.family_monospace, text_formatting=text.format_bold)
+    table.cell(tbl, 0, 3, "Total CISD Sessions", text_color=chart.bg_color, text_size=size.small, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+    table.cell(tbl, 1, 3, str.tostring(totalCisdSets), text_color=chart.fg_color, text_size=size.small, text_font_family=font.family_monospace)
+    
+    if extensionType != "None"
+        table.cell(tbl, 0, 4, "Level (Up)", text_color=chart.bg_color, text_size=size.tiny, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+        table.cell(tbl, 1, 4, "Hits", text_color=chart.bg_color, text_size=size.tiny, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+        table.cell(tbl, 2, 4, "%", text_color=chart.bg_color, text_size=size.tiny, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+        table.cell(tbl, 3, 4, "Level (Down)", text_color=chart.bg_color, text_size=size.tiny, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+        table.cell(tbl, 4, 4, "Hits", text_color=chart.bg_color, text_size=size.tiny, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+        table.cell(tbl, 5, 4, "%", text_color=chart.bg_color, text_size=size.tiny, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=chart.fg_color)
+        row = 5
+        if extensionType == "Fibonacci"
+            for i = 0 to array.size(fibValues) - 1
+                fibLevel = array.get(fibValues, i)
+                upHits = array.size(cumFibHitsUp) > i ? array.get(cumFibHitsUp, i) : 0
+                downHits = array.size(cumFibHitsDown) > i ? array.get(cumFibHitsDown, i) : 0
+                upPct = array.size(fibHitPctUp) > i ? array.get(fibHitPctUp, i) : 0.0
+                downPct = array.size(fibHitPctDown) > i ? array.get(fibHitPctDown, i) : 0.0
+                table.cell(tbl, 0, row, "Fib " + str.tostring(fibLevel), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 1, row, str.tostring(upHits), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 2, row, str.format("{0,number,#.##}%", upPct), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 3, row, "Fib " + str.tostring(fibLevel), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 4, row, str.tostring(downHits), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 5, row, str.format("{0,number,#.##}%", downPct), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                row := row + 1
+        else if extensionType == "Range Multiples"
+            for i = 0 to array.size(rangeValues) - 1
+                rangeLevel = array.get(rangeValues, i)
+                upHits = array.size(cumRangeHitsUp) > i ? array.get(cumRangeHitsUp, i) : 0
+                downHits = array.size(cumRangeHitsDown) > i ? array.get(cumRangeHitsDown, i) : 0
+                upPct = array.size(rangeHitPctUp) > i ? array.get(rangeHitPctUp, i) : 0.0
+                downPct = array.size(rangeHitPctDown) > i ? array.get(rangeHitPctDown, i) : 0.0
+                table.cell(tbl, 0, row, "Range " + str.tostring(rangeLevel) + "x", text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 1, row, str.tostring(upHits), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 2, row, str.format("{0,number,#.##}%", upPct), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 3, row, "Range " + str.tostring(rangeLevel) + "x", text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 4, row, str.tostring(downHits), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                table.cell(tbl, 5, row, str.format("{0,number,#.##}%", downPct), text_color=chart.fg_color, text_size=size.tiny, text_font_family=font.family_monospace)
+                row := row + 1

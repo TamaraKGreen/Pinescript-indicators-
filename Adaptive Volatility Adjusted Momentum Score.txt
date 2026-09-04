@@ -1,0 +1,140 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Adaptive Volatility-Adjusted Momentum Score", overlay=true, max_bars_back=5000)
+
+// Inputs
+// Indicator Settings
+baseLookback = input.int(14, "Base Lookback Period", minval=5, group="Indicator Settings")
+volThreshold = input.float(1.5, "Volatility Threshold", step=0.1, group="Indicator Settings")
+scaleFactor = input.float(500, "Momentum Scale Factor", minval=100, step=50, group="Indicator Settings")
+volumeCap = input.float(3.0, "Volume Weight Cap", minval=1.0, step=0.5, group="Indicator Settings")
+
+// Overbought/Oversold Levels
+overboughtLevel = input.float(25, "Overbought Level", minval=5, step=5, group="Overbought/Oversold Levels")
+oversoldLevel = input.float(-25, "Oversold Level", maxval=-5, step=5, group="Overbought/Oversold Levels")
+
+// Divergence Detection
+lbR = input.int(5, "Pivot Lookback Right", minval=2, group="Divergence Detection")
+lbL = input.int(5, "Pivot Lookback Left", minval=2, group="Divergence Detection")
+rangeUpper = input.int(60, "Max of Lookback Range", minval=10, group="Divergence Detection")
+rangeLower = input.int(5, "Min of Lookback Range", minval=1, group="Divergence Detection")
+
+// Divergence Display
+plotBull = input.bool(false, "Plot Regular Bullish", group="Divergence Display")
+plotHiddenBull = input.bool(false, "Plot Hidden Bullish", group="Divergence Display")
+plotBear = input.bool(false, "Plot Regular Bearish", group="Divergence Display")
+plotHiddenBear = input.bool(false, "Plot Hidden Bearish", group="Divergence Display")
+
+// Plotting Options
+overlay_main = input.bool(false, "Plot Divergences on Price Chart", group="Plotting Options")
+delay_plot_til_closed = input.bool(false, "Delay Plot Until Candle Closes (No Repaint)", group="Plotting Options")
+
+// Alerts
+alertZeroCrossUp = input.bool(true, "Alert on Zero Cross Up", group="Alerts")
+alertZeroCrossDown = input.bool(true, "Alert on Zero Cross Down", group="Alerts")
+alertBullDiv = input.bool(true, "Alert on Regular Bullish Divergence", group="Alerts")
+alertHiddenBullDiv = input.bool(false, "Alert on Hidden Bullish Divergence", group="Alerts")
+alertBearDiv = input.bool(true, "Alert on Regular Bearish Divergence", group="Alerts")
+alertHiddenBearDiv = input.bool(false, "Alert on Hidden Bearish Divergence", group="Alerts")
+
+// Colors
+bearColor = color.purple
+bullColor = color.teal
+hiddenBullColor = color.new(color.teal, 80)
+hiddenBearColor = color.new(color.purple, 80)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+// Calculate ATR and its statistics
+atr = ta.atr(14)
+avgAtr = ta.sma(atr, 14)
+atrStd = ta.stdev(atr, 14)
+
+// Safeguard against NaN or zero values
+atrStdSafe = na(atrStd) or atrStd == 0 ? 0.0001 : atrStd
+avgAtrSafe = na(avgAtr) ? 0.0001 : avgAtr
+
+// Calculate dynamic lookback with bounds
+dynamicLookbackRaw = baseLookback * (avgAtrSafe / atrStdSafe)
+dynamicLookback = math.max(1, math.min(100, math.round(dynamicLookbackRaw)))
+
+// Calculate momentum (rate of change)
+roc = na(dynamicLookback) ? 0 : ta.roc(close, dynamicLookback)
+
+// Normalize momentum by volatility (z-score)
+priceStd = ta.stdev(close, dynamicLookback)
+priceStdSafe = na(priceStd) or priceStd == 0 ? 0.0001 : priceStd
+momentumScore = roc / priceStdSafe * scaleFactor
+
+// Weight by volume
+avgVolume = ta.sma(volume, dynamicLookback)
+volumeWeight = na(avgVolume) or avgVolume == 0 ? 1.0 : volume / avgVolume
+weightedScore = momentumScore * math.min(volumeWeight, volumeCap)
+
+// Detect pivots for divergence
+osc = weightedScore
+plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
+
+// Range filter function
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+// Non-repainting condition
+repaint = not delay_plot_til_closed or barstate.ishistory or barstate.isconfirmed
+
+// Regular Bullish Divergence: Osc Higher Low, Price Lower Low
+oscHL = osc[lbR] > ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+priceLL = low[lbR] < ta.valuewhen(plFound, low[lbR], 1)
+bullCond = plotBull and priceLL and oscHL and plFound and repaint
+
+// Hidden Bullish Divergence: Osc Lower Low, Price Higher Low
+oscLL = osc[lbR] < ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+priceHL = low[lbR] > ta.valuewhen(plFound, low[lbR], 1)
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound and repaint
+
+// Regular Bearish Divergence: Osc Lower High, Price Higher High
+oscLH = osc[lbR] < ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+priceHH = high[lbR] > ta.valuewhen(phFound, high[lbR], 1)
+bearCond = plotBear and priceHH and oscLH and phFound and repaint
+
+// Hidden Bearish Divergence: Osc Higher High, Price Lower High
+oscHH = osc[lbR] > ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+priceLH = high[lbR] < ta.valuewhen(phFound, high[lbR], 1)
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound and repaint
+
+// Plot divergence labels
+plot(plFound ? overlay_main ? low[lbR] : osc[lbR] : na, offset=-lbR, title="Regular Bullish", linewidth=2, color=bullCond ? bullColor : noneColor)
+plotshape(bullCond ? overlay_main ? low[lbR] : osc[lbR] : na, offset=-lbR, title="Regular Bullish Label", text=" Bull ", style=shape.labelup, location=location.absolute, color=bullColor, textcolor=textColor)
+
+plot(plFound ? overlay_main ? low[lbR] : osc[lbR] : na, offset=-lbR, title="Hidden Bullish", linewidth=2, color=hiddenBullCond ? hiddenBullColor : noneColor)
+plotshape(hiddenBullCond ? overlay_main ? low[lbR] : osc[lbR] : na, offset=-lbR, title="Hidden Bullish Label", text=" H Bull ", style=shape.labelup, location=location.absolute, color=hiddenBullColor, textcolor=textColor)
+
+plot(phFound ? overlay_main ? high[lbR] : osc[lbR] : na, offset=-lbR, title="Regular Bearish", linewidth=2, color=bearCond ? bearColor : noneColor)
+plotshape(bearCond ? overlay_main ? high[lbR] : osc[lbR] : na, offset=-lbR, title="Regular Bearish Label", text=" Bear ", style=shape.labeldown, location=location.absolute, color=bearColor, textcolor=textColor)
+
+plot(phFound ? overlay_main ? high[lbR] : osc[lbR] : na, offset=-lbR, title="Hidden Bearish", linewidth=2, color=hiddenBearCond ? hiddenBearColor : noneColor)
+plotshape(hiddenBearCond ? overlay_main ? high[lbR] : osc[lbR] : na, offset=-lbR, title="Hidden Bearish Label", text=" H Bear ", style=shape.labeldown, location=location.absolute, color=hiddenBearColor, textcolor=textColor)
+
+// Alerts
+if ta.crossover(weightedScore, 0) and alertZeroCrossUp
+    alert("Zero Line Cross Up Detected", alert.freq_once_per_bar)
+if ta.crossunder(weightedScore, 0) and alertZeroCrossDown
+    alert("Zero Line Cross Down Detected", alert.freq_once_per_bar)
+if bullCond and alertBullDiv
+    alert("Regular Bullish Divergence Detected", alert.freq_once_per_bar)
+if hiddenBullCond and alertHiddenBullDiv
+    alert("Hidden Bullish Divergence Detected", alert.freq_once_per_bar)
+if bearCond and alertBearDiv
+    alert("Regular Bearish Divergence Detected", alert.freq_once_per_bar)
+if hiddenBearCond and alertHiddenBearDiv
+    alert("Hidden Bearish Divergence Detected", alert.freq_once_per_bar)
+
+// Plot indicator (non-overlay)
+plot(weightedScore, "AVAMS", color=weightedScore > 0 ? color.teal : color.purple, display=display.pane)
+hline(overboughtLevel, "Overbought", color=color.purple, linestyle=hline.style_dashed)
+hline(oversoldLevel, "Oversold", color=color.teal, linestyle=hline.style_dashed)
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_solid)

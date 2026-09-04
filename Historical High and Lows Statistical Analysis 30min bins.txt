@@ -1,0 +1,140 @@
+//@version=5
+indicator("Historical High/Lows Statistical Analysis - 30min", overlay=true, max_bars_back=5000)
+
+// Function definitions
+getTablePosition(positionStr) =>
+    switch positionStr
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+
+getTableTextSize(sizeStr) =>
+    switch sizeStr
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+
+// 30-minute H/L Input settings
+thirtymin_enabled = input.bool(true, title="30min Table On/Off")
+thirtymin_high_text_color = input.color(color.gray, title="Table Text Color")
+thirtymin_high_bg_color = input.color(color.new(color.green, 85), title="30min High Background Color")
+thirtymin_low_bg_color = input.color(color.new(color.red, 85), title="30min Low Background Color")
+thirtymin_table_bg_color = input.color(#00000000, title="30min Table Background Color")
+thirtymin_shorten_labels = input.bool(false, "Shorten 30min Labels")
+thirtymin_twelve_hour_format = input.bool(true, "12H Format (30min)")
+thirtymin_table_position = input.string("top_right", "30min Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"])
+thirtymin_text_size_input = input.string("tiny", "30min Text Size", options=["tiny", "small", "normal", "large"])
+thirtymin_use_22_hour_session = input.bool(true, "22 Hour Session (30min)")
+
+// Use the functions to set position and text size
+thirtymin_table_pos = getTablePosition(thirtymin_table_position)
+thirtymin_text_size = getTableTextSize(thirtymin_text_size_input)
+
+// Initialize the 30min table (4 columns, 49 rows: header + 48 slots)
+var table thirtymin_table = na
+if na(thirtymin_table)
+    thirtymin_table := table.new(thirtymin_table_pos, 4, 49, bgcolor=thirtymin_table_bg_color, frame_color=color.gray)
+
+// Arrays for 30min counts (48 slots for 30-minute intervals in 24 hours)
+var float[] thirtymin_high_counts = array.new_float(48, 0)
+var float[] thirtymin_low_counts = array.new_float(48, 0)
+
+// Variables to track daily high/low, slots, and session count
+var float thirtymin_daily_high = na
+var float thirtymin_daily_low = na
+var int thirtymin_high_slot = na
+var int thirtymin_low_slot = na
+var int total_sessions = 0
+
+// Format 30min labels as time ranges (e.g., "4:00-4:30am", "4:30-5:00am")
+thirtymin_format_slot(slot, is_12h, shorten_labels) =>
+    start_hour = math.floor(slot / 2)
+    start_minute = slot % 2 == 0 ? 0 : 30
+    end_hour = math.floor((slot + 1) / 2)
+    end_minute = slot % 2 == 0 ? 30 : 0
+    if shorten_labels
+        start_str = str.tostring(start_hour % 12 == 0 ? 12 : start_hour % 12) + (start_minute == 0 ? "" : ":30")
+        end_str = str.tostring(end_hour % 12 == 0 ? 12 : end_hour % 12) + (end_minute == 0 ? "" : ":30")
+        start_str + "-" + end_str
+    else if is_12h
+        start_formatted_hour = start_hour % 12 == 0 ? 12 : start_hour % 12
+        end_formatted_hour = end_hour % 12 == 0 ? 12 : end_hour % 12
+        am_pm_start = start_hour < 12 ? "am" : "pm"
+        am_pm_end = end_hour < 12 ? "am" : "pm"
+        start_str = str.tostring(start_formatted_hour) + ":" + (start_minute == 0 ? "00" : "30") + am_pm_start
+        end_str = str.tostring(end_formatted_hour) + ":" + (end_minute == 0 ? "00" : "30") + am_pm_end
+        start_str + "-" + end_str
+    else
+        start_str = str.tostring(start_hour, "00") + ":" + (start_minute == 0 ? "00" : "30")
+        end_str = str.tostring(end_hour, "00") + ":" + (end_minute == 0 ? "00" : "30")
+        start_str + "-" + end_str
+
+// Check if timeframe is intraday and <= 30 minutes
+thirtymin_is_valid_tf = timeframe.isintraday and timeframe.multiplier <= 30
+
+// Detect a new session based on futures day definition
+thirtymin_session_start = thirtymin_use_22_hour_session ? ((hour(time) == 18 and minute(time) == 30) or na(time[1]) or (hour(time[1]) < 18 and hour(time) >= 18)) : ((hour(time) == 18 and minute(time) == 0) or na(time[1]) or (hour(time[1]) < 18 and hour(time) >= 18))
+
+// Skip the CME break for 30min
+thirtymin_is_break = thirtymin_use_22_hour_session ? ((hour(time) == 16 and minute(time) >= 30) or (hour(time) == 18 and minute(time) < 30)) : ((hour(time) == 16 and minute(time) >= 30) or (hour(time) == 17))
+
+// Reset 30min variables at session start and count sessions
+if thirtymin_session_start and thirtymin_is_valid_tf
+    if not na(thirtymin_high_slot) and not na(thirtymin_low_slot)
+        if not na(thirtymin_daily_high)
+            array.set(thirtymin_high_counts, thirtymin_high_slot, array.get(thirtymin_high_counts, thirtymin_high_slot) + 1)
+        if not na(thirtymin_daily_low)
+            array.set(thirtymin_low_counts, thirtymin_low_slot, array.get(thirtymin_low_counts, thirtymin_low_slot) + 1)
+        total_sessions := total_sessions + 1
+    thirtymin_daily_high := na
+    thirtymin_daily_low := na
+    thirtymin_high_slot := na
+    thirtymin_low_slot := na
+
+// Process bars on valid timeframes
+if not thirtymin_is_break and thirtymin_is_valid_tf
+    thirtymin_current_slot = hour(time_close) * 2 + (minute(time_close) >= 30 ? 1 : 0)
+    if high > thirtymin_daily_high or na(thirtymin_daily_high)
+        thirtymin_daily_high := high
+        thirtymin_high_slot := thirtymin_current_slot
+    if low < thirtymin_daily_low or na(thirtymin_daily_low)
+        thirtymin_daily_low := low
+        thirtymin_low_slot := thirtymin_current_slot
+
+// Populate the 30min table on the last bar
+if barstate.islast and thirtymin_enabled and thirtymin_is_valid_tf
+    table.delete(thirtymin_table)
+    thirtymin_table := table.new(thirtymin_table_pos, 4, 49, bgcolor=thirtymin_table_bg_color, frame_color=color.gray)
+    
+    // Header row
+    table.cell(thirtymin_table, 0, 0, "Time of Day", bgcolor=thirtymin_table_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+    table.cell(thirtymin_table, 1, 0, "High %", bgcolor=thirtymin_high_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+    table.cell(thirtymin_table, 2, 0, "Low %", bgcolor=thirtymin_low_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+    table.cell(thirtymin_table, 3, 0, "Sessions", bgcolor=thirtymin_table_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+    
+    // Populate rows with times, percentages, and total sessions
+    for slot = 0 to 47
+        high_count = array.get(thirtymin_high_counts, slot)
+        low_count = array.get(thirtymin_low_counts, slot)
+        high_total = array.sum(thirtymin_high_counts)
+        low_total = array.sum(thirtymin_low_counts)
+        high_percent = high_total > 0 ? (high_count / high_total * 100) : 0
+        low_percent = low_total > 0 ? (low_count / low_total * 100) : 0
+        
+        table.cell(thirtymin_table, 0, slot + 1, thirtymin_format_slot(slot, thirtymin_twelve_hour_format, thirtymin_shorten_labels), bgcolor=thirtymin_table_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+        table.cell(thirtymin_table, 1, slot + 1, str.tostring(high_percent, "#.##") + "%", bgcolor=thirtymin_high_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+        table.cell(thirtymin_table, 2, slot + 1, str.tostring(low_percent, "#.##") + "%", bgcolor=thirtymin_low_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+        table.cell(thirtymin_table, 3, slot + 1, slot == 0 ? str.tostring(total_sessions) : "", bgcolor=thirtymin_table_bg_color, text_color=thirtymin_high_text_color, text_size=thirtymin_text_size)
+
+// Hide the 30min table on invalid timeframes
+if not thirtymin_is_valid_tf
+    for row = 0 to 48
+        for column = 0 to 3
+            table.cell_set_text(thirtymin_table, column, row, "")

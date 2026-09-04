@@ -1,0 +1,1548 @@
+//@version=6
+indicator(title = "Session stat map", shorttitle = 'Session stat map', overlay=true)
+
+// === Input Definitions ===
+// Session Settings
+session_time_levels = input.string("0600-0900", "Levels Session Time (HHMM-HHMM)", tooltip="Session range for calculating range levels")
+time_zone = input.string("America/New_York", "Time Zone", options=["UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"])
+session_time_stats = input.string("0900-1200", "Stats Session Time (HHMM-HHMM)", tooltip="Session range for tracking hit statistics")
+
+// Anchor Settings
+show_anchor = input.bool(true, "Show Session Anchor", inline="anchor")
+anchor_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="anchor")
+anchor_color = input.color(color.black, "", inline="anchor")
+anchor_width = input.int(1, "", minval=1, maxval=4, inline="anchor")
+show_anchor_label = input.bool(true, "Show Anchor Label")
+
+// Session Open Line Settings
+show_session_open = input.bool(true, "Show Session Open Line", inline="session_open")
+session_open_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="session_open")
+session_open_color = input.color(color.gray, "", inline="session_open")
+session_open_width = input.int(1, "", minval=1, maxval=4, inline="session_open")
+show_session_open_label = input.bool(true, "Show Session Open Label")
+
+// Range Box Settings
+show_range_box = input.bool(true, "Show Range Box", inline="range_box")
+range_box_color = input.color(color.new(color.yellow, 80), "", inline="range_box")
+
+// Range StdDev Settings
+show_range_std = input.bool(true, "Show Range StdDev Levels", inline="range_std")
+range_std_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="range_std")
+range_std_color = input.color(color.blue, "", inline="range_std")
+range_std_width = input.int(1, "", minval=1, maxval=4, inline="range_std")
+show_range_std_label = input.bool(true, "Show Range StdDev Labels")
+std_dev_level_1 = input.float(1.0, "StdDev Level 1", minval=0.1, maxval=5.0, step=0.1)
+std_dev_level_2 = input.float(2.0, "StdDev Level 2", minval=0.1, maxval=5.0, step=0.1)
+std_dev_anchor = input.string("Open", "StdDev Anchor Point", options=["Open", "High/Low"], group="Range StdDev Settings")
+
+// Fibonacci Settings
+show_fib_levels = input.bool(true, "Show Fibonacci Levels", group="Fibonacci Settings")
+fib_color = input.color(color.green, "Fibonacci Color", group="Fibonacci Settings")
+fib_style = input.string("Dashed", "Fibonacci Style", options=["Solid", "Dashed", "Dotted"], group="Fibonacci Settings")
+fib_width = input.int(1, "Fibonacci Width", minval=1, maxval=4, group="Fibonacci Settings")
+show_fib_labels = input.bool(true, "Show Fibonacci Labels", group="Fibonacci Settings")
+fib_level_1 = input.float(0.236, "Fib Level 1", minval=0, maxval=1, step=0.001, group="Fibonacci Settings")
+fib_level_2 = input.float(0.382, "Fib Level 2", minval=0, maxval=1, step=0.001, group="Fibonacci Settings")
+fib_level_3 = input.float(0.618, "Fib Level 3", minval=0, maxval=1, step=0.001, group="Fibonacci Settings")
+fib_anchor = input.string("Low", "Fibonacci Anchor", options=["Low", "Open"], group="Fibonacci Settings")
+
+// Fibonacci Extension Settings
+show_fib_ext = input.bool(true, "Show Fibonacci Extensions", group="Fibonacci Extension Settings")
+fib_ext_color = input.color(color.teal, "Fib Extension Color", group="Fibonacci Extension Settings")
+fib_ext_style = input.string("Dashed", "Fib Extension Style", options=["Solid", "Dashed", "Dotted"], group="Fibonacci Extension Settings")
+fib_ext_width = input.int(1, "Fib Extension Width", minval=1, maxval=4, group="Fibonacci Extension Settings")
+show_fib_ext_labels = input.bool(true, "Show Fib Extension Labels", group="Fibonacci Extension Settings")
+fib_ext_level_1 = input.float(0.5, "Fib Ext Level 1", minval=0, maxval=5, step=0.1, group="Fibonacci Extension Settings")
+fib_ext_level_2 = input.float(1.0, "Fib Ext Level 2", minval=0, maxval=5, step=0.1, group="Fibonacci Extension Settings")
+
+// Session High/Low Line Settings
+show_session_hl = input.bool(true, "Show Session High/Low Lines", inline="session_hl", group="Session High/Low Settings")
+session_hl_style = input.string("Dashed", "", options=["Solid", "Dashed", "Dotted"], inline="session_hl", group="Session High/Low Settings")
+session_hl_color = input.color(color.red, "", inline="session_hl", group="Session High/Low Settings")
+session_hl_width = input.int(1, "", minval=1, maxval=4, inline="session_hl", group="Session High/Low Settings")
+show_session_hl_label = input.bool(true, "Show Session High/Low Labels", group="Session High/Low Settings")
+
+// Extension Stats Settings
+show_extension_stats = input.bool(true, "Show Extension Stats on Chart", group="Extension Stats Settings")
+extension_anchor = input.string("Open", "Extension Anchor Point", options=["Open", "High/Low"], group="Extension Stats Settings")
+
+// Display Settings
+projection_offset = input.int(24, "Projection Offset (Bars)", minval=0)
+label_size = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"])
+price_precision = input.int(2, "Price Decimal Precision", minval=0, maxval=6, group="Display Settings")
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_label_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size_string == "Normal" ? size.normal : size.large
+
+get_label_style() =>
+    label.style_label_left
+
+get_weekday() =>
+    day = dayofweek(time, time_zone)
+    day == dayofweek.monday ? "Monday" : day == dayofweek.tuesday ? "Tuesday" : day == dayofweek.wednesday ? "Wednesday" : day == dayofweek.thursday ? "Thursday" : day == dayofweek.friday ? "Friday" : "Other"
+
+// Function to format price with appropriate precision
+format_price(price) =>
+    str.tostring(price, "#." + str.repeat("0", price_precision))
+
+// === Session Detection ===
+is_in_session_levels = not na(time(timeframe.period, session_time_levels, time_zone))
+is_session_start_levels = is_in_session_levels and not is_in_session_levels[1]
+is_session_end_levels = not is_in_session_levels and is_in_session_levels[1]
+
+is_in_session_stats = not na(time(timeframe.period, session_time_stats, time_zone))
+is_session_start_stats = is_in_session_stats and not is_in_session_stats[1]
+is_session_end_stats = not is_in_session_stats and is_in_session_stats[1]
+
+// === Session Data Tracking for Levels ===
+var float session_open = na
+var float session_high = na
+var float session_low = na
+var int session_start_bar = na
+var int session_end_bar = na
+
+if is_session_start_levels
+    session_open := open
+    session_high := high
+    session_low := low
+    session_start_bar := bar_index
+else if is_in_session_levels
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+if is_session_end_levels
+    session_end_bar := bar_index
+
+// === Range Box Plotting ===
+if show_range_box and is_session_end_levels and not na(session_high) and not na(session_low)
+    box.new(left=session_start_bar, top=session_high, right=session_end_bar, bottom=session_low, bgcolor=range_box_color, border_color=color.gray)
+
+// === Range and Extension Calculations ===
+var float[] range_distances = array.new_float(0)
+var float[] high_extensions = array.new_float(0)
+var float[] low_extensions = array.new_float(0)
+
+if is_session_end_levels
+    float sess_range = session_high - session_low
+    float high_ext = session_high - session_open
+    float low_ext = session_open - session_low
+    if not na(sess_range)
+        array.push(range_distances, sess_range)
+    if not na(high_ext)
+        array.push(high_extensions, high_ext)
+    if not na(low_ext)
+        array.push(low_extensions, low_ext)
+
+// === Calculate Range and Extension Statistics ===
+avg_range = array.size(range_distances) > 0 ? array.avg(range_distances) : na
+std_dev_range = array.size(range_distances) > 1 ? array.stdev(range_distances) : na
+mean_high_extension = array.size(high_extensions) > 0 ? array.avg(high_extensions) : na
+median_high_extension = array.size(high_extensions) > 0 ? array.median(high_extensions) : na
+mean_low_extension = array.size(low_extensions) > 0 ? array.avg(low_extensions) : na
+median_low_extension = array.size(low_extensions) > 0 ? array.median(low_extensions) : na
+
+// Standard Deviation Levels
+float upper_range_std1 = na
+float lower_range_std1 = na
+float upper_range_std2 = na
+float lower_range_std2 = na
+if std_dev_anchor == "Open"
+    upper_range_std1 := not na(std_dev_range) ? session_open + (avg_range + (std_dev_level_1 * std_dev_range)) : na
+    lower_range_std1 := not na(std_dev_range) ? session_open - (avg_range + (std_dev_level_1 * std_dev_range)) : na
+    upper_range_std2 := not na(std_dev_range) ? session_open + (avg_range + (std_dev_level_2 * std_dev_range)) : na
+    lower_range_std2 := not na(std_dev_range) ? session_open - (avg_range + (std_dev_level_2 * std_dev_range)) : na
+else if std_dev_anchor == "High/Low"
+    upper_range_std1 := not na(std_dev_range) ? session_high + (std_dev_level_1 * std_dev_range) : na
+    lower_range_std1 := not na(std_dev_range) ? session_low - (std_dev_level_1 * std_dev_range) : na
+    upper_range_std2 := not na(std_dev_range) ? session_high + (std_dev_level_2 * std_dev_range) : na
+    lower_range_std2 := not na(std_dev_range) ? session_low - (std_dev_level_2 * std_dev_range) : na
+
+// Mean and Median Extension Levels
+float mean_high_level = na
+float median_high_level = na
+float mean_low_level = na
+float median_low_level = na
+if extension_anchor == "Open"
+    mean_high_level := not na(mean_high_extension) ? session_open + mean_high_extension : na
+    median_high_level := not na(median_high_extension) ? session_open + median_high_extension : na
+    mean_low_level := not na(mean_low_extension) ? session_open - mean_low_extension : na
+    median_low_level := not na(median_low_extension) ? session_open - median_low_extension : na
+else if extension_anchor == "High/Low"
+    mean_high_level := not na(mean_high_extension) ? session_high + mean_high_extension : na
+    median_high_level := not na(median_high_extension) ? session_high + median_high_extension : na
+    mean_low_level := not na(mean_low_extension) ? session_low - mean_low_extension : na
+    median_low_level := not na(median_low_extension) ? session_low - median_low_extension : na
+
+// Fibonacci Extension Levels
+float sess_range = session_high - session_low
+float fib_ext_1_upper = session_high + (sess_range * fib_ext_level_1)
+float fib_ext_1_lower = session_low - (sess_range * fib_ext_level_1)
+float fib_ext_2_upper = session_high + (sess_range * fib_ext_level_2)
+float fib_ext_2_lower = session_low - (sess_range * fib_ext_level_2)
+
+// === Plotting Levels and Labels ===
+var line anchor_line = na
+var label anchor_label = na
+var line session_open_line = na
+var label session_open_label = na
+var line upper_range_std1_line = na
+var label upper_range_std1_label = na
+var line lower_range_std1_line = na
+var label lower_range_std1_label = na
+var line upper_range_std2_line = na
+var label upper_range_std2_label = na
+var line lower_range_std2_line = na
+var label lower_range_std2_label = na
+var line fib_level_1_line = na
+var label fib_level_1_label = na
+var line fib_level_2_line = na
+var label fib_level_2_label = na
+var line fib_level_3_line = na
+var label fib_level_3_label = na
+var line fib_ext_1_upper_line = na
+var label fib_ext_1_upper_label = na
+var line fib_ext_1_lower_line = na
+var label fib_ext_1_lower_label = na
+var line fib_ext_2_upper_line = na
+var label fib_ext_2_upper_label = na
+var line fib_ext_2_lower_line = na
+var label fib_ext_2_lower_label = na
+var line session_high_line = na
+var label session_high_label = na
+var line session_low_line = na
+var label session_low_label = na
+var line mean_high_line = na
+var label mean_high_label = na
+var line median_high_line = na
+var label median_high_label = na
+var line mean_low_line = na
+var label mean_low_label = na
+var line median_low_line = na
+var label median_low_label = na
+
+if bar_index == 0
+    anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
+    anchor_label := label.new(bar_index, na, "Anchor", style=get_label_style(), color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
+    session_open_line := line.new(bar_index, na, bar_index+1, na, color=session_open_color, style=get_line_style(session_open_style), width=session_open_width)
+    session_open_label := label.new(bar_index, na, "Session Open", style=get_label_style(), color=color.new(session_open_color, 100), textcolor=session_open_color, size=get_label_size(label_size))
+    upper_range_std1_line := line.new(bar_index, na, bar_index+1, na, color=range_std_color, style=get_line_style(range_std_style), width=range_std_width)
+    upper_range_std1_label := label.new(bar_index, na, std_dev_anchor == "Open" ? "+" + str.tostring(std_dev_level_1) + "σ Range" : "+" + str.tostring(std_dev_level_1) + "σ from High", style=get_label_style(), color=color.new(range_std_color, 100), textcolor=range_std_color, size=get_label_size(label_size))
+    lower_range_std1_line := line.new(bar_index, na, bar_index+1, na, color=range_std_color, style=get_line_style(range_std_style), width=range_std_width)
+    lower_range_std1_label := label.new(bar_index, na, std_dev_anchor == "Open" ? "-" + str.tostring(std_dev_level_1) + "σ Range" : "-" + str.tostring(std_dev_level_1) + "σ from Low", style=get_label_style(), color=color.new(range_std_color, 100), textcolor=range_std_color, size=get_label_size(label_size))
+    upper_range_std2_line := line.new(bar_index, na, bar_index+1, na, color=range_std_color, style=get_line_style(range_std_style), width=range_std_width)
+    upper_range_std2_label := label.new(bar_index, na, std_dev_anchor == "Open" ? "+" + str.tostring(std_dev_level_2) + "σ Range" : "+" + str.tostring(std_dev_level_2) + "σ from High", style=get_label_style(), color=color.new(range_std_color, 100), textcolor=range_std_color, size=get_label_size(label_size))
+    lower_range_std2_line := line.new(bar_index, na, bar_index+1, na, color=range_std_color, style=get_line_style(range_std_style), width=range_std_width)
+    lower_range_std2_label := label.new(bar_index, na, std_dev_anchor == "Open" ? "-" + str.tostring(std_dev_level_2) + "σ Range" : "-" + str.tostring(std_dev_level_2) + "σ from Low", style=get_label_style(), color=color.new(range_std_color, 100), textcolor=range_std_color, size=get_label_size(label_size))
+    fib_level_1_line := line.new(bar_index, na, bar_index+1, na, color=fib_color, style=get_line_style(fib_style), width=fib_width)
+    fib_level_1_label := label.new(bar_index, na, str.tostring(fib_level_1), style=get_label_style(), color=color.new(fib_color, 100), textcolor=fib_color, size=get_label_size(label_size))
+    fib_level_2_line := line.new(bar_index, na, bar_index+1, na, color=fib_color, style=get_line_style(fib_style), width=fib_width)
+    fib_level_2_label := label.new(bar_index, na, str.tostring(fib_level_2), style=get_label_style(), color=color.new(fib_color, 100), textcolor=fib_color, size=get_label_size(label_size))
+    fib_level_3_line := line.new(bar_index, na, bar_index+1, na, color=fib_color, style=get_line_style(fib_style), width=fib_width)
+    fib_level_3_label := label.new(bar_index, na, str.tostring(fib_level_3), style=get_label_style(), color=color.new(fib_color, 100), textcolor=fib_color, size=get_label_size(label_size))
+    fib_ext_1_upper_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_1_upper_label := label.new(bar_index, na, "+" + str.tostring(fib_ext_level_1) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    fib_ext_1_lower_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_1_lower_label := label.new(bar_index, na, "-" + str.tostring(fib_ext_level_1) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    fib_ext_2_upper_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_2_upper_label := label.new(bar_index, na, "+" + str.tostring(fib_ext_level_2) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    fib_ext_2_lower_line := line.new(bar_index, na, bar_index+1, na, color=fib_ext_color, style=get_line_style(fib_ext_style), width=fib_ext_width)
+    fib_ext_2_lower_label := label.new(bar_index, na, "-" + str.tostring(fib_ext_level_2) + " Range", style=get_label_style(), color=color.new(fib_ext_color, 100), textcolor=fib_ext_color, size=get_label_size(label_size))
+    session_high_line := line.new(bar_index, na, bar_index+1, na, color=session_hl_color, style=get_line_style(session_hl_style), width=session_hl_width)
+    session_high_label := label.new(bar_index, na, "Session High", style=get_label_style(), color=color.new(session_hl_color, 100), textcolor=session_hl_color, size=get_label_size(label_size))
+    session_low_line := line.new(bar_index, na, bar_index+1, na, color=session_hl_color, style=get_line_style(session_hl_style), width=session_hl_width)
+    session_low_label := label.new(bar_index, na, "Session Low", style=get_label_style(), color=color.new(session_hl_color, 100), textcolor=session_hl_color, size=get_label_size(label_size))
+    mean_high_line := line.new(bar_index, na, bar_index + 1, na, color=color.purple, style=line.style_dashed, width=1)
+    median_high_line := line.new(bar_index, na, bar_index + 1, na, color=color.purple, style=line.style_solid, width=1)
+    mean_low_line := line.new(bar_index, na, bar_index + 1, na, color=color.orange, style=line.style_dashed, width=1)
+    median_low_line := line.new(bar_index, na, bar_index + 1, na, color=color.orange, style=line.style_solid, width=1)
+    mean_high_label := label.new(bar_index, na, "Mean High Ext", style=get_label_style(), color=color.new(color.purple, 100), textcolor=color.purple, size=get_label_size(label_size))
+    median_high_label := label.new(bar_index, na, "Median High Ext", style=get_label_style(), color=color.new(color.purple, 100), textcolor=color.purple, size=get_label_size(label_size))
+    mean_low_label := label.new(bar_index, na, "Mean Low Ext", style=get_label_style(), color=color.new(color.orange, 100), textcolor=color.orange, size=get_label_size(label_size))
+    median_low_label := label.new(bar_index, na, "Median Low Ext", style=get_label_style(), color=color.new(color.orange, 100), textcolor=color.orange, size=get_label_size(label_size))
+
+// === Plotting Levels and Labels ===
+// ... (keeping variable declarations unchanged) ...
+
+// Session Anchor (at 06:00 EST)
+if is_session_start_levels and show_anchor
+    line.set_xy1(anchor_line, bar_index, session_open)
+    line.set_xy2(anchor_line, bar_index, session_open)
+    if show_anchor_label and not na(avg_range)
+        label.set_xy(anchor_label, bar_index, session_open + avg_range)
+        label.set_text(anchor_label, "Anchor - " + format_price(session_open))
+
+// Plot Levels at Session End (09:00 EST)
+if is_session_end_levels and show_session_open
+    line.set_xy1(session_open_line, bar_index, session_open)
+    line.set_xy2(session_open_line, bar_index + projection_offset, session_open)
+if show_session_open_label and is_session_end_levels
+    label.set_xy(session_open_label, bar_index + projection_offset, session_open)
+    label.set_text(session_open_label, "Session Open - " + format_price(session_open))
+
+if is_session_end_levels and not na(avg_range) and not na(std_dev_range) and show_range_std
+    line.set_xy1(upper_range_std1_line, bar_index, upper_range_std1)
+    line.set_xy2(upper_range_std1_line, bar_index + projection_offset, upper_range_std1)
+    line.set_xy1(lower_range_std1_line, bar_index, lower_range_std1)
+    line.set_xy2(lower_range_std1_line, bar_index + projection_offset, lower_range_std1)
+    line.set_xy1(upper_range_std2_line, bar_index, upper_range_std2)
+    line.set_xy2(upper_range_std2_line, bar_index + projection_offset, upper_range_std2)
+    line.set_xy1(lower_range_std2_line, bar_index, lower_range_std2)
+    line.set_xy2(lower_range_std2_line, bar_index + projection_offset, lower_range_std2)
+if show_range_std_label and is_session_end_levels
+    label.set_xy(upper_range_std1_label, bar_index + projection_offset, upper_range_std1)
+    label.set_text(upper_range_std1_label, (std_dev_anchor == "Open" ? "+" + str.tostring(std_dev_level_1) + "σ Range" : "+" + str.tostring(std_dev_level_1) + "σ from High") + " - " + format_price(upper_range_std1))
+    
+    label.set_xy(lower_range_std1_label, bar_index + projection_offset, lower_range_std1)
+    label.set_text(lower_range_std1_label, (std_dev_anchor == "Open" ? "-" + str.tostring(std_dev_level_1) + "σ Range" : "-" + str.tostring(std_dev_level_1) + "σ from Low") + " - " + format_price(lower_range_std1))
+    
+    label.set_xy(upper_range_std2_label, bar_index + projection_offset, upper_range_std2)
+    label.set_text(upper_range_std2_label, (std_dev_anchor == "Open" ? "+" + str.tostring(std_dev_level_2) + "σ Range" : "+" + str.tostring(std_dev_level_2) + "σ from High") + " - " + format_price(upper_range_std2))
+    
+    label.set_xy(lower_range_std2_label, bar_index + projection_offset, lower_range_std2)
+    label.set_text(lower_range_std2_label, (std_dev_anchor == "Open" ? "-" + str.tostring(std_dev_level_2) + "σ Range" : "-" + str.tostring(std_dev_level_2) + "σ from Low") + " - " + format_price(lower_range_std2))
+
+// Fibonacci Levels
+float fib_base = fib_anchor == "Low" ? session_low : session_open
+float fib_range = session_high - session_low
+float fib_1 = fib_base + (fib_range * fib_level_1)
+float fib_2 = fib_base + (fib_range * fib_level_2)
+float fib_3 = fib_base + (fib_range * fib_level_3)
+
+if is_session_end_levels and show_fib_levels and not na(fib_range)
+    line.set_xy1(fib_level_1_line, bar_index, fib_1)
+    line.set_xy2(fib_level_1_line, bar_index + projection_offset, fib_1)
+    line.set_xy1(fib_level_2_line, bar_index, fib_2)
+    line.set_xy2(fib_level_2_line, bar_index + projection_offset, fib_2)
+    line.set_xy1(fib_level_3_line, bar_index, fib_3)
+    line.set_xy2(fib_level_3_line, bar_index + projection_offset, fib_3)
+    if show_fib_labels
+        label.set_xy(fib_level_1_label, bar_index + projection_offset, fib_1)
+        label.set_text(fib_level_1_label, str.tostring(fib_level_1) + " - " + format_price(fib_1))
+        label.set_xy(fib_level_2_label, bar_index + projection_offset, fib_2)
+        label.set_text(fib_level_2_label, str.tostring(fib_level_2) + " - " + format_price(fib_2))
+        label.set_xy(fib_level_3_label, bar_index + projection_offset, fib_3)
+        label.set_text(fib_level_3_label, str.tostring(fib_level_3) + " - " + format_price(fib_3))
+
+// Fibonacci Extensions
+if is_session_end_levels and show_fib_ext and not na(sess_range)
+    line.set_xy1(fib_ext_1_upper_line, bar_index, fib_ext_1_upper)
+    line.set_xy2(fib_ext_1_upper_line, bar_index + projection_offset, fib_ext_1_upper)
+    line.set_xy1(fib_ext_1_lower_line, bar_index, fib_ext_1_lower)
+    line.set_xy2(fib_ext_1_lower_line, bar_index + projection_offset, fib_ext_1_lower)
+    line.set_xy1(fib_ext_2_upper_line, bar_index, fib_ext_2_upper)
+    line.set_xy2(fib_ext_2_upper_line, bar_index + projection_offset, fib_ext_2_upper)
+    line.set_xy1(fib_ext_2_lower_line, bar_index, fib_ext_2_lower)
+    line.set_xy2(fib_ext_2_lower_line, bar_index + projection_offset, fib_ext_2_lower)
+    if show_fib_ext_labels
+        label.set_xy(fib_ext_1_upper_label, bar_index + projection_offset, fib_ext_1_upper)
+        label.set_text(fib_ext_1_upper_label, "+" + str.tostring(fib_ext_level_1) + " Range - " + format_price(fib_ext_1_upper))
+        label.set_xy(fib_ext_1_lower_label, bar_index + projection_offset, fib_ext_1_lower)
+        label.set_text(fib_ext_1_lower_label, "-" + str.tostring(fib_ext_level_1) + " Range - " + format_price(fib_ext_1_lower))
+        label.set_xy(fib_ext_2_upper_label, bar_index + projection_offset, fib_ext_2_upper)
+        label.set_text(fib_ext_2_upper_label, "+" + str.tostring(fib_ext_level_2) + " Range - " + format_price(fib_ext_2_upper))
+        label.set_xy(fib_ext_2_lower_label, bar_index + projection_offset, fib_ext_2_lower)
+        label.set_text(fib_ext_2_lower_label, "-" + str.tostring(fib_ext_level_2) + " Range - " + format_price(fib_ext_2_lower))
+
+// Session High/Low Lines
+if is_session_end_levels and show_session_hl and not na(session_high) and not na(session_low)
+    line.set_xy1(session_high_line, bar_index, session_high)
+    line.set_xy2(session_high_line, bar_index + projection_offset, session_high)
+    line.set_xy1(session_low_line, bar_index, session_low)
+    line.set_xy2(session_low_line, bar_index + projection_offset, session_low)
+    if show_session_hl_label
+        label.set_xy(session_high_label, bar_index + projection_offset, session_high)
+        label.set_text(session_high_label, "Session High - " + format_price(session_high))
+        label.set_xy(session_low_label, bar_index + projection_offset, session_low)
+        label.set_text(session_low_label, "Session Low - " + format_price(session_low))
+
+// Extension Stats Lines and Labels
+if is_session_end_levels and show_extension_stats and not na(session_open)
+    line.set_xy1(mean_high_line, bar_index, mean_high_level)
+    line.set_xy2(mean_high_line, bar_index + projection_offset, mean_high_level)
+    line.set_xy1(median_high_line, bar_index, median_high_level)
+    line.set_xy2(median_high_line, bar_index + projection_offset, median_high_level)
+    line.set_xy1(mean_low_line, bar_index, mean_low_level)
+    line.set_xy2(mean_low_line, bar_index + projection_offset, mean_low_level)
+    line.set_xy1(median_low_line, bar_index, median_low_level)
+    line.set_xy2(median_low_line, bar_index + projection_offset, median_low_level)
+    if show_extension_stats
+        label.set_xy(mean_high_label, bar_index + projection_offset, mean_high_level)
+        label.set_text(mean_high_label, "Mean High Ext - " + format_price(mean_high_level))
+        label.set_xy(median_high_label, bar_index + projection_offset, median_high_level)
+        label.set_text(median_high_label, "Median High Ext - " + format_price(median_high_level))
+        label.set_xy(mean_low_label, bar_index + projection_offset, mean_low_level)
+        label.set_text(mean_low_label, "Mean Low Ext - " + format_price(mean_low_level))
+        label.set_xy(median_low_label, bar_index + projection_offset, median_low_level)
+        label.set_text(median_low_label, "Median Low Ext - " + format_price(median_low_level))
+
+// Extend Lines and Labels (unchanged)
+if bar_index > bar_index[1]
+    if show_session_open
+        line.set_x2(session_open_line, bar_index + projection_offset)
+    if show_range_std
+        line.set_x2(upper_range_std1_line, bar_index + projection_offset)
+        line.set_x2(lower_range_std1_line, bar_index + projection_offset)
+        line.set_x2(upper_range_std2_line, bar_index + projection_offset)
+        line.set_x2(lower_range_std2_line, bar_index + projection_offset)
+    if show_range_std_label
+        label.set_x(upper_range_std1_label, bar_index + projection_offset)
+        label.set_x(lower_range_std1_label, bar_index + projection_offset)
+        label.set_x(upper_range_std2_label, bar_index + projection_offset)
+        label.set_x(lower_range_std2_label, bar_index + projection_offset)
+    if show_fib_levels
+        line.set_x2(fib_level_1_line, bar_index + projection_offset)
+        line.set_x2(fib_level_2_line, bar_index + projection_offset)
+        line.set_x2(fib_level_3_line, bar_index + projection_offset)
+        if show_fib_labels
+            label.set_x(fib_level_1_label, bar_index + projection_offset)
+            label.set_x(fib_level_2_label, bar_index + projection_offset)
+            label.set_x(fib_level_3_label, bar_index + projection_offset)
+    if show_fib_ext
+        line.set_x2(fib_ext_1_upper_line, bar_index + projection_offset)
+        line.set_x2(fib_ext_1_lower_line, bar_index + projection_offset)
+        line.set_x2(fib_ext_2_upper_line, bar_index + projection_offset)
+        line.set_x2(fib_ext_2_lower_line, bar_index + projection_offset)
+        if show_fib_ext_labels
+            label.set_x(fib_ext_1_upper_label, bar_index + projection_offset)
+            label.set_x(fib_ext_1_lower_label, bar_index + projection_offset)
+            label.set_x(fib_ext_2_upper_label, bar_index + projection_offset)
+            label.set_x(fib_ext_2_lower_label, bar_index + projection_offset)
+    if show_session_hl
+        line.set_x2(session_high_line, bar_index + projection_offset)
+        line.set_x2(session_low_line, bar_index + projection_offset)
+        if show_session_hl_label
+            label.set_x(session_high_label, bar_index + projection_offset)
+            label.set_x(session_low_label, bar_index + projection_offset)
+    if show_extension_stats
+        line.set_x2(mean_high_line, bar_index + projection_offset)
+        line.set_x2(median_high_line, bar_index + projection_offset)
+        line.set_x2(mean_low_line, bar_index + projection_offset)
+        line.set_x2(median_low_line, bar_index + projection_offset)
+        label.set_x(mean_high_label, bar_index + projection_offset)
+        label.set_x(median_high_label, bar_index + projection_offset)
+        label.set_x(mean_low_label, bar_index + projection_offset)
+        label.set_x(median_low_label, bar_index + projection_offset)
+        
+// === Stats for Levels Being Hit (Per Weekday) ===
+var int mon_sessions = 0
+var int tue_sessions = 0
+var int wed_sessions = 0
+var int thu_sessions = 0
+var int fri_sessions = 0
+
+var int mon_upper_std1_hits = 0
+var int tue_upper_std1_hits = 0
+var int wed_upper_std1_hits = 0
+var int thu_upper_std1_hits = 0
+var int fri_upper_std1_hits = 0
+
+var int mon_lower_std1_hits = 0
+var int tue_lower_std1_hits = 0
+var int wed_lower_std1_hits = 0
+var int thu_lower_std1_hits = 0
+var int fri_lower_std1_hits = 0
+
+var int mon_upper_std2_hits = 0
+var int tue_upper_std2_hits = 0
+var int wed_upper_std2_hits = 0
+var int thu_upper_std2_hits = 0
+var int fri_upper_std2_hits = 0
+
+var int mon_lower_std2_hits = 0
+var int tue_lower_std2_hits = 0
+var int wed_lower_std2_hits = 0
+var int thu_lower_std2_hits = 0
+var int fri_lower_std2_hits = 0
+
+var int mon_mean_high_hits = 0
+var int tue_mean_high_hits = 0
+var int wed_mean_high_hits = 0
+var int thu_mean_high_hits = 0
+var int fri_mean_high_hits = 0
+
+var int mon_median_high_hits = 0
+var int tue_median_high_hits = 0
+var int wed_median_high_hits = 0
+var int thu_median_high_hits = 0
+var int fri_median_high_hits = 0
+
+var int mon_mean_low_hits = 0
+var int tue_mean_low_hits = 0
+var int wed_mean_low_hits = 0
+var int thu_mean_low_hits = 0
+var int fri_mean_low_hits = 0
+
+var int mon_median_low_hits = 0
+var int tue_median_low_hits = 0
+var int wed_median_low_hits = 0
+var int thu_median_low_hits = 0
+var int fri_median_low_hits = 0
+
+var int mon_fib_ext1_upper_hits = 0
+var int tue_fib_ext1_upper_hits = 0
+var int wed_fib_ext1_upper_hits = 0
+var int thu_fib_ext1_upper_hits = 0
+var int fri_fib_ext1_upper_hits = 0
+
+var int mon_fib_ext1_lower_hits = 0
+var int tue_fib_ext1_lower_hits = 0
+var int wed_fib_ext1_lower_hits = 0
+var int thu_fib_ext1_lower_hits = 0
+var int fri_fib_ext1_lower_hits = 0
+
+var int mon_fib_ext2_upper_hits = 0
+var int tue_fib_ext2_upper_hits = 0
+var int wed_fib_ext2_upper_hits = 0
+var int thu_fib_ext2_upper_hits = 0
+var int fri_fib_ext2_upper_hits = 0
+
+var int mon_fib_ext2_lower_hits = 0
+var int tue_fib_ext2_lower_hits = 0
+var int wed_fib_ext2_lower_hits = 0
+var int thu_fib_ext2_lower_hits = 0
+var int fri_fib_ext2_lower_hits = 0
+
+
+// === Additional Stats: Hit Times and Returns ===
+var float[] mon_upper_std1_times = array.new_float(0)
+var float[] tue_upper_std1_times = array.new_float(0)
+var float[] wed_upper_std1_times = array.new_float(0)
+var float[] thu_upper_std1_times = array.new_float(0)
+var float[] fri_upper_std1_times = array.new_float(0)
+
+var float[] mon_lower_std1_times = array.new_float(0)
+var float[] tue_lower_std1_times = array.new_float(0)
+var float[] wed_lower_std1_times = array.new_float(0)
+var float[] thu_lower_std1_times = array.new_float(0)
+var float[] fri_lower_std1_times = array.new_float(0)
+
+var float[] mon_upper_std2_times = array.new_float(0)
+var float[] tue_upper_std2_times = array.new_float(0)
+var float[] wed_upper_std2_times = array.new_float(0)
+var float[] thu_upper_std2_times = array.new_float(0)
+var float[] fri_upper_std2_times = array.new_float(0)
+
+var float[] mon_lower_std2_times = array.new_float(0)
+var float[] tue_lower_std2_times = array.new_float(0)
+var float[] wed_lower_std2_times = array.new_float(0)
+var float[] thu_lower_std2_times = array.new_float(0)
+var float[] fri_lower_std2_times = array.new_float(0)
+
+var float[] mon_mean_high_times = array.new_float(0)
+var float[] tue_mean_high_times = array.new_float(0)
+var float[] wed_mean_high_times = array.new_float(0)
+var float[] thu_mean_high_times = array.new_float(0)
+var float[] fri_mean_high_times = array.new_float(0)
+
+var float[] mon_median_high_times = array.new_float(0)
+var float[] tue_median_high_times = array.new_float(0)
+var float[] wed_median_high_times = array.new_float(0)
+var float[] thu_median_high_times = array.new_float(0)
+var float[] fri_median_high_times = array.new_float(0)
+
+var float[] mon_mean_low_times = array.new_float(0)
+var float[] tue_mean_low_times = array.new_float(0)
+var float[] wed_mean_low_times = array.new_float(0)
+var float[] thu_mean_low_times = array.new_float(0)
+var float[] fri_mean_low_times = array.new_float(0)
+
+var float[] mon_median_low_times = array.new_float(0)
+var float[] tue_median_low_times = array.new_float(0)
+var float[] wed_median_low_times = array.new_float(0)
+var float[] thu_median_low_times = array.new_float(0)
+var float[] fri_median_low_times = array.new_float(0)
+
+var float[] mon_fib_ext1_upper_times = array.new_float(0)
+var float[] tue_fib_ext1_upper_times = array.new_float(0)
+var float[] wed_fib_ext1_upper_times = array.new_float(0)
+var float[] thu_fib_ext1_upper_times = array.new_float(0)
+var float[] fri_fib_ext1_upper_times = array.new_float(0)
+
+var float[] mon_fib_ext1_lower_times = array.new_float(0)
+var float[] tue_fib_ext1_lower_times = array.new_float(0)
+var float[] wed_fib_ext1_lower_times = array.new_float(0)
+var float[] thu_fib_ext1_lower_times = array.new_float(0)
+var float[] fri_fib_ext1_lower_times = array.new_float(0)
+
+var float[] mon_fib_ext2_upper_times = array.new_float(0)
+var float[] tue_fib_ext2_upper_times = array.new_float(0)
+var float[] wed_fib_ext2_upper_times = array.new_float(0)
+var float[] thu_fib_ext2_upper_times = array.new_float(0)
+var float[] fri_fib_ext2_upper_times = array.new_float(0)
+
+var float[] mon_fib_ext2_lower_times = array.new_float(0)
+var float[] tue_fib_ext2_lower_times = array.new_float(0)
+var float[] wed_fib_ext2_lower_times = array.new_float(0)
+var float[] thu_fib_ext2_lower_times = array.new_float(0)
+var float[] fri_fib_ext2_lower_times = array.new_float(0)
+
+
+var int mon_upper_std1_returns = 0
+var int tue_upper_std1_returns = 0
+var int wed_upper_std1_returns = 0
+var int thu_upper_std1_returns = 0
+var int fri_upper_std1_returns = 0
+
+var int mon_lower_std1_returns = 0
+var int tue_lower_std1_returns = 0
+var int wed_lower_std1_returns = 0
+var int thu_lower_std1_returns = 0
+var int fri_lower_std1_returns = 0
+
+var int mon_upper_std2_returns = 0
+var int tue_upper_std2_returns = 0
+var int wed_upper_std2_returns = 0
+var int thu_upper_std2_returns = 0
+var int fri_upper_std2_returns = 0
+
+var int mon_lower_std2_returns = 0
+var int tue_lower_std2_returns = 0
+var int wed_lower_std2_returns = 0
+var int thu_lower_std2_returns = 0
+var int fri_lower_std2_returns = 0
+
+// Session Data Tracking for Stats
+var float hit_session_open = na
+var float hit_session_high = na
+var float hit_session_low = na
+var int stats_start_time = na
+
+if is_session_start_stats
+    hit_session_open := session_open  // Use the session_open from 06:00 EST
+    hit_session_high := high
+    hit_session_low := low
+    stats_start_time := time
+else if is_in_session_stats
+    hit_session_high := math.max(hit_session_high, high)
+    hit_session_low := math.min(hit_session_low, low)
+
+// Track First Hits and Returns
+var bool upper_std1_first_hit = false
+var bool lower_std1_first_hit = false
+var bool upper_std2_first_hit = false
+var bool lower_std2_first_hit = false
+var bool upper_std1_returned = false
+var bool lower_std1_returned = false
+var bool upper_std2_returned = false
+var bool lower_std2_returned = false
+var bool mean_high_first_hit = false
+var bool median_high_first_hit = false
+var bool mean_low_first_hit = false
+var bool median_low_first_hit = false
+var bool fib_ext1_upper_first_hit = false
+var bool fib_ext1_lower_first_hit = false
+var bool fib_ext2_upper_first_hit = false
+var bool fib_ext2_lower_first_hit = false
+
+// Reset counters at the start of a new week (Monday)
+if is_session_start_stats and dayofweek(time, time_zone) == dayofweek.monday and not (dayofweek(time[1], time_zone) == dayofweek.monday)
+    mon_sessions := 0
+    tue_sessions := 0
+    wed_sessions := 0
+    thu_sessions := 0
+    fri_sessions := 0
+    mon_upper_std1_hits := 0
+    tue_upper_std1_hits := 0
+    wed_upper_std1_hits := 0
+    thu_upper_std1_hits := 0
+    fri_upper_std1_hits := 0
+    mon_lower_std1_hits := 0
+    tue_lower_std1_hits := 0
+    wed_lower_std1_hits := 0
+    thu_lower_std1_hits := 0
+    fri_lower_std1_hits := 0
+    mon_upper_std2_hits := 0
+    tue_upper_std2_hits := 0
+    wed_upper_std2_hits := 0
+    thu_upper_std2_hits := 0
+    fri_upper_std2_hits := 0
+    mon_lower_std2_hits := 0
+    tue_lower_std2_hits := 0
+    wed_lower_std2_hits := 0
+    thu_lower_std2_hits := 0
+    fri_lower_std2_hits := 0
+    mon_mean_high_hits := 0
+    tue_mean_high_hits := 0
+    wed_mean_high_hits := 0
+    thu_mean_high_hits := 0
+    fri_mean_high_hits := 0
+    mon_median_high_hits := 0
+    tue_median_high_hits := 0
+    wed_median_high_hits := 0
+    thu_median_high_hits := 0
+    fri_median_high_hits := 0
+    mon_mean_low_hits := 0
+    tue_mean_low_hits := 0
+    wed_mean_low_hits := 0
+    thu_mean_low_hits := 0
+    fri_mean_low_hits := 0
+    mon_median_low_hits := 0
+    tue_median_low_hits := 0
+    wed_median_low_hits := 0
+    thu_median_low_hits := 0
+    fri_median_low_hits := 0
+    mon_fib_ext1_upper_hits := 0
+    tue_fib_ext1_upper_hits := 0
+    wed_fib_ext1_upper_hits := 0
+    thu_fib_ext1_upper_hits := 0
+    fri_fib_ext1_upper_hits := 0
+    mon_fib_ext1_lower_hits := 0
+    tue_fib_ext1_lower_hits := 0
+    wed_fib_ext1_lower_hits := 0
+    thu_fib_ext1_lower_hits := 0
+    fri_fib_ext1_lower_hits := 0
+    mon_fib_ext2_upper_hits := 0
+    tue_fib_ext2_upper_hits := 0
+    wed_fib_ext2_upper_hits := 0
+    thu_fib_ext2_upper_hits := 0
+    fri_fib_ext2_upper_hits := 0
+    mon_fib_ext2_lower_hits := 0
+    tue_fib_ext2_lower_hits := 0
+    wed_fib_ext2_lower_hits := 0
+    thu_fib_ext2_lower_hits := 0
+    fri_fib_ext2_lower_hits := 0
+    mon_upper_std1_returns := 0
+    tue_upper_std1_returns := 0
+    wed_upper_std1_returns := 0
+    thu_upper_std1_returns := 0
+    fri_upper_std1_returns := 0
+    mon_lower_std1_returns := 0
+    tue_lower_std1_returns := 0
+    wed_lower_std1_returns := 0
+    thu_lower_std1_returns := 0
+    fri_lower_std1_returns := 0
+    mon_upper_std2_returns := 0
+    tue_upper_std2_returns := 0
+    wed_upper_std2_returns := 0
+    thu_upper_std2_returns := 0
+    fri_upper_std2_returns := 0
+    mon_lower_std2_returns := 0
+    tue_lower_std2_returns := 0
+    wed_lower_std2_returns := 0
+    thu_lower_std2_returns := 0
+    fri_lower_std2_returns := 0
+    array.clear(mon_upper_std1_times)
+    array.clear(tue_upper_std1_times)
+    array.clear(wed_upper_std1_times)
+    array.clear(thu_upper_std1_times)
+    array.clear(fri_upper_std1_times)
+    array.clear(mon_lower_std1_times)
+    array.clear(tue_lower_std1_times)
+    array.clear(wed_lower_std1_times)
+    array.clear(thu_lower_std1_times)
+    array.clear(fri_lower_std1_times)
+    array.clear(mon_upper_std2_times)
+    array.clear(tue_upper_std2_times)
+    array.clear(wed_upper_std2_times)
+    array.clear(thu_upper_std2_times)
+    array.clear(fri_upper_std2_times)
+    array.clear(mon_lower_std2_times)
+    array.clear(tue_lower_std2_times)
+    array.clear(wed_lower_std2_times)
+    array.clear(thu_lower_std2_times)
+    array.clear(fri_lower_std2_times)
+    array.clear(mon_mean_high_times)
+    array.clear(tue_mean_high_times)
+    array.clear(wed_mean_high_times)
+    array.clear(thu_mean_high_times)
+    array.clear(fri_mean_high_times)
+    array.clear(mon_median_high_times)
+    array.clear(tue_median_high_times)
+    array.clear(wed_median_high_times)
+    array.clear(thu_median_high_times)
+    array.clear(fri_median_high_times)
+    array.clear(mon_mean_low_times)
+    array.clear(tue_mean_low_times)
+    array.clear(wed_mean_low_times)
+    array.clear(thu_mean_low_times)
+    array.clear(fri_mean_low_times)
+    array.clear(mon_median_low_times)
+    array.clear(tue_median_low_times)
+    array.clear(wed_median_low_times)
+    array.clear(thu_median_low_times)
+    array.clear(fri_median_low_times)
+    array.clear(mon_fib_ext1_upper_times)
+    array.clear(tue_fib_ext1_upper_times)
+    array.clear(wed_fib_ext1_upper_times)
+    array.clear(thu_fib_ext1_upper_times)
+    array.clear(fri_fib_ext1_upper_times)
+    array.clear(mon_fib_ext1_lower_times)
+    array.clear(tue_fib_ext1_lower_times)
+    array.clear(wed_fib_ext1_lower_times)
+    array.clear(thu_fib_ext1_lower_times)
+    array.clear(fri_fib_ext1_lower_times)
+    array.clear(mon_fib_ext2_upper_times)
+    array.clear(tue_fib_ext2_upper_times)
+    array.clear(wed_fib_ext2_upper_times)
+    array.clear(thu_fib_ext2_upper_times)
+    array.clear(fri_fib_ext2_upper_times)
+    array.clear(mon_fib_ext2_lower_times)
+    array.clear(tue_fib_ext2_lower_times)
+    array.clear(wed_fib_ext2_lower_times)
+    array.clear(thu_fib_ext2_lower_times)
+    array.clear(fri_fib_ext2_lower_times)
+
+
+// Track hits, times, and returns by weekday
+if is_in_session_stats and not na(avg_range) and not na(std_dev_range)
+    string current_day = get_weekday()
+    float time_since_start = (time - stats_start_time) / (1000 * 60)  // Convert ms to minutes
+    
+    // Upper StdDev Level 1
+    if not upper_std1_first_hit and hit_session_high >= upper_range_std1
+        if current_day == "Monday"
+            mon_upper_std1_hits := mon_upper_std1_hits + 1
+            array.push(mon_upper_std1_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_upper_std1_hits := tue_upper_std1_hits + 1
+            array.push(tue_upper_std1_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_upper_std1_hits := wed_upper_std1_hits + 1
+            array.push(wed_upper_std1_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_upper_std1_hits := thu_upper_std1_hits + 1
+            array.push(thu_upper_std1_times, time_since_start)
+        else if current_day == "Friday"
+            fri_upper_std1_hits := fri_upper_std1_hits + 1
+            array.push(fri_upper_std1_times, time_since_start)
+        upper_std1_first_hit := true
+    
+    // Lower StdDev Level 1
+    if not lower_std1_first_hit and hit_session_low <= lower_range_std1
+        if current_day == "Monday"
+            mon_lower_std1_hits := mon_lower_std1_hits + 1
+            array.push(mon_lower_std1_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_lower_std1_hits := tue_lower_std1_hits + 1
+            array.push(tue_lower_std1_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_lower_std1_hits := wed_lower_std1_hits + 1
+            array.push(wed_lower_std1_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_lower_std1_hits := thu_lower_std1_hits + 1
+            array.push(thu_lower_std1_times, time_since_start)
+        else if current_day == "Friday"
+            fri_lower_std1_hits := fri_lower_std1_hits + 1
+            array.push(fri_lower_std1_times, time_since_start)
+        lower_std1_first_hit := true
+    
+    // Upper StdDev Level 2
+    if not upper_std2_first_hit and hit_session_high >= upper_range_std2
+        if current_day == "Monday"
+            mon_upper_std2_hits := mon_upper_std2_hits + 1
+            array.push(mon_upper_std2_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_upper_std2_hits := tue_upper_std2_hits + 1
+            array.push(tue_upper_std2_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_upper_std2_hits := wed_upper_std2_hits + 1
+            array.push(wed_upper_std2_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_upper_std2_hits := thu_upper_std2_hits + 1
+            array.push(thu_upper_std2_times, time_since_start)
+        else if current_day == "Friday"
+            fri_upper_std2_hits := fri_upper_std2_hits + 1
+            array.push(fri_upper_std2_times, time_since_start)
+        upper_std2_first_hit := true
+    
+    // Lower StdDev Level 2
+    if not lower_std2_first_hit and hit_session_low <= lower_range_std2
+        if current_day == "Monday"
+            mon_lower_std2_hits := mon_lower_std2_hits + 1
+            array.push(mon_lower_std2_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_lower_std2_hits := tue_lower_std2_hits + 1
+            array.push(tue_lower_std2_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_lower_std2_hits := wed_lower_std2_hits + 1
+            array.push(wed_lower_std2_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_lower_std2_hits := thu_lower_std2_hits + 1
+            array.push(thu_lower_std2_times, time_since_start)
+        else if current_day == "Friday"
+            fri_lower_std2_hits := fri_lower_std2_hits + 1
+            array.push(fri_lower_std2_times, time_since_start)
+        lower_std2_first_hit := true
+    
+    // Check for returns to session_open only
+    if upper_std1_first_hit and not upper_std1_returned and math.abs(close - hit_session_open) < 0.0001
+        if current_day == "Monday"
+            mon_upper_std1_returns := mon_upper_std1_returns + 1
+        else if current_day == "Tuesday"
+            tue_upper_std1_returns := tue_upper_std1_returns + 1
+        else if current_day == "Wednesday"
+            wed_upper_std1_returns := wed_upper_std1_returns + 1
+        else if current_day == "Thursday"
+            thu_upper_std1_returns := thu_upper_std1_returns + 1
+        else if current_day == "Friday"
+            fri_upper_std1_returns := fri_upper_std1_returns + 1
+        upper_std1_returned := true
+    
+    if lower_std1_first_hit and not lower_std1_returned and math.abs(close - hit_session_open) < 0.0001
+        if current_day == "Monday"
+            mon_lower_std1_returns := mon_lower_std1_returns + 1
+        else if current_day == "Tuesday"
+            tue_lower_std1_returns := tue_lower_std1_returns + 1
+        else if current_day == "Wednesday"
+            wed_lower_std1_returns := wed_lower_std1_returns + 1
+        else if current_day == "Thursday"
+            thu_lower_std1_returns := thu_lower_std1_returns + 1
+        else if current_day == "Friday"
+            fri_lower_std1_returns := fri_lower_std1_returns + 1
+        lower_std1_returned := true
+    
+    if upper_std2_first_hit and not upper_std2_returned and math.abs(close - hit_session_open) < 0.0001
+        if current_day == "Monday"
+            mon_upper_std2_returns := mon_upper_std2_returns + 1
+        else if current_day == "Tuesday"
+            tue_upper_std2_returns := tue_upper_std2_returns + 1
+        else if current_day == "Wednesday"
+            wed_upper_std2_returns := wed_upper_std2_returns + 1
+        else if current_day == "Thursday"
+            thu_upper_std2_returns := thu_upper_std2_returns + 1
+        else if current_day == "Friday"
+            fri_upper_std2_returns := fri_upper_std2_returns + 1
+        upper_std2_returned := true
+    
+    if lower_std2_first_hit and not lower_std2_returned and math.abs(close - hit_session_open) < 0.0001
+        if current_day == "Monday"
+            mon_lower_std2_returns := mon_lower_std2_returns + 1
+        else if current_day == "Tuesday"
+            tue_lower_std2_returns := tue_lower_std2_returns + 1
+        else if current_day == "Wednesday"
+            wed_lower_std2_returns := wed_lower_std2_returns + 1
+        else if current_day == "Thursday"
+            thu_lower_std2_returns := thu_lower_std2_returns + 1
+        else if current_day == "Friday"
+            fri_lower_std2_returns := fri_lower_std2_returns + 1
+        lower_std2_returned := true
+
+    // Mean High Extension
+    if not mean_high_first_hit and hit_session_high >= mean_high_level
+        if current_day == "Monday"
+            mon_mean_high_hits := mon_mean_high_hits + 1
+            array.push(mon_mean_high_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_mean_high_hits := tue_mean_high_hits + 1
+            array.push(tue_mean_high_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_mean_high_hits := wed_mean_high_hits + 1
+            array.push(wed_mean_high_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_mean_high_hits := thu_mean_high_hits + 1
+            array.push(thu_mean_high_times, time_since_start)
+        else if current_day == "Friday"
+            fri_mean_high_hits := fri_mean_high_hits + 1
+            array.push(fri_mean_high_times, time_since_start)
+        mean_high_first_hit := true
+    
+    // Median High Extension
+    if not median_high_first_hit and hit_session_high >= median_high_level
+        if current_day == "Monday"
+            mon_median_high_hits := mon_median_high_hits + 1
+            array.push(mon_median_high_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_median_high_hits := tue_median_high_hits + 1
+            array.push(tue_median_high_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_median_high_hits := wed_median_high_hits + 1
+            array.push(wed_median_high_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_median_high_hits := thu_median_high_hits + 1
+            array.push(thu_median_high_times, time_since_start)
+        else if current_day == "Friday"
+            fri_median_high_hits := fri_median_high_hits + 1
+            array.push(fri_median_high_times, time_since_start)
+        median_high_first_hit := true
+    
+    // Mean Low Extension
+    if not mean_low_first_hit and hit_session_low <= mean_low_level
+        if current_day == "Monday"
+            mon_mean_low_hits := mon_mean_low_hits + 1
+            array.push(mon_mean_low_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_mean_low_hits := tue_mean_low_hits + 1
+            array.push(tue_mean_low_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_mean_low_hits := wed_mean_low_hits + 1
+            array.push(wed_mean_low_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_mean_low_hits := thu_mean_low_hits + 1
+            array.push(thu_mean_low_times, time_since_start)
+        else if current_day == "Friday"
+            fri_mean_low_hits := fri_mean_low_hits + 1
+            array.push(fri_mean_low_times, time_since_start)
+        mean_low_first_hit := true
+    
+    // Median Low Extension
+    if not median_low_first_hit and hit_session_low <= median_low_level
+        if current_day == "Monday"
+            mon_median_low_hits := mon_median_low_hits + 1
+            array.push(mon_median_low_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_median_low_hits := tue_median_low_hits + 1
+            array.push(tue_median_low_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_median_low_hits := wed_median_low_hits + 1
+            array.push(wed_median_low_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_median_low_hits := thu_median_low_hits + 1
+            array.push(thu_median_low_times, time_since_start)
+        else if current_day == "Friday"
+            fri_median_low_hits := fri_median_low_hits + 1
+            array.push(fri_median_low_times, time_since_start)
+        median_low_first_hit := true
+    
+    // Fib Ext 1 Upper
+    if not fib_ext1_upper_first_hit and hit_session_high >= fib_ext_1_upper
+        if current_day == "Monday"
+            mon_fib_ext1_upper_hits := mon_fib_ext1_upper_hits + 1
+            array.push(mon_fib_ext1_upper_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_fib_ext1_upper_hits := tue_fib_ext1_upper_hits + 1
+            array.push(tue_fib_ext1_upper_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_fib_ext1_upper_hits := wed_fib_ext1_upper_hits + 1
+            array.push(wed_fib_ext1_upper_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_fib_ext1_upper_hits := thu_fib_ext1_upper_hits + 1
+            array.push(thu_fib_ext1_upper_times, time_since_start)
+        else if current_day == "Friday"
+            fri_fib_ext1_upper_hits := fri_fib_ext1_upper_hits + 1
+            array.push(fri_fib_ext1_upper_times, time_since_start)
+        fib_ext1_upper_first_hit := true
+    
+    // Fib Ext 1 Lower
+    if not fib_ext1_lower_first_hit and hit_session_low <= fib_ext_1_lower
+        if current_day == "Monday"
+            mon_fib_ext1_lower_hits := mon_fib_ext1_lower_hits + 1
+            array.push(mon_fib_ext1_lower_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_fib_ext1_lower_hits := tue_fib_ext1_lower_hits + 1
+            array.push(tue_fib_ext1_lower_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_fib_ext1_lower_hits := wed_fib_ext1_lower_hits + 1
+            array.push(wed_fib_ext1_lower_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_fib_ext1_lower_hits := thu_fib_ext1_lower_hits + 1
+            array.push(thu_fib_ext1_lower_times, time_since_start)
+        else if current_day == "Friday"
+            fri_fib_ext1_lower_hits := fri_fib_ext1_lower_hits + 1
+            array.push(fri_fib_ext1_lower_times, time_since_start)
+        fib_ext1_lower_first_hit := true
+    
+    // Fib Ext 2 Upper
+    if not fib_ext2_upper_first_hit and hit_session_high >= fib_ext_2_upper
+        if current_day == "Monday"
+            mon_fib_ext2_upper_hits := mon_fib_ext2_upper_hits + 1
+            array.push(mon_fib_ext2_upper_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_fib_ext2_upper_hits := tue_fib_ext2_upper_hits + 1
+            array.push(tue_fib_ext2_upper_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_fib_ext2_upper_hits := wed_fib_ext2_upper_hits + 1
+            array.push(wed_fib_ext2_upper_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_fib_ext2_upper_hits := thu_fib_ext2_upper_hits + 1
+            array.push(thu_fib_ext2_upper_times, time_since_start)
+        else if current_day == "Friday"
+            fri_fib_ext2_upper_hits := fri_fib_ext2_upper_hits + 1
+            array.push(fri_fib_ext2_upper_times, time_since_start)
+        fib_ext2_upper_first_hit := true
+    
+    // Fib Ext 2 Lower
+    if not fib_ext2_lower_first_hit and hit_session_low <= fib_ext_2_lower
+        if current_day == "Monday"
+            mon_fib_ext2_lower_hits := mon_fib_ext2_lower_hits + 1
+            array.push(mon_fib_ext2_lower_times, time_since_start)
+        else if current_day == "Tuesday"
+            tue_fib_ext2_lower_hits := tue_fib_ext2_lower_hits + 1
+            array.push(tue_fib_ext2_lower_times, time_since_start)
+        else if current_day == "Wednesday"
+            wed_fib_ext2_lower_hits := wed_fib_ext2_lower_hits + 1
+            array.push(wed_fib_ext2_lower_times, time_since_start)
+        else if current_day == "Thursday"
+            thu_fib_ext2_lower_hits := thu_fib_ext2_lower_hits + 1
+            array.push(thu_fib_ext2_lower_times, time_since_start)
+        else if current_day == "Friday"
+            fri_fib_ext2_lower_hits := fri_fib_ext2_lower_hits + 1
+            array.push(fri_fib_ext2_lower_times, time_since_start)
+        fib_ext2_lower_first_hit := true
+
+// Update Session Counts and Reset Stats at Session End
+if is_session_end_stats
+    string current_day = get_weekday()
+    if current_day == "Monday"
+        mon_sessions := mon_sessions + 1
+    else if current_day == "Tuesday"
+        tue_sessions := tue_sessions + 1
+    else if current_day == "Wednesday"
+        wed_sessions := wed_sessions + 1
+    else if current_day == "Thursday"
+        thu_sessions := thu_sessions + 1
+    else if current_day == "Friday"
+        fri_sessions := fri_sessions + 1
+    // Reset first-hit and return flags
+    upper_std1_first_hit := false
+    lower_std1_first_hit := false
+    upper_std2_first_hit := false
+    lower_std2_first_hit := false
+    upper_std1_returned := false
+    lower_std1_returned := false
+    upper_std2_returned := false
+    lower_std2_returned := false
+    mean_high_first_hit := false
+    median_high_first_hit := false
+    mean_low_first_hit := false
+    median_low_first_hit := false
+    fib_ext1_upper_first_hit := false
+    fib_ext1_lower_first_hit := false
+    fib_ext2_upper_first_hit := false
+    fib_ext2_lower_first_hit := false
+
+
+// Calculate Hit Percentages by Weekday
+float mon_upper_std1_pct = mon_sessions > 0 ? (mon_upper_std1_hits / mon_sessions) * 100 : 0
+float mon_lower_std1_pct = mon_sessions > 0 ? (mon_lower_std1_hits / mon_sessions) * 100 : 0
+float mon_upper_std2_pct = mon_sessions > 0 ? (mon_upper_std2_hits / mon_sessions) * 100 : 0
+float mon_lower_std2_pct = mon_sessions > 0 ? (mon_lower_std2_hits / mon_sessions) * 100 : 0
+
+float tue_upper_std1_pct = tue_sessions > 0 ? (tue_upper_std1_hits / tue_sessions) * 100 : 0
+float tue_lower_std1_pct = tue_sessions > 0 ? (tue_lower_std1_hits / tue_sessions) * 100 : 0
+float tue_upper_std2_pct = tue_sessions > 0 ? (tue_upper_std2_hits / tue_sessions) * 100 : 0
+float tue_lower_std2_pct = tue_sessions > 0 ? (tue_lower_std2_hits / tue_sessions) * 100 : 0
+
+float wed_upper_std1_pct = wed_sessions > 0 ? (wed_upper_std1_hits / wed_sessions) * 100 : 0
+float wed_lower_std1_pct = wed_sessions > 0 ? (wed_lower_std1_hits / wed_sessions) * 100 : 0
+float wed_upper_std2_pct = wed_sessions > 0 ? (wed_upper_std2_hits / wed_sessions) * 100 : 0
+float wed_lower_std2_pct = wed_sessions > 0 ? (wed_lower_std2_hits / wed_sessions) * 100 : 0
+
+float thu_upper_std1_pct = thu_sessions > 0 ? (thu_upper_std1_hits / thu_sessions) * 100 : 0
+float thu_lower_std1_pct = thu_sessions > 0 ? (thu_lower_std1_hits / thu_sessions) * 100 : 0
+float thu_upper_std2_pct = thu_sessions > 0 ? (thu_upper_std2_hits / thu_sessions) * 100 : 0
+float thu_lower_std2_pct = thu_sessions > 0 ? (thu_lower_std2_hits / thu_sessions) * 100 : 0
+
+float fri_upper_std1_pct = fri_sessions > 0 ? (fri_upper_std1_hits / fri_sessions) * 100 : 0
+float fri_lower_std1_pct = fri_sessions > 0 ? (fri_lower_std1_hits / fri_sessions) * 100 : 0
+float fri_upper_std2_pct = fri_sessions > 0 ? (fri_upper_std2_hits / fri_sessions) * 100 : 0
+float fri_lower_std2_pct = fri_sessions > 0 ? (fri_lower_std2_hits / fri_sessions) * 100 : 0
+
+float mon_mean_high_pct = mon_sessions > 0 ? (mon_mean_high_hits / mon_sessions) * 100 : 0
+float tue_mean_high_pct = tue_sessions > 0 ? (tue_mean_high_hits / tue_sessions) * 100 : 0
+float wed_mean_high_pct = wed_sessions > 0 ? (wed_mean_high_hits / wed_sessions) * 100 : 0
+float thu_mean_high_pct = thu_sessions > 0 ? (thu_mean_high_hits / thu_sessions) * 100 : 0
+float fri_mean_high_pct = fri_sessions > 0 ? (fri_mean_high_hits / fri_sessions) * 100 : 0
+
+float mon_median_high_pct = mon_sessions > 0 ? (mon_median_high_hits / mon_sessions) * 100 : 0
+float tue_median_high_pct = tue_sessions > 0 ? (tue_median_high_hits / tue_sessions) * 100 : 0
+float wed_median_high_pct = wed_sessions > 0 ? (wed_median_high_hits / wed_sessions) * 100 : 0
+float thu_median_high_pct = thu_sessions > 0 ? (thu_median_high_hits / thu_sessions) * 100 : 0
+float fri_median_high_pct = fri_sessions > 0 ? (fri_median_high_hits / fri_sessions) * 100 : 0
+
+float mon_mean_low_pct = mon_sessions > 0 ? (mon_mean_low_hits / mon_sessions) * 100 : 0
+float tue_mean_low_pct = tue_sessions > 0 ? (tue_mean_low_hits / tue_sessions) * 100 : 0
+float wed_mean_low_pct = wed_sessions > 0 ? (wed_mean_low_hits / wed_sessions) * 100 : 0
+float thu_mean_low_pct = thu_sessions > 0 ? (thu_mean_low_hits / thu_sessions) * 100 : 0
+float fri_mean_low_pct = fri_sessions > 0 ? (fri_mean_low_hits / fri_sessions) * 100 : 0
+
+float mon_median_low_pct = mon_sessions > 0 ? (mon_median_low_hits / mon_sessions) * 100 : 0
+float tue_median_low_pct = tue_sessions > 0 ? (tue_median_low_hits / tue_sessions) * 100 : 0
+float wed_median_low_pct = wed_sessions > 0 ? (wed_median_low_hits / wed_sessions) * 100 : 0
+float thu_median_low_pct = thu_sessions > 0 ? (thu_median_low_hits / thu_sessions) * 100 : 0
+float fri_median_low_pct = fri_sessions > 0 ? (fri_median_low_hits / fri_sessions) * 100 : 0
+
+float mon_fib_ext1_upper_pct = mon_sessions > 0 ? (mon_fib_ext1_upper_hits / mon_sessions) * 100 : 0
+float tue_fib_ext1_upper_pct = tue_sessions > 0 ? (tue_fib_ext1_upper_hits / tue_sessions) * 100 : 0
+float wed_fib_ext1_upper_pct = wed_sessions > 0 ? (wed_fib_ext1_upper_hits / wed_sessions) * 100 : 0
+float thu_fib_ext1_upper_pct = thu_sessions > 0 ? (thu_fib_ext1_upper_hits / thu_sessions) * 100 : 0
+float fri_fib_ext1_upper_pct = fri_sessions > 0 ? (fri_fib_ext1_upper_hits / fri_sessions) * 100 : 0
+
+float mon_fib_ext1_lower_pct = mon_sessions > 0 ? (mon_fib_ext1_lower_hits / mon_sessions) * 100 : 0
+float tue_fib_ext1_lower_pct = tue_sessions > 0 ? (tue_fib_ext1_lower_hits / tue_sessions) * 100 : 0
+float wed_fib_ext1_lower_pct = wed_sessions > 0 ? (wed_fib_ext1_lower_hits / wed_sessions) * 100 : 0
+float thu_fib_ext1_lower_pct = thu_sessions > 0 ? (thu_fib_ext1_lower_hits / thu_sessions) * 100 : 0
+float fri_fib_ext1_lower_pct = fri_sessions > 0 ? (fri_fib_ext1_lower_hits / fri_sessions) * 100 : 0
+
+float mon_fib_ext2_upper_pct = mon_sessions > 0 ? (mon_fib_ext2_upper_hits / mon_sessions) * 100 : 0
+float tue_fib_ext2_upper_pct = tue_sessions > 0 ? (tue_fib_ext2_upper_hits / tue_sessions) * 100 : 0
+float wed_fib_ext2_upper_pct = wed_sessions > 0 ? (wed_fib_ext2_upper_hits / wed_sessions) * 100 : 0
+float thu_fib_ext2_upper_pct = thu_sessions > 0 ? (thu_fib_ext2_upper_hits / thu_sessions) * 100 : 0
+float fri_fib_ext2_upper_pct = fri_sessions > 0 ? (fri_fib_ext2_upper_hits / fri_sessions) * 100 : 0
+
+float mon_fib_ext2_lower_pct = mon_sessions > 0 ? (mon_fib_ext2_lower_hits / mon_sessions) * 100 : 0
+float tue_fib_ext2_lower_pct = tue_sessions > 0 ? (tue_fib_ext2_lower_hits / tue_sessions) * 100 : 0
+float wed_fib_ext2_lower_pct = wed_sessions > 0 ? (wed_fib_ext2_lower_hits / wed_sessions) * 100 : 0
+float thu_fib_ext2_lower_pct = thu_sessions > 0 ? (thu_fib_ext2_lower_hits / thu_sessions) * 100 : 0
+float fri_fib_ext2_lower_pct = fri_sessions > 0 ? (fri_fib_ext2_lower_hits / fri_sessions) * 100 : 0
+
+
+// Calculate Median Hit Times
+float mon_upper_std1_median_time = array.size(mon_upper_std1_times) > 0 ? array.median(mon_upper_std1_times) : na
+float mon_lower_std1_median_time = array.size(mon_lower_std1_times) > 0 ? array.median(mon_lower_std1_times) : na
+float mon_upper_std2_median_time = array.size(mon_upper_std2_times) > 0 ? array.median(mon_upper_std2_times) : na
+float mon_lower_std2_median_time = array.size(mon_lower_std2_times) > 0 ? array.median(mon_lower_std2_times) : na
+
+float tue_upper_std1_median_time = array.size(tue_upper_std1_times) > 0 ? array.median(tue_upper_std1_times) : na
+float tue_lower_std1_median_time = array.size(tue_lower_std1_times) > 0 ? array.median(tue_lower_std1_times) : na
+float tue_upper_std2_median_time = array.size(tue_upper_std2_times) > 0 ? array.median(tue_upper_std2_times) : na
+float tue_lower_std2_median_time = array.size(tue_lower_std2_times) > 0 ? array.median(tue_lower_std2_times) : na
+
+float wed_upper_std1_median_time = array.size(wed_upper_std1_times) > 0 ? array.median(wed_upper_std1_times) : na
+float wed_lower_std1_median_time = array.size(wed_lower_std1_times) > 0 ? array.median(wed_lower_std1_times) : na
+float wed_upper_std2_median_time = array.size(wed_upper_std2_times) > 0 ? array.median(wed_upper_std2_times) : na
+float wed_lower_std2_median_time = array.size(wed_lower_std2_times) > 0 ? array.median(wed_lower_std2_times) : na
+
+float thu_upper_std1_median_time = array.size(thu_upper_std1_times) > 0 ? array.median(thu_upper_std1_times) : na
+float thu_lower_std1_median_time = array.size(thu_lower_std1_times) > 0 ? array.median(thu_lower_std1_times) : na
+float thu_upper_std2_median_time = array.size(thu_upper_std2_times) > 0 ? array.median(thu_upper_std2_times) : na
+float thu_lower_std2_median_time = array.size(thu_lower_std2_times) > 0 ? array.median(thu_lower_std2_times) : na
+
+float fri_upper_std1_median_time = array.size(fri_upper_std1_times) > 0 ? array.median(fri_upper_std1_times) : na
+float fri_lower_std1_median_time = array.size(fri_lower_std1_times) > 0 ? array.median(fri_lower_std1_times) : na
+float fri_upper_std2_median_time = array.size(fri_upper_std2_times) > 0 ? array.median(fri_upper_std2_times) : na
+float fri_lower_std2_median_time = array.size(fri_lower_std2_times) > 0 ? array.median(fri_lower_std2_times) : na
+
+float mon_mean_high_median_time = array.size(mon_mean_high_times) > 0 ? array.median(mon_mean_high_times) : na
+float tue_mean_high_median_time = array.size(tue_mean_high_times) > 0 ? array.median(tue_mean_high_times) : na
+float wed_mean_high_median_time = array.size(wed_mean_high_times) > 0 ? array.median(wed_mean_high_times) : na
+float thu_mean_high_median_time = array.size(thu_mean_high_times) > 0 ? array.median(thu_mean_high_times) : na
+float fri_mean_high_median_time = array.size(fri_mean_high_times) > 0 ? array.median(fri_mean_high_times) : na
+
+float mon_median_high_median_time = array.size(mon_median_high_times) > 0 ? array.median(mon_median_high_times) : na
+float tue_median_high_median_time = array.size(tue_median_high_times) > 0 ? array.median(tue_median_high_times) : na
+float wed_median_high_median_time = array.size(wed_median_high_times) > 0 ? array.median(wed_median_high_times) : na
+float thu_median_high_median_time = array.size(thu_median_high_times) > 0 ? array.median(thu_median_high_times) : na
+float fri_median_high_median_time = array.size(fri_median_high_times) > 0 ? array.median(fri_median_high_times) : na
+
+float mon_mean_low_median_time = array.size(mon_mean_low_times) > 0 ? array.median(mon_mean_low_times) : na
+float tue_mean_low_median_time = array.size(tue_mean_low_times) > 0 ? array.median(tue_mean_low_times) : na
+float wed_mean_low_median_time = array.size(wed_mean_low_times) > 0 ? array.median(wed_mean_low_times) : na
+float thu_mean_low_median_time = array.size(thu_mean_low_times) > 0 ? array.median(thu_mean_low_times) : na
+float fri_mean_low_median_time = array.size(fri_mean_low_times) > 0 ? array.median(fri_mean_low_times) : na
+
+float mon_median_low_median_time = array.size(mon_median_low_times) > 0 ? array.median(mon_median_low_times) : na
+float tue_median_low_median_time = array.size(tue_median_low_times) > 0 ? array.median(tue_median_low_times) : na
+float wed_median_low_median_time = array.size(wed_median_low_times) > 0 ? array.median(wed_median_low_times) : na
+float thu_median_low_median_time = array.size(thu_median_low_times) > 0 ? array.median(thu_median_low_times) : na
+float fri_median_low_median_time = array.size(fri_median_low_times) > 0 ? array.median(fri_median_low_times) : na
+
+float mon_fib_ext1_upper_median_time = array.size(mon_fib_ext1_upper_times) > 0 ? array.median(mon_fib_ext1_upper_times) : na
+float tue_fib_ext1_upper_median_time = array.size(tue_fib_ext1_upper_times) > 0 ? array.median(tue_fib_ext1_upper_times) : na
+float wed_fib_ext1_upper_median_time = array.size(wed_fib_ext1_upper_times) > 0 ? array.median(wed_fib_ext1_upper_times) : na
+float thu_fib_ext1_upper_median_time = array.size(thu_fib_ext1_upper_times) > 0 ? array.median(thu_fib_ext1_upper_times) : na
+float fri_fib_ext1_upper_median_time = array.size(fri_fib_ext1_upper_times) > 0 ? array.median(fri_fib_ext1_upper_times) : na
+
+float mon_fib_ext1_lower_median_time = array.size(mon_fib_ext1_lower_times) > 0 ? array.median(mon_fib_ext1_lower_times) : na
+float tue_fib_ext1_lower_median_time = array.size(tue_fib_ext1_lower_times) > 0 ? array.median(tue_fib_ext1_lower_times) : na
+float wed_fib_ext1_lower_median_time = array.size(wed_fib_ext1_lower_times) > 0 ? array.median(wed_fib_ext1_lower_times) : na
+float thu_fib_ext1_lower_median_time = array.size(thu_fib_ext1_lower_times) > 0 ? array.median(thu_fib_ext1_lower_times) : na
+float fri_fib_ext1_lower_median_time = array.size(fri_fib_ext1_lower_times) > 0 ? array.median(fri_fib_ext1_lower_times) : na
+
+float mon_fib_ext2_upper_median_time = array.size(mon_fib_ext2_upper_times) > 0 ? array.median(mon_fib_ext2_upper_times) : na
+float tue_fib_ext2_upper_median_time = array.size(tue_fib_ext2_upper_times) > 0 ? array.median(tue_fib_ext2_upper_times) : na
+float wed_fib_ext2_upper_median_time = array.size(wed_fib_ext2_upper_times) > 0 ? array.median(wed_fib_ext2_upper_times) : na
+float thu_fib_ext2_upper_median_time = array.size(thu_fib_ext2_upper_times) > 0 ? array.median(thu_fib_ext2_upper_times) : na
+float fri_fib_ext2_upper_median_time = array.size(fri_fib_ext2_upper_times) > 0 ? array.median(fri_fib_ext2_upper_times) : na
+
+float mon_fib_ext2_lower_median_time = array.size(mon_fib_ext2_lower_times) > 0 ? array.median(mon_fib_ext2_lower_times) : na
+float tue_fib_ext2_lower_median_time = array.size(tue_fib_ext2_lower_times) > 0 ? array.median(tue_fib_ext2_lower_times) : na
+float wed_fib_ext2_lower_median_time = array.size(wed_fib_ext2_lower_times) > 0 ? array.median(wed_fib_ext2_lower_times) : na
+float thu_fib_ext2_lower_median_time = array.size(thu_fib_ext2_lower_times) > 0 ? array.median(thu_fib_ext2_lower_times) : na
+float fri_fib_ext2_lower_median_time = array.size(fri_fib_ext2_lower_times) > 0 ? array.median(fri_fib_ext2_lower_times) : na
+
+
+// === Table Display Functions ===
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+
+// === First Table: Hit Statistics and Times ===
+var g_TABLE1 = "Hit Stats Table"
+show_table1 = input.bool(false, "Show Hit Stats Table", group=g_TABLE1)
+table1_position = input.string('Top Right', "Table Position", options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group=g_TABLE1)
+table1_size = input.string('Auto', "Text Size", options=['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group=g_TABLE1)
+table1_text = input.color(color.black, "Text", group=g_TABLE1)
+table1_bg = input.color(color.white, "Table Background", group=g_TABLE1)
+table1_frame = input.color(color.black, "Table Frame", group=g_TABLE1)
+table1_border = input.color(color.black, "Table Border", group=g_TABLE1)
+table1_border_width = input.int(1, "Table Border Width", group=g_TABLE1)
+table1_frame_width = input.int(2, "Table Frame Width", group=g_TABLE1)
+
+var table hit_table = na
+if bar_index == 0
+    hit_table := table.new(get_table_position(table1_position), 16, 14, bgcolor=table1_bg, frame_color=table1_frame, frame_width=table1_frame_width, border_color=table1_border, border_width=table1_border_width)
+
+if show_table1
+    table_text_size = get_table_text_size(table1_size)
+    // Headers
+    table.cell(hit_table, 0, 0, "Level", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 0, "Mon Hits", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 0, "Mon %", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 0, "Mon Time", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 0, "Tue Hits", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 0, "Tue %", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 0, "Tue Time", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 0, "Wed Hits", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 0, "Wed %", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 0, "Wed Time", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 0, "Thu Hits", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 0, "Thu %", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 0, "Thu Time", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 0, "Fri Hits", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 0, "Fri %", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 0, "Fri Time", text_color=table1_text, text_size=table_text_size)
+
+    // Row 1: Total Sessions
+    table.cell(hit_table, 0, 1, "Total Sessions", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 1, str.tostring(mon_sessions), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 1, str.tostring(tue_sessions), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 1, str.tostring(wed_sessions), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 1, str.tostring(thu_sessions), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 1, str.tostring(fri_sessions), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 1, "", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 1, "", text_color=table1_text, text_size=table_text_size)
+
+    // Row 2: Upper StdDev Level 1
+    table.cell(hit_table, 0, 2, "Upper " + str.tostring(std_dev_level_1) + "σ " + (std_dev_anchor == "Open" ? "Range" : "from High"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 2, str.tostring(mon_upper_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 2, str.tostring(math.round(mon_upper_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 2, na(mon_upper_std1_median_time) ? "-" : str.tostring(math.round(mon_upper_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 2, str.tostring(tue_upper_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 2, str.tostring(math.round(tue_upper_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 2, na(tue_upper_std1_median_time) ? "-" : str.tostring(math.round(tue_upper_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 2, str.tostring(wed_upper_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 2, str.tostring(math.round(wed_upper_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 2, na(wed_upper_std1_median_time) ? "-" : str.tostring(math.round(wed_upper_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 2, str.tostring(thu_upper_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 2, str.tostring(math.round(thu_upper_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 2, na(thu_upper_std1_median_time) ? "-" : str.tostring(math.round(thu_upper_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 2, str.tostring(fri_upper_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 2, str.tostring(math.round(fri_upper_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 2, na(fri_upper_std1_median_time) ? "-" : str.tostring(math.round(fri_upper_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 3: Lower StdDev Level 1
+    table.cell(hit_table, 0, 3, "Lower " + str.tostring(std_dev_level_1) + "σ " + (std_dev_anchor == "Open" ? "Range" : "from Low"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 3, str.tostring(mon_lower_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 3, str.tostring(math.round(mon_lower_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 3, na(mon_lower_std1_median_time) ? "-" : str.tostring(math.round(mon_lower_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 3, str.tostring(tue_lower_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 3, str.tostring(math.round(tue_lower_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 3, na(tue_lower_std1_median_time) ? "-" : str.tostring(math.round(tue_lower_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 3, str.tostring(wed_lower_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 3, str.tostring(math.round(wed_lower_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 3, na(wed_lower_std1_median_time) ? "-" : str.tostring(math.round(wed_lower_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 3, str.tostring(thu_lower_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 3, str.tostring(math.round(thu_lower_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 3, na(thu_lower_std1_median_time) ? "-" : str.tostring(math.round(thu_lower_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 3, str.tostring(fri_lower_std1_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 3, str.tostring(math.round(fri_lower_std1_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 3, na(fri_lower_std1_median_time) ? "-" : str.tostring(math.round(fri_lower_std1_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 4: Upper StdDev Level 2
+    table.cell(hit_table, 0, 4, "Upper " + str.tostring(std_dev_level_2) + "σ " + (std_dev_anchor == "Open" ? "Range" : "from High"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 4, str.tostring(mon_upper_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 4, str.tostring(math.round(mon_upper_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 4, na(mon_upper_std2_median_time) ? "-" : str.tostring(math.round(mon_upper_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 4, str.tostring(tue_upper_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 4, str.tostring(math.round(tue_upper_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 4, na(tue_upper_std2_median_time) ? "-" : str.tostring(math.round(tue_upper_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 4, str.tostring(wed_upper_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 4, str.tostring(math.round(wed_upper_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 4, na(wed_upper_std2_median_time) ? "-" : str.tostring(math.round(wed_upper_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 4, str.tostring(thu_upper_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 4, str.tostring(math.round(thu_upper_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 4, na(thu_upper_std2_median_time) ? "-" : str.tostring(math.round(thu_upper_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 4, str.tostring(fri_upper_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 4, str.tostring(math.round(fri_upper_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 4, na(fri_upper_std2_median_time) ? "-" : str.tostring(math.round(fri_upper_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 5: Lower StdDev Level 2
+    table.cell(hit_table, 0, 5, "Lower " + str.tostring(std_dev_level_2) + "σ " + (std_dev_anchor == "Open" ? "Range" : "from Low"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 5, str.tostring(mon_lower_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 5, str.tostring(math.round(mon_lower_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 5, na(mon_lower_std2_median_time) ? "-" : str.tostring(math.round(mon_lower_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 5, str.tostring(tue_lower_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 5, str.tostring(math.round(tue_lower_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 5, na(tue_lower_std2_median_time) ? "-" : str.tostring(math.round(tue_lower_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 5, str.tostring(wed_lower_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 5, str.tostring(math.round(wed_lower_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 5, na(wed_lower_std2_median_time) ? "-" : str.tostring(math.round(wed_lower_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 5, str.tostring(thu_lower_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 5, str.tostring(math.round(thu_lower_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 5, na(thu_lower_std2_median_time) ? "-" : str.tostring(math.round(thu_lower_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 5, str.tostring(fri_lower_std2_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 5, str.tostring(math.round(fri_lower_std2_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 5, na(fri_lower_std2_median_time) ? "-" : str.tostring(math.round(fri_lower_std2_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 6: Mean High Extension
+    table.cell(hit_table, 0, 6, "Mean High Ext " + (extension_anchor == "Open" ? "from Open" : "from High"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 6, str.tostring(mon_mean_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 6, str.tostring(math.round(mon_mean_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 6, na(mon_mean_high_median_time) ? "-" : str.tostring(math.round(mon_mean_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 6, str.tostring(tue_mean_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 6, str.tostring(math.round(tue_mean_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 6, na(tue_mean_high_median_time) ? "-" : str.tostring(math.round(tue_mean_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 6, str.tostring(wed_mean_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 6, str.tostring(math.round(wed_mean_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 6, na(wed_mean_high_median_time) ? "-" : str.tostring(math.round(wed_mean_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 6, str.tostring(thu_mean_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 6, str.tostring(math.round(thu_mean_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 6, na(thu_mean_high_median_time) ? "-" : str.tostring(math.round(thu_mean_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 6, str.tostring(fri_mean_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 6, str.tostring(math.round(fri_mean_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 6, na(fri_mean_high_median_time) ? "-" : str.tostring(math.round(fri_mean_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 7: Median High Extension
+    table.cell(hit_table, 0, 7, "Median High Ext " + (extension_anchor == "Open" ? "from Open" : "from High"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 7, str.tostring(mon_median_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 7, str.tostring(math.round(mon_median_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 7, na(mon_median_high_median_time) ? "-" : str.tostring(math.round(mon_median_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 7, str.tostring(tue_median_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 7, str.tostring(math.round(tue_median_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 7, na(tue_median_high_median_time) ? "-" : str.tostring(math.round(tue_median_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 7, str.tostring(wed_median_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 7, str.tostring(math.round(wed_median_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 7, na(wed_median_high_median_time) ? "-" : str.tostring(math.round(wed_median_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 7, str.tostring(thu_median_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 7, str.tostring(math.round(thu_median_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 7, na(thu_median_high_median_time) ? "-" : str.tostring(math.round(thu_median_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 7, str.tostring(fri_median_high_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 7, str.tostring(math.round(fri_median_high_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 7, na(fri_median_high_median_time) ? "-" : str.tostring(math.round(fri_median_high_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 8: Mean Low Extension
+    table.cell(hit_table, 0, 8, "Mean Low Ext " + (extension_anchor == "Open" ? "from Open" : "from Low"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 8, str.tostring(mon_mean_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 8, str.tostring(math.round(mon_mean_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 8, na(mon_mean_low_median_time) ? "-" : str.tostring(math.round(mon_mean_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 8, str.tostring(tue_mean_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 8, str.tostring(math.round(tue_mean_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 8, na(tue_mean_low_median_time) ? "-" : str.tostring(math.round(tue_mean_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 8, str.tostring(wed_mean_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 8, str.tostring(math.round(wed_mean_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 8, na(wed_mean_low_median_time) ? "-" : str.tostring(math.round(wed_mean_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 8, str.tostring(thu_mean_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 8, str.tostring(math.round(thu_mean_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 8, na(thu_mean_low_median_time) ? "-" : str.tostring(math.round(thu_mean_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 8, str.tostring(fri_mean_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 8, str.tostring(math.round(fri_mean_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 8, na(fri_mean_low_median_time) ? "-" : str.tostring(math.round(fri_mean_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 9: Median Low Extension
+    table.cell(hit_table, 0, 9, "Median Low Ext " + (extension_anchor == "Open" ? "from Open" : "from Low"), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 9, str.tostring(mon_median_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 9, str.tostring(math.round(mon_median_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 9, na(mon_median_low_median_time) ? "-" : str.tostring(math.round(mon_median_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 9, str.tostring(tue_median_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 9, str.tostring(math.round(tue_median_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 9, na(tue_median_low_median_time) ? "-" : str.tostring(math.round(tue_median_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 9, str.tostring(wed_median_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 9, str.tostring(math.round(wed_median_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 9, na(wed_median_low_median_time) ? "-" : str.tostring(math.round(wed_median_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 9, str.tostring(thu_median_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 9, str.tostring(math.round(thu_median_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 9, na(thu_median_low_median_time) ? "-" : str.tostring(math.round(thu_median_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 9, str.tostring(fri_median_low_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 9, str.tostring(math.round(fri_median_low_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 9, na(fri_median_low_median_time) ? "-" : str.tostring(math.round(fri_median_low_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 10: Fibonacci Extension Level 1 Upper
+    table.cell(hit_table, 0, 10, "+" + str.tostring(fib_ext_level_1) + " Fib Ext", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 10, str.tostring(mon_fib_ext1_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 10, str.tostring(math.round(mon_fib_ext1_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 10, na(mon_fib_ext1_upper_median_time) ? "-" : str.tostring(math.round(mon_fib_ext1_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 10, str.tostring(tue_fib_ext1_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 10, str.tostring(math.round(tue_fib_ext1_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 10, na(tue_fib_ext1_upper_median_time) ? "-" : str.tostring(math.round(tue_fib_ext1_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 10, str.tostring(wed_fib_ext1_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 10, str.tostring(math.round(wed_fib_ext1_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 10, na(wed_fib_ext1_upper_median_time) ? "-" : str.tostring(math.round(wed_fib_ext1_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 10, str.tostring(thu_fib_ext1_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 10, str.tostring(math.round(thu_fib_ext1_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 10, na(thu_fib_ext1_upper_median_time) ? "-" : str.tostring(math.round(thu_fib_ext1_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 10, str.tostring(fri_fib_ext1_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 10, str.tostring(math.round(fri_fib_ext1_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 10, na(fri_fib_ext1_upper_median_time) ? "-" : str.tostring(math.round(fri_fib_ext1_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 11: Fibonacci Extension Level 1 Lower
+    table.cell(hit_table, 0, 11, "-" + str.tostring(fib_ext_level_1) + " Fib Ext", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 11, str.tostring(mon_fib_ext1_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 11, str.tostring(math.round(mon_fib_ext1_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 11, na(mon_fib_ext1_lower_median_time) ? "-" : str.tostring(math.round(mon_fib_ext1_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 11, str.tostring(tue_fib_ext1_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 11, str.tostring(math.round(tue_fib_ext1_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 11, na(tue_fib_ext1_lower_median_time) ? "-" : str.tostring(math.round(tue_fib_ext1_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 11, str.tostring(wed_fib_ext1_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 11, str.tostring(math.round(wed_fib_ext1_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 11, na(wed_fib_ext1_lower_median_time) ? "-" : str.tostring(math.round(wed_fib_ext1_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 11, str.tostring(thu_fib_ext1_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 11, str.tostring(math.round(thu_fib_ext1_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 11, na(thu_fib_ext1_lower_median_time) ? "-" : str.tostring(math.round(thu_fib_ext1_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 11, str.tostring(fri_fib_ext1_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 11, str.tostring(math.round(fri_fib_ext1_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 11, na(fri_fib_ext1_lower_median_time) ? "-" : str.tostring(math.round(fri_fib_ext1_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 12: Fibonacci Extension Level 2 Upper
+    table.cell(hit_table, 0, 12, "+" + str.tostring(fib_ext_level_2) + " Fib Ext", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 12, str.tostring(mon_fib_ext2_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 12, str.tostring(math.round(mon_fib_ext2_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 12, na(mon_fib_ext2_upper_median_time) ? "-" : str.tostring(math.round(mon_fib_ext2_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 12, str.tostring(tue_fib_ext2_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 12, str.tostring(math.round(tue_fib_ext2_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 12, na(tue_fib_ext2_upper_median_time) ? "-" : str.tostring(math.round(tue_fib_ext2_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 12, str.tostring(wed_fib_ext2_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 12, str.tostring(math.round(wed_fib_ext2_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 12, na(wed_fib_ext2_upper_median_time) ? "-" : str.tostring(math.round(wed_fib_ext2_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 12, str.tostring(thu_fib_ext2_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 12, str.tostring(math.round(thu_fib_ext2_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 12, na(thu_fib_ext2_upper_median_time) ? "-" : str.tostring(math.round(thu_fib_ext2_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 12, str.tostring(fri_fib_ext2_upper_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 12, str.tostring(math.round(fri_fib_ext2_upper_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 12, na(fri_fib_ext2_upper_median_time) ? "-" : str.tostring(math.round(fri_fib_ext2_upper_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+
+    // Row 13: Fibonacci Extension Level 2 Lower
+    table.cell(hit_table, 0, 13, "-" + str.tostring(fib_ext_level_2) + " Fib Ext", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 1, 13, str.tostring(mon_fib_ext2_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 2, 13, str.tostring(math.round(mon_fib_ext2_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 3, 13, na(mon_fib_ext2_lower_median_time) ? "-" : str.tostring(math.round(mon_fib_ext2_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 4, 13, str.tostring(tue_fib_ext2_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 5, 13, str.tostring(math.round(tue_fib_ext2_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 6, 13, na(tue_fib_ext2_lower_median_time) ? "-" : str.tostring(math.round(tue_fib_ext2_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 7, 13, str.tostring(wed_fib_ext2_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 8, 13, str.tostring(math.round(wed_fib_ext2_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 9, 13, na(wed_fib_ext2_lower_median_time) ? "-" : str.tostring(math.round(wed_fib_ext2_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 10, 13, str.tostring(thu_fib_ext2_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 11, 13, str.tostring(math.round(thu_fib_ext2_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 12, 13, na(thu_fib_ext2_lower_median_time) ? "-" : str.tostring(math.round(thu_fib_ext2_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 13, 13, str.tostring(fri_fib_ext2_lower_hits), text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 14, 13, str.tostring(math.round(fri_fib_ext2_lower_pct, 1)) + "%", text_color=table1_text, text_size=table_text_size)
+    table.cell(hit_table, 15, 13, na(fri_fib_ext2_lower_median_time) ? "-" : str.tostring(math.round(fri_fib_ext2_lower_median_time)) + "m", text_color=table1_text, text_size=table_text_size)

@@ -1,0 +1,837 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Initial Balance & Extensions DOW", shorttitle="IB DOW", overlay=true, max_bars_back=5000)
+
+// Options
+ib_session = input.session("0830-0930", title="Calculation period for the initial balance", group="Calculation period")
+
+fib1 = input.float(0.214, 'Fib level 1', inline="Fib1", group='Fib levels')
+fib1_show = input.bool(true, 'Show Fib Level 1', inline="Fib1", group='Fib levels')
+fib2 = input.float(0.236, 'Fib level 2', inline="Fib2", group='Fib levels')
+fib2_show = input.bool(true, 'Show Fib Level 2', inline="Fib2", group='Fib levels')
+fib3 = input.float(0.786, 'Fib level 3', inline="Fib3", group='Fib levels')
+fib3_show = input.bool(true, 'Show Fib Level 3', inline="Fib3", group='Fib levels')
+fib4 = input.float(0.800, 'Fib level 4', inline="Fib4", group='Fib levels')
+fib4_show = input.bool(true, 'Show Fib Level 4', inline="Fib4", group='Fib levels')
+
+show_intermediate_levels = input.bool(true, "Show intermediate levels (50% & Fib levels)", group="Information")
+show_ib_calculation_area = input.bool(false, "Initial balance calculation period coloration", group="Information")
+show_labels = input.bool(true, "Show labels", group="Information")
+fill_ib_areas = input.bool(true, "Colour IB areas", group="Information")
+only_current_levels = input.bool(false, "Only display the current IB Levels", group="Information")
+only_current_zone = input.bool(false, "Only display the current IB calculation area", group="Information")
+
+show_delta_analytics = input.bool(true, "Display IB stats table", group="Stats table")
+table_position = input.string('Top Right', "Table Position", options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group="Stats table")
+table_size = input.string('Tiny', "Text Size", options=['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group="Stats table")
+table_text = input.color(color.black, "Text", group="Stats table")
+table_bg = input.color(color.white, "Table Background", group="Stats table")
+table_frame = input.color(color.black, "Table Frame", group="Stats table")
+table_border = input.color(color.black, "Table Border", group="Stats table")
+table_border_width = input.int(1, "Table Border Width", group="Stats table")
+table_frame_width = input.int(2, "Table Frame Width", group="Stats table")
+
+show_extensions = input.bool(true, "Show Mean/Median Extensions", group="Extensions")
+ext_color = input.color(color.teal, "Extensions Color", group="Extensions")
+show_sd1 = input.bool(true, "Show 1 SD", group="Extensions")
+show_sd2 = input.bool(true, "Show 2 SD", group="Extensions")
+show_sd3 = input.bool(false, "Show 3 SD", group="Extensions")
+show_sd4 = input.bool(false, "Show 4 SD", group="Extensions")
+z_score_threshold = input.float(2.0, "Z-Score Threshold for Dynamic SD", minval=0.5, step=0.1, group="Extensions")
+
+label_size = input.string("Small", title="Label Size", options=["Auto", "Huge", "Large", "Normal", "Small", "Tiny"], group="Drawings")
+lvl_width = input.int(1, "Daily price level width", group="Drawings")
+levels_col = input.color(color.gray, "Initial balance levels colour", group="Drawings")
+middle_col = input.color(color.blue, "50% & fib levels colour", group="Drawings")
+extend_level = input.string("Right", title="Extend current levels", options=["Right", "Left", "Both", "None"], group="Drawings")
+
+main_levels_style = input.string("Solid", "Main levels line style", options=["Solid", "Dashed", "Dotted"], group="Drawings")
+int_levels_style = input.string("Dotted", "Intermediate levels line style", options=["Solid", "Dashed", "Dotted"], group="Drawings")
+
+fill_ib_color = input.color(color.rgb(33, 149, 243, 80), "IB area background color", group="Drawings")
+ext = extend_level == "Right" ? extend.right : extend_level == "Left" ? extend.left : extend_level == "Both" ? extend.both : extend.none
+
+// Z-Score Table Inputs
+show_z_score_table = input.bool(true, "Show Z-Score Table", group="Stats table")
+z_table_position = input.string("Bottom Left", "Z-Score Table Position", options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group="Stats table")
+
+// Arrays for Overall Stats
+var delta_history = array.new_float(0)
+var float[] high_extensions = array.new_float(0)
+var float[] low_extensions = array.new_float(0)
+
+// Arrays for Day-Specific Stats
+var float[] monday_deltas = array.new_float(0)
+var float[] tuesday_deltas = array.new_float(0)
+var float[] wednesday_deltas = array.new_float(0)
+var float[] thursday_deltas = array.new_float(0)
+var float[] friday_deltas = array.new_float(0)
+
+var float[] monday_high_exts = array.new_float(0)
+var float[] tuesday_high_exts = array.new_float(0)
+var float[] wednesday_high_exts = array.new_float(0)
+var float[] thursday_high_exts = array.new_float(0)
+var float[] friday_high_exts = array.new_float(0)
+
+var float[] monday_low_exts = array.new_float(0)
+var float[] tuesday_low_exts = array.new_float(0)
+var float[] wednesday_low_exts = array.new_float(0)
+var float[] thursday_low_exts = array.new_float(0)
+var float[] friday_low_exts = array.new_float(0)
+
+var int[] monday_high_breaks = array.new_int(0)
+var int[] tuesday_high_breaks = array.new_int(0)
+var int[] wednesday_high_breaks = array.new_int(0)
+var int[] thursday_high_breaks = array.new_int(0)
+var int[] friday_high_breaks = array.new_int(0)
+
+var int[] monday_low_breaks = array.new_int(0)
+var int[] tuesday_low_breaks = array.new_int(0)
+var int[] wednesday_low_breaks = array.new_int(0)
+var int[] thursday_low_breaks = array.new_int(0)
+var int[] friday_low_breaks = array.new_int(0)
+
+var int[] monday_both_breaks = array.new_int(0)
+var int[] tuesday_both_breaks = array.new_int(0)
+var int[] wednesday_both_breaks = array.new_int(0)
+var int[] thursday_both_breaks = array.new_int(0)
+var int[] friday_both_breaks = array.new_int(0)
+
+var int[] monday_no_breaks = array.new_int(0)
+var int[] tuesday_no_breaks = array.new_int(0)
+var int[] wednesday_no_breaks = array.new_int(0)
+var int[] thursday_no_breaks = array.new_int(0)
+var int[] friday_no_breaks = array.new_int(0)
+
+// New arrays for tracking hits by day
+var int[] monday_mean_hits = array.new_int(0)
+var int[] tuesday_mean_hits = array.new_int(0)
+var int[] wednesday_mean_hits = array.new_int(0)
+var int[] thursday_mean_hits = array.new_int(0)
+var int[] friday_mean_hits = array.new_int(0)
+
+var int[] monday_median_hits = array.new_int(0)
+var int[] tuesday_median_hits = array.new_int(0)
+var int[] wednesday_median_hits = array.new_int(0)
+var int[] thursday_median_hits = array.new_int(0)
+var int[] friday_median_hits = array.new_int(0)
+
+var int[] monday_sd2_hits = array.new_int(0)
+var int[] tuesday_sd2_hits = array.new_int(0)
+var int[] wednesday_sd2_hits = array.new_int(0)
+var int[] thursday_sd2_hits = array.new_int(0)
+var int[] friday_sd2_hits = array.new_int(0)
+
+var int[] monday_sd3_hits = array.new_int(0)
+var int[] tuesday_sd3_hits = array.new_int(0)
+var int[] wednesday_sd3_hits = array.new_int(0)
+var int[] thursday_sd3_hits = array.new_int(0)
+var int[] friday_sd3_hits = array.new_int(0)
+
+var int[] monday_sd4_hits = array.new_int(0)
+var int[] tuesday_sd4_hits = array.new_int(0)
+var int[] wednesday_sd4_hits = array.new_int(0)
+var int[] thursday_sd4_hits = array.new_int(0)
+var int[] friday_sd4_hits = array.new_int(0)
+
+// Variables for tracking hits per session
+var bool mean_hit = false
+var bool median_hit = false
+var bool sd2_hit = false
+var bool sd3_hit = false
+var bool sd4_hit = false
+
+// Utility Functions
+inSession(sess) =>
+    na(time(timeframe.period, sess)) == false
+
+get_line_style(s) =>
+    s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
+
+get_levels(n) =>
+    h = high[1]
+    l = low[1]
+    for i = 1 to n
+        if low[i] < l
+            l := low[i]
+        if high[i] > h
+            h := high[i]
+    [h, l, (h + l) / 2]
+
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+// Variables
+var line ibh = na
+var line ibl = na
+var line ibm = na
+var line fib_ln_1 = na
+var line fib_ln_2 = na
+var line fib_ln_3 = na
+var line fib_ln_4 = na
+var label labelh = na
+var label labell = na
+var label labelm = na
+var label labelfib1 = na
+var label labelfib2 = na
+var label labelfib3 = na
+var label labelfib4 = na
+var box ib_area = na
+
+var line mean_high_ext_line = na
+var line median_high_ext_line = na
+var line mean_low_ext_line = na
+var line median_low_ext_line = na
+var line sd1_high_line = na
+var line sd2_high_line = na
+var line sd3_high_line = na
+var line sd4_high_line = na
+var line sd1_low_line = na
+var line sd2_low_line = na
+var line sd3_low_line = na
+var line sd4_low_line = na
+var line sd_high_line = na
+var line sd_low_line = na
+
+var float z_score_ib_delta = na
+var float z_score_high_ext = na
+var float z_score_low_ext = na
+var line z_score_ib_line = na
+var label z_score_ib_label = na
+var table z_score_table = na
+var float breakout_prob = na
+
+labelSize = (label_size == "Huge") ? size.huge :
+     (label_size == "Large") ? size.large :
+     (label_size == "Small") ? size.small :
+     (label_size == "Tiny") ? size.tiny :
+     (label_size == "Auto") ? size.auto : size.normal
+
+var offset = 0
+var float ib_delta = na
+var float current_high_ext = na
+var float current_low_ext = na
+var float ib_high = na
+var float ib_low = na
+var bool ib_formed = false
+
+ins = inSession(ib_session)
+
+bgcolor(show_ib_calculation_area and ins ? #673ab730 : na, title="IB calculation zone")
+
+if ins
+    offset += 1
+
+// Reset hit flags at start of new session
+if ins[1] and not ins
+    [h, l, m] = get_levels(offset)
+    ib_delta := h - l
+    array.push(delta_history, ib_delta)
+    
+    dow = dayofweek(time[1])
+    if dow == dayofweek.monday
+        array.push(monday_deltas, ib_delta)
+    else if dow == dayofweek.tuesday
+        array.push(tuesday_deltas, ib_delta)
+    else if dow == dayofweek.wednesday
+        array.push(wednesday_deltas, ib_delta)
+    else if dow == dayofweek.thursday
+        array.push(thursday_deltas, ib_delta)
+    else if dow == dayofweek.friday
+        array.push(friday_deltas, ib_delta)
+    
+    ib_high := h
+    ib_low := l
+    ib_formed := true
+    current_high_ext := h
+    current_low_ext := l
+    
+    mean_hit := false
+    median_hit := false
+    sd2_hit := false
+    sd3_hit := false
+    sd4_hit := false
+
+    if array.size(delta_history) >= 2
+        mean_delta = array.avg(delta_history)
+        sd_delta = array.stdev(delta_history)
+        z_score_ib_delta := (ib_delta - mean_delta) / sd_delta
+        line.delete(z_score_ib_line)
+        label.delete(z_score_ib_label)
+        z_score_ib_line := line.new(bar_index[offset], m, bar_index, m, color=color.purple, style=line.style_dashed, width=1)
+        z_score_ib_label := label.new(bar_index[offset], m, "Z-Score 50% IB: " + str.tostring(z_score_ib_delta, "#.##"), 
+                                     style=label.style_none, textcolor=color.purple, size=labelSize)
+
+    line.set_extend(ibh, extend.none)
+    line.set_extend(ibl, extend.none)
+    if show_intermediate_levels
+        line.set_extend(ibm, extend.none)
+        line.set_extend(fib_ln_1, extend.none)
+        line.set_extend(fib_ln_2, extend.none)
+        line.set_extend(fib_ln_3, extend.none)
+        line.set_extend(fib_ln_4, extend.none)
+    if show_labels
+        if only_current_levels
+            label.delete(labelh)
+            label.delete(labell)
+            label.delete(labelm)
+        labelh := label.new(bar_index[offset], h, text="IBH: " + str.tostring(h), style=label.style_none, textcolor=levels_col, size=labelSize)
+        labell := label.new(bar_index[offset], l, text="IBL: " + str.tostring(l), style=label.style_none, textcolor=levels_col, size=labelSize)
+
+    if fib1_show
+        labelfib1 := label.new(bar_index[offset], l + (h - l) * fib1, text=str.tostring(fib1), style=label.style_none, textcolor=middle_col, size=labelSize)
+    if fib2_show
+        labelfib2 := label.new(bar_index[offset], l + (h - l) * fib2, text=str.tostring(fib2), style=label.style_none, textcolor=middle_col, size=labelSize)
+    if fib3_show
+        labelfib3 := label.new(bar_index[offset], l + (h - l) * fib3, text=str.tostring(fib3), style=label.style_none, textcolor=middle_col, size=labelSize)
+    if fib4_show
+        labelfib4 := label.new(bar_index[offset], l + (h - l) * fib4, text=str.tostring(fib4), style=label.style_none, textcolor=middle_col, size=labelSize)
+    
+    if fill_ib_areas
+        if only_current_zone
+            box.delete(ib_area)
+        ib_area := box.new(bar_index[offset], h, bar_index, l, bgcolor=fill_ib_color, border_color=#00000000)
+    if only_current_levels
+        line.delete(ibh)
+        line.delete(ibl)
+        line.delete(ibm)
+        line.delete(fib_ln_1)
+        line.delete(fib_ln_2)
+        line.delete(fib_ln_3)
+        line.delete(fib_ln_4)
+     
+    ibh := line.new(bar_index[offset], h, bar_index, h, color=levels_col, extend=ext, width=lvl_width, style=get_line_style(main_levels_style))
+    ibl := line.new(bar_index[offset], l, bar_index, l, color=levels_col, extend=ext, width=lvl_width, style=get_line_style(main_levels_style))
+    if show_intermediate_levels
+        ibm := line.new(bar_index[offset], m, bar_index, m, color=middle_col, style=get_line_style(int_levels_style), extend=ext, width=lvl_width)
+        if fib1_show
+            fib_ln_1 := line.new(bar_index[offset], l + (h - l) * fib1, bar_index, l + (h - l) * fib1, color=middle_col, style=get_line_style(int_levels_style), extend=ext, width=lvl_width)
+        if fib2_show
+            fib_ln_2 := line.new(bar_index[offset], l + (h - l) * fib2, bar_index, l + (h - l) * fib2, color=middle_col, style=get_line_style(int_levels_style), extend=ext, width=lvl_width)
+        if fib3_show
+            fib_ln_3 := line.new(bar_index[offset], l + (h - l) * fib3, bar_index, l + (h - l) * fib3, color=middle_col, style=get_line_style(int_levels_style), extend=ext, width=lvl_width)
+        if fib4_show    
+            fib_ln_4 := line.new(bar_index[offset], l + (h - l) * fib4, bar_index, l + (h - l) * fib4, color=middle_col, style=get_line_style(int_levels_style), extend=ext, width=lvl_width)    
+    
+    if show_extensions
+        mean_high_ext = array.avg(high_extensions)
+        median_high_ext = array.median(high_extensions)
+        mean_low_ext = array.avg(low_extensions)
+        median_low_ext = array.median(low_extensions)
+        high_sd = array.stdev(high_extensions)
+        low_sd = array.stdev(low_extensions)
+        sd_delta = array.stdev(delta_history)
+        
+        line.delete(mean_high_ext_line)
+        line.delete(median_high_ext_line)
+        line.delete(mean_low_ext_line)
+        line.delete(median_low_ext_line)
+        line.delete(sd1_high_line)
+        line.delete(sd2_high_line)
+        line.delete(sd3_high_line)
+        line.delete(sd4_high_line)
+        line.delete(sd1_low_line)
+        line.delete(sd2_low_line)
+        line.delete(sd3_low_line)
+        line.delete(sd4_low_line)
+        line.delete(sd_high_line)
+        line.delete(sd_low_line)
+        
+        if not na(mean_high_ext)
+            mean_high_ext_line := line.new(bar_index[offset], ib_high + mean_high_ext, bar_index, ib_high + mean_high_ext, 
+                                          color=ext_color, extend=ext, style=line.style_dashed)
+            label.new(bar_index[offset], ib_high + mean_high_ext, "Mean High Ext: " + str.tostring(mean_high_ext, "#.##"), 
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if not na(median_high_ext)
+            median_high_ext_line := line.new(bar_index[offset], ib_high + median_high_ext, bar_index, ib_high + median_high_ext,
+                                             color=ext_color, extend=ext, style=line.style_dashed)
+            label.new(bar_index[offset], ib_high + median_high_ext, "Median High Ext: " + str.tostring(median_high_ext, "#.##"), 
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+                
+        if not na(mean_low_ext)
+            mean_low_ext_line := line.new(bar_index[offset], ib_low - mean_low_ext, bar_index, ib_low - mean_low_ext, 
+                                         color=ext_color, extend=ext, style=line.style_dashed)
+            label.new(bar_index[offset], ib_low - mean_low_ext, "Mean Low Ext: " + str.tostring(mean_low_ext, "#.##"), 
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if not na(median_low_ext)
+            median_low_ext_line := line.new(bar_index[offset], ib_low - median_low_ext, bar_index, ib_low - median_low_ext, 
+                                           color=ext_color, extend=ext, style=line.style_dashed)
+            label.new(bar_index[offset], ib_low - median_low_ext, "Median Low Ext: " + str.tostring(median_low_ext, "#.##"), 
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+                        
+        if show_sd1 and not na(sd_delta)
+            sd1_high_line := line.new(bar_index[offset], ib_high + sd_delta, bar_index, ib_high + sd_delta,
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_high + sd_delta, "1 SD High: " + str.tostring(ib_high + sd_delta, "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd1_low_line := line.new(bar_index[offset], ib_low - sd_delta, bar_index, ib_low - sd_delta,
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_low - sd_delta, "1 SD Low: " + str.tostring(ib_low - sd_delta, "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_sd2 and not na(sd_delta)
+            sd2_high_line := line.new(bar_index[offset], ib_high + (sd_delta * 2), bar_index, ib_high + (sd_delta * 2),
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_high + (sd_delta * 2), "2 SD High: " + str.tostring(ib_high + (sd_delta * 2), "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd2_low_line := line.new(bar_index[offset], ib_low - (sd_delta * 2), bar_index, ib_low - (sd_delta * 2),
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_low - (sd_delta * 2), "2 SD Low: " + str.tostring(ib_low - (sd_delta * 2), "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_sd3 and not na(sd_delta)
+            sd3_high_line := line.new(bar_index[offset], ib_high + (sd_delta * 3), bar_index, ib_high + (sd_delta * 3),
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_high + (sd_delta * 3), "3 SD High: " + str.tostring(ib_high + (sd_delta * 3), "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd3_low_line := line.new(bar_index[offset], ib_low - (sd_delta * 3), bar_index, ib_low - (sd_delta * 3),
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_low - (sd_delta * 3), "3 SD Low: " + str.tostring(ib_low - (sd_delta * 3), "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_sd4 and not na(sd_delta)
+            sd4_high_line := line.new(bar_index[offset], ib_high + (sd_delta * 4), bar_index, ib_high + (sd_delta * 4),
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_high + (sd_delta * 4), "4 SD High: " + str.tostring(ib_high + (sd_delta * 4), "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd4_low_line := line.new(bar_index[offset], ib_low - (sd_delta * 4), bar_index, ib_low - (sd_delta * 4),
+                                     color=ext_color, extend=ext, style=line.style_dotted)
+            label.new(bar_index[offset], ib_low - (sd_delta * 4), "4 SD Low: " + str.tostring(ib_low - (sd_delta * 4), "#.##"),
+                     style=label.style_none, textcolor=ext_color, size=labelSize)    
+    offset := 0
+
+if ib_formed and not ins
+    if high > current_high_ext
+        current_high_ext := high
+    if low < current_low_ext
+        current_low_ext := low
+    
+    // Track hits after IB is formed
+    if show_extensions and not na(array.avg(high_extensions)) and not mean_hit
+        if high >= ib_high + array.avg(high_extensions) or low <= ib_low - array.avg(low_extensions)
+            mean_hit := true
+    if show_extensions and not na(array.median(high_extensions)) and not median_hit
+        if high >= ib_high + array.median(high_extensions) or low <= ib_low - array.median(low_extensions)
+            median_hit := true
+    if show_sd2 and not na(array.stdev(delta_history)) and not sd2_hit
+        sd_delta = array.stdev(delta_history)
+        if high >= ib_high + (sd_delta * 2) or low <= ib_low - (sd_delta * 2)
+            sd2_hit := true
+    if show_sd3 and not na(array.stdev(delta_history)) and not sd3_hit
+        sd_delta = array.stdev(delta_history)
+        if high >= ib_high + (sd_delta * 3) or low <= ib_low - (sd_delta * 3)
+            sd3_hit := true
+    if show_sd4 and not na(array.stdev(delta_history)) and not sd4_hit
+        sd_delta = array.stdev(delta_history)
+        if high >= ib_high + (sd_delta * 4) or low <= ib_low - (sd_delta * 4)
+            sd4_hit := true
+
+if not ins[1] and ins and ib_formed
+    dow = dayofweek(time[1])
+    if not na(current_high_ext) and not na(ib_high)
+        high_ext_value = current_high_ext - ib_high
+        array.push(high_extensions, high_ext_value)
+        if dow == dayofweek.monday
+            array.push(monday_high_exts, high_ext_value)
+        else if dow == dayofweek.tuesday
+            array.push(tuesday_high_exts, high_ext_value)
+        else if dow == dayofweek.wednesday
+            array.push(wednesday_high_exts, high_ext_value)
+        else if dow == dayofweek.thursday
+            array.push(thursday_high_exts, high_ext_value)
+        else if dow == dayofweek.friday
+            array.push(friday_high_exts, high_ext_value)
+        
+        if array.size(high_extensions) >= 2
+            mean_high_ext = array.avg(high_extensions)
+            high_sd = array.stdev(high_extensions)
+            z_score_high_ext := (high_ext_value - mean_high_ext) / high_sd
+            if show_extensions and not na(z_score_high_ext) and math.abs(z_score_high_ext) >= z_score_threshold
+                line.delete(sd_high_line)
+                sd_high_line := line.new(bar_index[offset], current_high_ext, bar_index, current_high_ext,
+                                         color=color.orange, extend=ext, style=line.style_dashed)
+                label.new(bar_index[offset], current_high_ext, "Dynamic High Z=" + str.tostring(z_score_high_ext, "#.##"), 
+                         style=label.style_none, textcolor=color.orange, size=labelSize)
+
+    if not na(current_low_ext) and not na(ib_low)
+        low_ext_value = ib_low - current_low_ext
+        array.push(low_extensions, low_ext_value)
+        if dow == dayofweek.monday
+            array.push(monday_low_exts, low_ext_value)
+        else if dow == dayofweek.tuesday
+            array.push(tuesday_low_exts, low_ext_value)
+        else if dow == dayofweek.wednesday
+            array.push(wednesday_low_exts, low_ext_value)
+        else if dow == dayofweek.thursday
+            array.push(thursday_low_exts, low_ext_value)
+        else if dow == dayofweek.friday
+            array.push(friday_low_exts, low_ext_value)
+        
+        if array.size(low_extensions) >= 2
+            mean_low_ext = array.avg(low_extensions)
+            low_sd = array.stdev(low_extensions)
+            z_score_low_ext := (low_ext_value - mean_low_ext) / low_sd
+            if show_extensions and not na(z_score_low_ext) and math.abs(z_score_low_ext) >= z_score_threshold
+                line.delete(sd_low_line)
+                sd_low_line := line.new(bar_index[offset], current_low_ext, bar_index, current_low_ext, 
+                                       color=color.orange, extend=ext, style=line.style_dashed)
+                label.new(bar_index[offset], current_low_ext, "Dynamic Low Z=" + str.tostring(z_score_low_ext, "#.##"), 
+                         style=label.style_none, textcolor=color.orange, size=labelSize)
+    
+    // Record hits at session end
+    if dow == dayofweek.monday
+        if mean_hit
+            array.push(monday_mean_hits, 1)
+        if median_hit
+            array.push(monday_median_hits, 1)
+        if sd2_hit
+            array.push(monday_sd2_hits, 1)
+        if sd3_hit
+            array.push(monday_sd3_hits, 1)
+        if sd4_hit
+            array.push(monday_sd4_hits, 1)
+    else if dow == dayofweek.tuesday
+        if mean_hit
+            array.push(tuesday_mean_hits, 1)
+        if median_hit
+            array.push(tuesday_median_hits, 1)
+        if sd2_hit
+            array.push(tuesday_sd2_hits, 1)
+        if sd3_hit
+            array.push(tuesday_sd3_hits, 1)
+        if sd4_hit
+            array.push(tuesday_sd4_hits, 1)
+    else if dow == dayofweek.wednesday
+        if mean_hit
+            array.push(wednesday_mean_hits, 1)
+        if median_hit
+            array.push(wednesday_median_hits, 1)
+        if sd2_hit
+            array.push(wednesday_sd2_hits, 1)
+        if sd3_hit
+            array.push(wednesday_sd3_hits, 1)
+        if sd4_hit
+            array.push(wednesday_sd4_hits, 1)
+    else if dow == dayofweek.thursday
+        if mean_hit
+            array.push(thursday_mean_hits, 1)
+        if median_hit
+            array.push(thursday_median_hits, 1)
+        if sd2_hit
+            array.push(thursday_sd2_hits, 1)
+        if sd3_hit
+            array.push(thursday_sd3_hits, 1)
+        if sd4_hit
+            array.push(thursday_sd4_hits, 1)
+    else if dow == dayofweek.friday
+        if mean_hit
+            array.push(friday_mean_hits, 1)
+        if median_hit
+            array.push(friday_median_hits, 1)
+        if sd2_hit
+            array.push(friday_sd2_hits, 1)
+        if sd3_hit
+            array.push(friday_sd3_hits, 1)
+        if sd4_hit
+            array.push(friday_sd4_hits, 1)
+    
+    ib_formed := false
+
+if (not ins) and (not ins[1])
+    line.set_x2(ibh, bar_index)
+    line.set_x2(ibl, bar_index)
+    if show_intermediate_levels
+        line.set_x2(ibm, bar_index)
+        line.set_x2(fib_ln_1, bar_index)
+        line.set_x2(fib_ln_2, bar_index)
+        line.set_x2(fib_ln_3, bar_index)
+        line.set_x2(fib_ln_4, bar_index)
+    line.set_x2(z_score_ib_line, bar_index)
+    if show_extensions
+        line.set_x2(mean_high_ext_line, bar_index)
+        line.set_x2(median_high_ext_line, bar_index)
+        line.set_x2(mean_low_ext_line, bar_index)
+        line.set_x2(median_low_ext_line, bar_index)
+        line.set_x2(sd1_high_line, bar_index)
+        line.set_x2(sd2_high_line, bar_index)
+        line.set_x2(sd3_high_line, bar_index)
+        line.set_x2(sd4_high_line, bar_index)
+        line.set_x2(sd1_low_line, bar_index)
+        line.set_x2(sd2_low_line, bar_index)
+        line.set_x2(sd3_low_line, bar_index)
+        line.set_x2(sd4_low_line, bar_index)
+        line.set_x2(sd_high_line, bar_index)
+        line.set_x2(sd_low_line, bar_index)
+
+// Breakout Tracking
+var float session_high = na
+var float session_low = na
+var bool high_broken = false
+var bool low_broken = false
+var int session_start_bar = na
+
+if not ins[1] and ins
+    session_start_bar := bar_index
+    session_high := high
+    session_low := low
+else if ins
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+
+if ins[1] and not ins
+    high_broken := false
+    low_broken := false
+    bars_in_day = timeframe.isintraday ? 1440 / timeframe.multiplier : 1
+    session_end_bar = session_start_bar + bars_in_day - 1
+    dow = dayofweek(time[1])
+    for i = 0 to bars_in_day - 1
+        if bar_index + i > session_end_bar
+            break
+        if bar_index + i >= nz(session_start_bar)
+            if high[i] > session_high
+                high_broken := true
+            if low[i] < session_low
+                low_broken := true
+            if high_broken and low_broken
+                break
+    
+    if dow == dayofweek.monday
+        if high_broken and low_broken
+            array.push(monday_both_breaks, bar_index)
+        else if high_broken
+            array.push(monday_high_breaks, bar_index)
+        else if low_broken
+            array.push(monday_low_breaks, bar_index)
+        else
+            array.push(monday_no_breaks, bar_index)
+    else if dow == dayofweek.tuesday
+        if high_broken and low_broken
+            array.push(tuesday_both_breaks, bar_index)
+        else if high_broken
+            array.push(tuesday_high_breaks, bar_index)
+        else if low_broken
+            array.push(tuesday_low_breaks, bar_index)
+        else
+            array.push(tuesday_no_breaks, bar_index)
+    else if dow == dayofweek.wednesday
+        if high_broken and low_broken
+            array.push(wednesday_both_breaks, bar_index)
+        else if high_broken
+            array.push(wednesday_high_breaks, bar_index)
+        else if low_broken
+            array.push(wednesday_low_breaks, bar_index)
+        else
+            array.push(wednesday_no_breaks, bar_index)
+    else if dow == dayofweek.thursday
+        if high_broken and low_broken
+            array.push(thursday_both_breaks, bar_index)
+        else if high_broken
+            array.push(thursday_high_breaks, bar_index)
+        else if low_broken
+            array.push(thursday_low_breaks, bar_index)
+        else
+            array.push(thursday_no_breaks, bar_index)
+    else if dow == dayofweek.friday
+        if high_broken and low_broken
+            array.push(friday_both_breaks, bar_index)
+        else if high_broken
+            array.push(friday_high_breaks, bar_index)
+        else if low_broken
+            array.push(friday_low_breaks, bar_index)
+        else
+            array.push(friday_no_breaks, bar_index)
+
+// Z-Score Table
+if show_z_score_table and barstate.islast
+    z_score_table := table.new(get_table_position(z_table_position), 2, 5, bgcolor=table_bg, frame_color=table_frame, frame_width=table_frame_width, border_color=table_border, border_width=table_border_width)
+    ts = get_table_text_size(table_size)
+
+    table.cell(z_score_table, 0, 0, "Z-Score Stats", bgcolor=color.white, text_color=color.black)
+    table.cell(z_score_table, 1, 0, "Value", bgcolor=color.white, text_color=color.black)
+    
+    table.cell(z_score_table, 0, 1, "IB Range Z-Score", bgcolor=color.white, text_color=color.black)
+    table.cell(z_score_table, 1, 1, str.tostring(z_score_ib_delta, "#.##"), bgcolor=color.white, text_color=math.abs(z_score_ib_delta) > 2 ? color.red : color.black)
+    
+    table.cell(z_score_table, 0, 2, "High Ext Z-Score", bgcolor=color.white, text_color=color.black)
+    table.cell(z_score_table, 1, 2, str.tostring(z_score_high_ext, "#.##"), bgcolor=color.white, text_color=math.abs(z_score_high_ext) > 2 ? color.red : color.black)
+    
+    table.cell(z_score_table, 0, 3, "Low Ext Z-Score", bgcolor=color.white, text_color=color.black)
+    table.cell(z_score_table, 1, 3, str.tostring(z_score_low_ext, "#.##"), bgcolor=color.white, text_color=math.abs(z_score_low_ext) > 2 ? color.red : color.black)
+    
+    if array.size(monday_both_breaks) + array.size(monday_high_breaks) + array.size(monday_low_breaks) + 
+       array.size(tuesday_both_breaks) + array.size(tuesday_high_breaks) + array.size(tuesday_low_breaks) + 
+       array.size(wednesday_both_breaks) + array.size(wednesday_high_breaks) + array.size(wednesday_low_breaks) + 
+       array.size(thursday_both_breaks) + array.size(thursday_high_breaks) + array.size(thursday_low_breaks) + 
+       array.size(friday_both_breaks) + array.size(friday_high_breaks) + array.size(friday_low_breaks) > 0
+        total_breaks = array.size(monday_high_breaks) + array.size(monday_low_breaks) + array.size(monday_both_breaks) +
+                       array.size(tuesday_high_breaks) + array.size(tuesday_low_breaks) + array.size(tuesday_both_breaks) +
+                       array.size(wednesday_high_breaks) + array.size(wednesday_low_breaks) + array.size(wednesday_both_breaks) +
+                       array.size(thursday_high_breaks) + array.size(thursday_low_breaks) + array.size(thursday_both_breaks) +
+                       array.size(friday_high_breaks) + array.size(friday_low_breaks) + array.size(friday_both_breaks)
+        total_sessions = array.size(delta_history)
+        breakout_prob := (total_breaks / total_sessions) * 100
+        if not na(z_score_ib_delta) and z_score_ib_delta < 0
+            breakout_prob := breakout_prob * (1 + math.abs(z_score_ib_delta) * 0.1)
+    table.cell(z_score_table, 0, 4, "Breakout Probability", bgcolor=color.white, text_color=color.black)
+    table.cell(z_score_table, 1, 4, str.tostring(breakout_prob, "#.##") + "%", bgcolor=color.white, text_color=color.black)
+
+// Day-of-Week IB Stats Table
+if show_delta_analytics and barstate.islast
+    var ib_analytics = table.new(get_table_position(table_position), 6, 21, bgcolor=table_bg, frame_color=table_frame, frame_width=table_frame_width, border_color=table_border, border_width=table_border_width)
+    ts = get_table_text_size(table_size)
+    
+    table.cell(ib_analytics, 0, 0, "IB Stats", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 0, "Mon", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 0, "Tue", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 0, "Wed", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 0, "Thu", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 0, "Fri", bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 1, "IB Max Range", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 1, str.tostring(array.max(monday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 1, str.tostring(array.max(tuesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 1, str.tostring(array.max(wednesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 1, str.tostring(array.max(thursday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 1, str.tostring(array.max(friday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 2, "IB Avg Range", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 2, str.tostring(array.avg(monday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 2, str.tostring(array.avg(tuesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 2, str.tostring(array.avg(wednesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 2, str.tostring(array.avg(thursday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 2, str.tostring(array.avg(friday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 3, "IB Min Range", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 3, str.tostring(array.min(monday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 3, str.tostring(array.min(tuesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 3, str.tostring(array.min(wednesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 3, str.tostring(array.min(thursday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 3, str.tostring(array.min(friday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 4, "Today's Range", bgcolor=color.white, text_color=color.black, text_size=ts)
+    dow = dayofweek(time)
+    table.cell(ib_analytics, 1, 4, dow == dayofweek.monday ? str.tostring(ib_delta, "#.##") : "-", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 4, dow == dayofweek.tuesday ? str.tostring(ib_delta, "#.##") : "-", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 4, dow == dayofweek.wednesday ? str.tostring(ib_delta, "#.##") : "-", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 4, dow == dayofweek.thursday ? str.tostring(ib_delta, "#.##") : "-", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 4, dow == dayofweek.friday ? str.tostring(ib_delta, "#.##") : "-", bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 5, "IB Range SD", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 5, str.tostring(array.stdev(monday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 5, str.tostring(array.stdev(tuesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 5, str.tostring(array.stdev(wednesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 5, str.tostring(array.stdev(thursday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 5, str.tostring(array.stdev(friday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 6, "IB Range Median", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 6, str.tostring(array.median(monday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 6, str.tostring(array.median(tuesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 6, str.tostring(array.median(wednesday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 6, str.tostring(array.median(thursday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 6, str.tostring(array.median(friday_deltas), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 7, "High Breaks", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 7, str.tostring(array.size(monday_high_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 7, str.tostring(array.size(tuesday_high_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 7, str.tostring(array.size(wednesday_high_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 7, str.tostring(array.size(thursday_high_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 7, str.tostring(array.size(friday_high_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 8, "Low Breaks", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 8, str.tostring(array.size(monday_low_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 8, str.tostring(array.size(tuesday_low_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 8, str.tostring(array.size(wednesday_low_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 8, str.tostring(array.size(thursday_low_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 8, str.tostring(array.size(friday_low_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 9, "No Breaks", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 9, str.tostring(array.size(monday_no_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 9, str.tostring(array.size(tuesday_no_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 9, str.tostring(array.size(wednesday_no_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 9, str.tostring(array.size(thursday_no_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 9, str.tostring(array.size(friday_no_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 10, "Both Breaks", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 10, str.tostring(array.size(monday_both_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 10, str.tostring(array.size(tuesday_both_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 10, str.tostring(array.size(wednesday_both_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 10, str.tostring(array.size(thursday_both_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 10, str.tostring(array.size(friday_both_breaks)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 11, "Total Sessions", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 11, str.tostring(array.size(monday_deltas)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 11, str.tostring(array.size(tuesday_deltas)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 11, str.tostring(array.size(wednesday_deltas)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 11, str.tostring(array.size(thursday_deltas)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 11, str.tostring(array.size(friday_deltas)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 12, "Mean High Ext", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 12, str.tostring(array.avg(monday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 12, str.tostring(array.avg(tuesday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 12, str.tostring(array.avg(wednesday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 12, str.tostring(array.avg(thursday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 12, str.tostring(array.avg(friday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 13, "Median High Ext", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 13, str.tostring(array.median(monday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 13, str.tostring(array.median(tuesday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 13, str.tostring(array.median(wednesday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 13, str.tostring(array.median(thursday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 13, str.tostring(array.median(friday_high_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 14, "Mean Low Ext", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 14, str.tostring(array.avg(monday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 14, str.tostring(array.avg(tuesday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 14, str.tostring(array.avg(wednesday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 14, str.tostring(array.avg(thursday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 14, str.tostring(array.avg(friday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 15, "Median Low Ext", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 15, str.tostring(array.median(monday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 15, str.tostring(array.median(tuesday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 15, str.tostring(array.median(wednesday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 15, str.tostring(array.median(thursday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 15, str.tostring(array.median(friday_low_exts), "#.##"), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 16, "Mean Hits", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 16, str.tostring(array.size(monday_mean_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 16, str.tostring(array.size(tuesday_mean_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 16, str.tostring(array.size(wednesday_mean_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 16, str.tostring(array.size(thursday_mean_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 16, str.tostring(array.size(friday_mean_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 17, "Median Hits", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 17, str.tostring(array.size(monday_median_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 17, str.tostring(array.size(tuesday_median_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 17, str.tostring(array.size(wednesday_median_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 17, str.tostring(array.size(thursday_median_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 17, str.tostring(array.size(friday_median_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    
+    table.cell(ib_analytics, 0, 18, "2 SD Hits", bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 1, 18, str.tostring(array.size(monday_sd2_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 2, 18, str.tostring(array.size(tuesday_sd2_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 3, 18, str.tostring(array.size(wednesday_sd2_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 4, 18, str.tostring(array.size(thursday_sd2_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)
+    table.cell(ib_analytics, 5, 18, str.tostring(array.size(friday_sd2_hits)), bgcolor=color.white, text_color=color.black, text_size=ts)

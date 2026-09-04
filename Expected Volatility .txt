@@ -1,0 +1,223 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Expected Volatility (Log-Transformed)", overlay = true, max_bars_back = 5000)
+
+// === Input Definitions ===
+
+// --- Session Settings ---
+var g_SESSION = "Session Settings"
+sess_Time = input("1800-1600", "Session Time")
+sess_TimeZone = input("GMT-5", "TimeZone")
+vol_symbol = input.symbol("NASDAQ:VOLI", "Volatility Index Symbol")
+
+// --- Shading Settings (Borderless Boxes) ---
+var g_SHADING = "Shading Settings"
+show_shading = input.bool(true, title="Show Shaded Zones", group=g_SHADING, tooltip="Toggle shaded (borderless) zones")
+shading_transparency = input.int(80, title="Shading Transparency", minval=0, maxval=100, group=g_SHADING, tooltip="Transparency for shaded zones (higher = more transparent)")
+upper_shade_color = input.color(color.new(color.purple, 0), title="Upper Zone Color", group=g_SHADING, tooltip="Base color for upper (bullish) zones")
+lower_shade_color = input.color(color.new(color.teal, 0), title="Lower Zone Color", group=g_SHADING, tooltip="Base color for lower (bearish) zones")
+show_zone_labels = input.bool(true, title="Show Zone Labels", group=g_SHADING, tooltip="Toggle labels on zones (e.g., '1.0 SD')")
+
+// --- Zone Level Settings ---
+var g_ZONES = "Zone Level Settings"
+show_025sd = input.bool(true, title="Show 0.25 SD Zones", group=g_ZONES)
+show_05sd = input.bool(true, title="Show 0.5 SD Zones", group=g_ZONES)
+show_1sd = input.bool(true, title="Show 1.0 SD Zones", group=g_ZONES)
+show_15sd = input.bool(true, title="Show 1.5 SD Zones", group=g_ZONES)
+
+close_day = close[1]
+
+// Request the previous day's settlement on the chart's symbol (market index)
+Index = request.security(
+     syminfo.tickerid,
+     "1D",
+     close_day,
+     gaps = barmerge.gaps_off,
+     lookahead = barmerge.lookahead_on
+     )
+
+plotIndex = plot(Index,"Index",color = color.new(color.white,100))
+
+// Request the previous day's settlement on the user-selected volatility index
+VolIndex = request.security(
+     vol_symbol,
+     "1D",
+     close_day,
+     gaps = barmerge.gaps_off,
+     lookahead = barmerge.lookahead_on
+     )
+
+plotVolIndex = plot(VolIndex,"VolIndex",color = color.new(color.white,100))
+
+IsSessionStart(sessionTime, sessionTimeZone=syminfo.timezone) =>
+    inSess = not na(time(timeframe.period, sessionTime, sessionTimeZone))
+    inSess and not inSess[1]
+
+GetVolatility(VolatilityIndex) =>
+    a = VolatilityIndex/16/100
+    b = VolatilityIndex/math.sqrt(365)/100
+    [a,b]
+
+get_label_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size_string == "Normal" ? size.normal : size.large
+
+// Modified Zones function with log transformation
+Zones(a, b, Index) =>
+    // Convert Index to log space
+    logIndex = math.log(Index)
+    
+    // In log space, use a and b as volatility measures
+    // a is used for resistance (upper moves), b for support calculations
+    logStdA = a  // Intraday volatility measure
+    logStdB = b  // Daily volatility measure
+    
+    // Upper zones (resistance) - using 'a' parameter
+    Index_ZONE1UP_Res = math.exp(logIndex + logStdA * 1.0)
+    Index_ZONE1DN_Res = math.exp(logIndex + logStdB * 1.0)
+    
+    Index_ZONE150UP_Res = math.exp(logIndex + logStdA * 1.5)
+    Index_ZONE150DN_Res = math.exp(logIndex + logStdB * 1.5)
+    
+    Index_ZONE50UP_Res = math.exp(logIndex + logStdA * 0.5)
+    Index_ZONE50DN_Res = math.exp(logIndex + logStdB * 0.5)
+    
+    Index_ZONE25UP_Res = math.exp(logIndex + logStdA * 0.25)
+    Index_ZONE25DN_Res = math.exp(logIndex + logStdB * 0.25)
+    
+    // Lower zones (support) - mirroring the upper zones
+    Index_ZONE1UP_Sup = math.exp(logIndex - logStdB * 1.0)
+    Index_ZONE1DN_Sup = math.exp(logIndex - logStdA * 1.0)
+    
+    Index_ZONE150UP_Sup = math.exp(logIndex - logStdB * 1.5)
+    Index_ZONE150DN_Sup = math.exp(logIndex - logStdA * 1.5)
+    
+    Index_ZONE50UP_Sup = math.exp(logIndex - logStdB * 0.5)
+    Index_ZONE50DN_Sup = math.exp(logIndex - logStdA * 0.5)
+    
+    Index_ZONE25UP_Sup = math.exp(logIndex - logStdB * 0.25)
+    Index_ZONE25DN_Sup = math.exp(logIndex - logStdA * 0.25)
+
+    if IsSessionStart(sess_Time, sess_TimeZone) and show_shading
+        close_time = time_close + 86400000
+        
+        upper_bg = color.new(upper_shade_color, shading_transparency)
+        lower_bg = color.new(lower_shade_color, shading_transparency)
+        
+        // 1.5 SD Upper
+        if show_15sd
+            Index_BOX_2TOP = box.new(
+                 left = time_close,
+                 top = Index_ZONE150UP_Res,
+                 right = close_time,
+                 bottom = Index_ZONE150DN_Res,
+                 xloc = xloc.bar_time,
+                 bgcolor = upper_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE150UP_Res + Index_ZONE150DN_Res)/2, "1.5 SD ↑", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(upper_shade_color, 100), textcolor=upper_shade_color, size=get_label_size("Small"))
+        
+        // 1.5 SD Lower
+        if show_15sd
+            Index_BOX_2BTM = box.new(
+                 left = time_close,
+                 top = Index_ZONE150DN_Sup,
+                 right = close_time,
+                 bottom = Index_ZONE150UP_Sup,
+                 xloc = xloc.bar_time,
+                 bgcolor = lower_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE150DN_Sup + Index_ZONE150UP_Sup)/2, "1.5 SD ↓", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(lower_shade_color, 100), textcolor=lower_shade_color, size=get_label_size("Small"))
+        
+        // 1.0 SD Upper
+        if show_1sd
+            Index_BOX_1TOP = box.new(
+                 left = time_close,
+                 top = Index_ZONE1UP_Res,
+                 right = close_time,
+                 bottom = Index_ZONE1DN_Res,
+                 xloc = xloc.bar_time,
+                 bgcolor = upper_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE1UP_Res + Index_ZONE1DN_Res)/2, "1.0 SD ↑", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(upper_shade_color, 100), textcolor=upper_shade_color, size=get_label_size("Small"))
+        
+        // 1.0 SD Lower
+        if show_1sd
+            Index_BOX_1BTM = box.new(
+                 left = time_close,
+                 top = Index_ZONE1DN_Sup,
+                 right = close_time,
+                 bottom = Index_ZONE1UP_Sup,
+                 xloc = xloc.bar_time,
+                 bgcolor = lower_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE1DN_Sup + Index_ZONE1UP_Sup)/2, "1.0 SD ↓", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(lower_shade_color, 100), textcolor=lower_shade_color, size=get_label_size("Small"))
+        
+        // 0.5 SD Upper
+        if show_05sd
+            Index_BOX_3TOP = box.new(
+                 left = time_close,
+                 top = Index_ZONE50UP_Res,
+                 right = close_time,
+                 bottom = Index_ZONE50DN_Res,
+                 xloc = xloc.bar_time,
+                 bgcolor = upper_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE50UP_Res + Index_ZONE50DN_Res)/2, "0.5 SD ↑", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(upper_shade_color, 100), textcolor=upper_shade_color, size=get_label_size("Small"))
+        
+        // 0.5 SD Lower
+        if show_05sd
+            Index_BOX_3BTM = box.new(
+                 left = time_close,
+                 top = Index_ZONE50DN_Sup,
+                 right = close_time,
+                 bottom = Index_ZONE50UP_Sup,
+                 xloc = xloc.bar_time,
+                 bgcolor = lower_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE50DN_Sup + Index_ZONE50UP_Sup)/2, "0.5 SD ↓", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(lower_shade_color, 100), textcolor=lower_shade_color, size=get_label_size("Small"))
+        
+        // 0.25 SD Upper
+        if show_025sd
+            Index_BOX_4TOP = box.new(
+                 left = time_close,
+                 top = Index_ZONE25UP_Res,
+                 right = close_time,
+                 bottom = Index_ZONE25DN_Res,
+                 xloc = xloc.bar_time,
+                 bgcolor = upper_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE25UP_Res + Index_ZONE25DN_Res)/2, "0.25 SD ↑", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(upper_shade_color, 100), textcolor=upper_shade_color, size=get_label_size("Small"))
+        
+        // 0.25 SD Lower
+        if show_025sd
+            Index_BOX_4BTM = box.new(
+                 left = time_close,
+                 top = Index_ZONE25DN_Sup,
+                 right = close_time,
+                 bottom = Index_ZONE25UP_Sup,
+                 xloc = xloc.bar_time,
+                 bgcolor = lower_bg,
+                 border_color = na,
+                 border_width = 0)
+            if show_zone_labels
+                label.new(close_time, (Index_ZONE25DN_Sup + Index_ZONE25UP_Sup)/2, "0.25 SD ↓", xloc = xloc.bar_time, style=label.style_label_left, color=color.new(lower_shade_color, 100), textcolor=lower_shade_color, size=get_label_size("Small"))
+    
+    [a,b,Index]
+
+[a,b] = GetVolatility(VolIndex)
+Zones(a,b, Index)

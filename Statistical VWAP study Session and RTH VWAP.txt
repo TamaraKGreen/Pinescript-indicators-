@@ -1,0 +1,666 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © npg
+
+//@version=5
+indicator("Session & RTH VWAP", shorttitle = 'SV+RTH', overlay = true, max_bars_back = 5000)
+
+var g0      = 'Sessions Settings'
+tz          = input.string("GMT-4", "Time Zone", tooltip = "GMT and UTC is the same thing \nMatch this setting to bottom right time", options = ["GMT-10", "GMT-9", "GMT-8", "GMT-7", "GMT-6", "GMT-5", "GMT-4", "GMT-3", "GMT+0", "GMT+1", "GMT+2", "GMT+3", "GMT+4", "GMT+5", "GMT+6", "GMT+7", "GMT+8", "GMT+9", "GMT+10", "GMT+10:30", "GMT+11", "GMT+12", "GMT+13", "GMT+13:45"], group = g0)
+sessionTime = input.session('0600-0900', 'Session', group = g0)
+highlight   = input.bool(false, 'Highlight Session', inline = '1', group = g0)
+hCol        = input.color(color.new(color.aqua,90), '', inline = '1', group = g0)
+
+var g1      = 'Anchor Session VWAP Settings'
+vsrc        = input.source(hlc3, 'VWAP Source', group = g1)
+showHigh    = input.bool(true, 'Show Session VWAP', inline = '1', group = g1)
+highCol     = input.color(color.blue, '', inline = '1', group = g1)
+highW       = input.int(1, '', inline = '1', group = g1)
+showOld     = input.bool(true, 'Show Previous Session VWAP\'s', group = g1)
+numSessions = input.int(50, 'Number of Previous Sessions', minval = 1, maxval = 100, group = g1)
+
+var g2      = 'RTH VWAP Settings'
+rth_vsrc    = input.source(hlc3, 'RTH VWAP Source', group = g2)
+showRTH     = input.bool(true, 'Show RTH VWAP', inline = '1', group = g2)
+rthCol      = input.color(color.new(color.purple, 30), '', inline = '1', group = g2)
+rthW        = input.int(2, '', inline = '1', group = g2)
+input_rth   = input.session("0930-1600", "RTH Session Time (EST)", group = g2)
+
+
+var g3      = 'Stats Table'
+showTable   = input.bool(true, 'Show Stats Table', group = g3)
+tblPos      = input.string('Top Right', 'Position', options = ['Top Right', 'Top Left', 'Top Center', 'Bottom Right', 'Bottom Left', 'Bottom Center', 'Middle Right', 'Middle Left'], group = g3)
+tblSize     = input.string('Small', 'Text Size', options = ['Tiny', 'Small', 'Normal'], group = g3)
+maxDays     = input.int(100, 'Max Days to Track', minval = 10, maxval = 500, group = g3)
+
+// ─── Band Levels inputs ───────────────────────────────────────────────────────
+// Anchor = midpoint of RTH VWAP and Session VWAP each bar.
+// All bands are offsets from that anchor, calculated from the intraday
+// distribution of (price - anchor) deviations, volume-weighted where noted.
+
+var g4        = 'Band Levels'
+
+// Anchor line
+showAnchor    = input.bool(false, 'Anchor (midpoint)',     inline = 'anc',  group = g4)
+anchorCol     = input.color(color.new(color.black, 30),  '',               inline = 'anc',  group = g4)
+
+// Symmetric stdev
+show1s        = input.bool(false, '± 1σ  (symmetric)',    inline = 's1',   group = g4)
+col1s         = input.color(color.new(color.yellow, 50), '',               inline = 's1',   group = g4)
+show2s        = input.bool(false, '± 2σ  (symmetric)',    inline = 's2',   group = g4)
+col2s         = input.color(color.new(color.yellow, 65), '',               inline = 's2',   group = g4)
+
+// Asymmetric stdev (upper/lower computed separately)
+showAsym      = input.bool(false, 'Asymmetric σ (upper/lower)', inline = 'asy', group = g4)
+colAsymHi     = input.color(color.new(color.orange, 50), '',               inline = 'asy',  group = g4)
+colAsymLo     = input.color(color.new(color.orange, 50), '',               inline = 'asy',  group = g4)
+
+// MAD
+showMAD       = input.bool(false, 'MAD  (± median abs dev)', inline = 'mad', group = g4)
+colMAD        = input.color(color.new(color.teal, 40),   '',               inline = 'mad',  group = g4)
+
+// Percentile bands — 10th/25th/75th/90th of deviation distribution
+showPct       = input.bool(false, 'Percentile bands (10/25/75/90)', inline = 'pct', group = g4)
+colPct25      = input.color(color.new(color.blue, 50),   '',               inline = 'pct',  group = g4)
+colPct75      = input.color(color.new(color.blue, 50),   '',               inline = 'pct',  group = g4)
+colPct10      = input.color(color.new(color.blue, 65),   '',               inline = 'pct',  group = g4)
+colPct90      = input.color(color.new(color.blue, 65),   '',               inline = 'pct',  group = g4)
+
+// VWAP of deviations — volume-weighted mean deviation line
+showVWD       = input.bool(false, 'VWAP of deviations',   inline = 'vwd',  group = g4)
+colVWD        = input.color(color.new(color.fuchsia, 40),'',               inline = 'vwd',  group = g4)
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+f_pos() =>
+    switch tblPos
+        'Top Right'     => position.top_right
+        'Top Left'      => position.top_left
+        'Top Center'    => position.top_center
+        'Bottom Right'  => position.bottom_right
+        'Bottom Left'   => position.bottom_left
+        'Bottom Center' => position.bottom_center
+        'Middle Right'  => position.middle_right
+        'Middle Left'   => position.middle_left
+        => position.top_right
+
+f_size() =>
+    switch tblSize
+        'Tiny'   => size.tiny
+        'Small'  => size.small
+        'Normal' => size.normal
+        => size.small
+
+f_pad(string s, int w) =>
+    out = s
+    extra = w - str.length(s)
+    if extra > 0
+        for i = 1 to extra
+            out := out + ' '
+    out
+
+f_price(float p) =>
+    na(p) ? 'n/a' : str.tostring(p, format.mintick)
+
+f_sess_start() =>
+    str.substring(sessionTime, 0, 2) + ':' + str.substring(sessionTime, 2, 4)
+
+f_rth_start() =>
+    str.substring(input_rth, 0, 2) + ':' + str.substring(input_rth, 2, 4)
+
+f_round2(float v) =>
+    str.tostring(math.round(v, 2))
+
+// Convert fractional hour (e.g. 10.75) to HH:MM string
+f_hhmm(float fh) =>
+    if na(fh)
+        'n/a'
+    else
+        int h   = int(fh)
+        int m   = int(math.round((fh - h) * 60))
+        string hs = h < 10 ? '0' + str.tostring(h) : str.tostring(h)
+        string ms = m < 10 ? '0' + str.tostring(m) : str.tostring(m)
+        hs + ':' + ms
+
+// Current bar time as fractional hour in EST (for intraday event tagging)
+f_bar_hour_frac() =>
+    float t_mins = (hour(time, "America/New_York") * 60 + minute(time, "America/New_York"))
+    t_mins / 60.0
+
+// Median of a float array (sorts a copy)
+f_median(array<float> arr) =>
+    float result = na
+    if arr.size() > 0
+        sorted = arr.copy()
+        sorted.sort()
+        int n = sorted.size()
+        result := n % 2 == 1 ? sorted.get(n / 2) : (sorted.get(n / 2 - 1) + sorted.get(n / 2)) / 2
+    result
+
+// Quartiles
+f_q1(array<float> arr) =>
+    float result = na
+    if arr.size() >= 4
+        sorted = arr.copy()
+        sorted.sort()
+        int n = sorted.size()
+        int mid = n / 2
+        lower = sorted.slice(0, mid)
+        result := f_median(lower)
+    result
+
+f_q3(array<float> arr) =>
+    float result = na
+    if arr.size() >= 4
+        sorted = arr.copy()
+        sorted.sort()
+        int n = sorted.size()
+        int mid = n % 2 == 1 ? n / 2 + 1 : n / 2
+        upper = sorted.slice(mid, n)
+        result := f_median(upper)
+    result
+
+// ─── Table cell helpers ───────────────────────────────────────────────────────
+var table _tbl = na
+
+f_header(row, txt) =>
+    table.cell(_tbl, 0, row, txt, text_color = color.white, text_size = f_size(), bgcolor = color.new(color.black, 0), text_halign = text.align_left, text_font_family = font.family_monospace)
+    table.merge_cells(_tbl, 0, row, 2, row)
+
+f_subhead(row, c0, c1, c2) =>
+    table.cell(_tbl, 0, row, f_pad(' ' + c0, 14), text_color = color.white, text_size = f_size(), bgcolor = color.new(color.black, 0), text_halign = text.align_left, text_font_family = font.family_monospace)
+    table.cell(_tbl, 1, row, f_pad(' ' + c1, 14), text_color = color.white, text_size = f_size(), bgcolor = color.new(color.black, 0), text_halign = text.align_left, text_font_family = font.family_monospace)
+    table.cell(_tbl, 2, row, f_pad(' ' + c2, 16), text_color = color.white, text_size = f_size(), bgcolor = color.new(color.black, 0), text_halign = text.align_left, text_font_family = font.family_monospace)
+
+f_row(row, lbl, val, detail) =>
+    table.cell(_tbl, 0, row, f_pad(' ' + lbl,    14), text_color = color.black, text_size = f_size(), bgcolor = color.white, text_halign = text.align_left, text_font_family = font.family_monospace)
+    table.cell(_tbl, 1, row, f_pad(' ' + val,    14), text_color = color.black, text_size = f_size(), bgcolor = color.white, text_halign = text.align_left, text_font_family = font.family_monospace)
+    table.cell(_tbl, 2, row, f_pad(' ' + detail, 16), text_color = color.black, text_size = f_size(), bgcolor = color.white, text_halign = text.align_left, text_font_family = font.family_monospace)
+
+// ─── Session & VWAP logic ─────────────────────────────────────────────────────
+session      = time(timeframe.period, sessionTime, tz)
+startSession = not na(session) and na(session[1])
+newDay       = ta.change(dayofweek) != 0
+
+type vwapData
+    float [] vol
+    float [] pv
+    float [] vwaps
+    float hl
+    int startBar
+    chart.point fbs
+    chart.point [] cps
+    polyline vwapLine
+    bool ended
+
+method popper(array<vwapData> this) =>
+    if showOld
+        if this.size() > numSessions + 1
+            this.last().vwapLine.delete()
+            this.pop()
+    else
+        if this.size() > 1
+            this.last().vwapLine.delete()
+            this.pop()
+
+method vwapper(array<vwapData> this, lineCol, lineW) =>
+    if newDay and this.size() > 0
+        for i = 0 to this.size() - 1
+            tempSession = this.get(i)
+            tempSession.ended := true
+    if this.size() > 0
+        s = this.first()
+        if bar_index > s.startBar and not s.ended
+            s.vol.push(s.vol.get(0) + volume)
+            s.vol.shift()
+            s.pv.push(s.pv.get(0) + vsrc * volume)
+            s.pv.shift()
+            s.vwaps.unshift(s.pv.get(0) / s.vol.get(0))
+            s.cps.clear()
+            for i = 0 to s.vwaps.size() - 1
+                s.cps.push(chart.point.from_index(bar_index[i], s.vwaps.get(i)))
+            s.cps.push(s.fbs)
+            s.vwapLine.delete()
+            s.vwapLine := polyline.new(s.cps, line_color = lineCol, line_width = lineW)
+        if this.size() > 1 and showOld
+            s2 = this.last()
+            if bar_index > s2.startBar and not s2.ended
+                s2.vol.push(s2.vol.get(0) + volume)
+                s2.vol.shift()
+                s2.pv.push(s2.pv.get(0) + vsrc * volume)
+                s2.pv.shift()
+                s2.vwaps.unshift(s2.pv.get(0) / s2.vol.get(0))
+                s2.cps.clear()
+                for i = 0 to s2.vwaps.size() - 1
+                    s2.cps.push(chart.point.from_index(bar_index[i], s2.vwaps.get(i)))
+                s2.cps.push(s2.fbs)
+                s2.vwapLine.delete()
+                s2.vwapLine := polyline.new(s2.cps, line_color = lineCol, line_width = lineW)
+
+method hlReset(array<vwapData> this, h) =>
+    if this.size() > 0
+        s = this.first()
+        if h
+            if not na(session) and high > s.hl
+                s.vwapLine.delete()
+                s.vwapLine := na
+                this.shift()
+                this.unshift(vwapData.new(array.new<float>(1, volume), array.new<float>(1, volume * vsrc), array.new<float>(), high, bar_index, chart.point.from_index(bar_index, (volume * vsrc) / volume), array.new<chart.point>(), na, false))
+        else
+            if not na(session) and low < s.hl
+                s.vwapLine.delete()
+                s.vwapLine := na
+                this.shift()
+                this.unshift(vwapData.new(array.new<float>(1, volume), array.new<float>(1, volume * vsrc), array.new<float>(), low, bar_index, chart.point.from_index(bar_index, (volume * vsrc) / volume), array.new<chart.point>(), na, false))
+
+var startArr = array.new<vwapData>()
+var highArr  = array.new<vwapData>()
+var lowArr   = array.new<vwapData>()
+
+if startSession
+    if showHigh
+        highArr.unshift(vwapData.new(array.new<float>(1, volume), array.new<float>(1, volume * vsrc), array.new<float>(), high, bar_index, chart.point.from_index(bar_index, (volume * vsrc) / volume), array.new<chart.point>(), na, false))
+        highArr.popper()
+
+if showHigh
+    highArr.vwapper(highCol, highW)
+    highArr.hlReset(true)
+
+// ─── RTH VWAP ─────────────────────────────────────────────────────────────────
+rth_session = time("1440", str.format("{0}:23456", input_rth), "America/New_York")
+
+var float rth_vwap       = na
+var float rth_p          = na
+var float rth_vol        = na
+var float rth_anchor_val = na
+
+if rth_session
+    if not rth_session[1]
+        rth_anchor_val := rth_vsrc
+        rth_p          := rth_vsrc * volume
+        rth_vol        := volume
+        rth_vwap       := rth_vsrc
+    else
+        rth_p    := rth_p[1] + rth_vsrc * volume
+        rth_vol  := rth_vol[1] + volume
+        rth_vwap := rth_p / rth_vol
+else
+    rth_vwap := na
+
+// ─── Live session VWAP value ──────────────────────────────────────────────────
+var float sess_vwap_live = na
+if highArr.size() > 0
+    s = highArr.first()
+    if s.vwaps.size() > 0
+        sess_vwap_live := s.vwaps.get(0)
+
+// ─── Crossover & Retest Detection (confirmed bars only) ───────────────────────
+var int   day_rth_retests  = 0
+var int   day_sess_retests = 0
+var int   day_crossovers   = 0
+var float prev_rth_side    = na
+var float prev_sess_side   = na
+var bool  prev_rth_above   = na
+
+// Arrays to accumulate per-day counts
+var array<float> arr_rth_retests  = array.new<float>()
+var array<float> arr_sess_retests = array.new<float>()
+var array<float> arr_crossovers   = array.new<float>()
+
+// ─── Timing arrays (fractional hour in EST, one entry per event) ──────────────
+// All-time event times — used for mean/median across entire history
+var array<float> arr_rth_retest_times  = array.new<float>()
+var array<float> arr_sess_retest_times = array.new<float>()
+var array<float> arr_crossover_times   = array.new<float>()
+
+// Per-hour bucket accumulators (9 buckets: 09, 10, 11, 12, 13, 14, 15, and one each for pre/post)
+// Indices 0-6 = hours 9–15 EST, index 7 = other (shouldn't normally fire during RTH)
+var array<int> bucket_rth_ret  = array.new<int>(8, 0)
+var array<int> bucket_sess_ret = array.new<int>(8, 0)
+var array<int> bucket_cross    = array.new<int>(8, 0)
+
+f_bucket(float fh) =>
+    int h = int(fh)
+    h >= 9 and h <= 15 ? h - 9 : 7
+
+f_bucket_label(int idx) =>
+    switch idx
+        0 => '09'
+        1 => '10'
+        2 => '11'
+        3 => '12'
+        4 => '13'
+        5 => '14'
+        6 => '15'
+        => 'oth'
+
+// Find the peak hour bucket across an array
+f_peak_bucket(array<int> arr) =>
+    int best_idx = 0
+    int best_val = 0
+    for i = 0 to arr.size() - 1
+        v = arr.get(i)
+        if v > best_val
+            best_val := v
+            best_idx := i
+    best_idx
+
+// Stats arrays
+var int  stat_wins        = 0
+var int  stat_bullish     = 0
+var int  stat_bearish     = 0
+var int  stat_total       = 0
+var int  stat_streak      = 0
+var bool stat_streak_win  = true
+
+var float snap_rth_vwap   = na
+var float snap_sess_vwap  = na
+var float snap_open       = na
+
+// RTH return distribution
+var array<float> arr_returns = array.new<float>()
+
+rthEnd = not na(rth_session[1]) and na(rth_session)
+
+// Track open at RTH start
+if rth_session and not rth_session[1]
+    snap_open      := open
+    prev_rth_side  := na
+    prev_sess_side := na
+    prev_rth_above := na
+    day_rth_retests  := 0
+    day_sess_retests := 0
+    day_crossovers   := 0
+
+// Intraday detection on confirmed bars (use [1] values to avoid repaint)
+if rth_session and not na(rth_vwap[1]) and not na(sess_vwap_live[1]) and barstate.isconfirmed
+    float c    = close[1]
+    float h    = high[1]
+    float l    = low[1]
+    float rv   = rth_vwap[1]
+    float sv   = sess_vwap_live[1]
+
+    // Use [1] bar time for event tagging (confirmed bar)
+    float evt_fh = float(hour(time[1], "America/New_York")) + float(minute(time[1], "America/New_York")) / 60.0
+
+    // RTH VWAP retest
+    float cur_rth_side = c > rv ? 1 : c < rv ? -1 : 0
+    if not na(prev_rth_side) and cur_rth_side == prev_rth_side
+        if (prev_rth_side > 0 and l < rv) or (prev_rth_side < 0 and h > rv)
+            day_rth_retests += 1
+            arr_rth_retest_times.unshift(evt_fh)
+            if arr_rth_retest_times.size() > maxDays * 10
+                arr_rth_retest_times.pop()
+            int bk = f_bucket(evt_fh)
+            bucket_rth_ret.set(bk, bucket_rth_ret.get(bk) + 1)
+    prev_rth_side := cur_rth_side
+
+    // Session VWAP retest
+    float cur_sess_side = c > sv ? 1 : c < sv ? -1 : 0
+    if not na(prev_sess_side) and cur_sess_side == prev_sess_side
+        if (prev_sess_side > 0 and l < sv) or (prev_sess_side < 0 and h > sv)
+            day_sess_retests += 1
+            arr_sess_retest_times.unshift(evt_fh)
+            if arr_sess_retest_times.size() > maxDays * 10
+                arr_sess_retest_times.pop()
+            int bk = f_bucket(evt_fh)
+            bucket_sess_ret.set(bk, bucket_sess_ret.get(bk) + 1)
+    prev_sess_side := cur_sess_side
+
+    // RTH vs Session VWAP crossover
+    bool cur_rth_above = rv > sv
+    if not na(prev_rth_above) and cur_rth_above != prev_rth_above
+        day_crossovers += 1
+        arr_crossover_times.unshift(evt_fh)
+        if arr_crossover_times.size() > maxDays * 10
+            arr_crossover_times.pop()
+        int bk = f_bucket(evt_fh)
+        bucket_cross.set(bk, bucket_cross.get(bk) + 1)
+    prev_rth_above := cur_rth_above
+
+if rth_session
+    snap_rth_vwap  := rth_vwap
+    snap_sess_vwap := sess_vwap_live
+
+// At RTH end: commit all stats for the day
+if rthEnd and not na(snap_rth_vwap) and not na(snap_sess_vwap) and stat_total < maxDays
+    bool rth_above   = snap_rth_vwap > snap_sess_vwap
+    bool closed_bull = close > snap_open
+    bool is_win      = (rth_above and closed_bull) or (not rth_above and not closed_bull)
+
+    stat_total += 1
+    if is_win
+        stat_wins += 1
+        if rth_above
+            stat_bullish += 1
+        else
+            stat_bearish += 1
+        if stat_streak_win
+            stat_streak += 1
+        else
+            stat_streak     := 1
+            stat_streak_win := true
+    else
+        if not stat_streak_win
+            stat_streak += 1
+        else
+            stat_streak     := 1
+            stat_streak_win := false
+
+    if not na(snap_open) and snap_open != 0
+        float ret = (close - snap_open) / snap_open * 100
+        arr_returns.unshift(ret)
+        if arr_returns.size() > maxDays
+            arr_returns.pop()
+
+    arr_rth_retests.unshift(day_rth_retests)
+    arr_sess_retests.unshift(day_sess_retests)
+    arr_crossovers.unshift(day_crossovers)
+    if arr_rth_retests.size()  > maxDays
+        arr_rth_retests.pop()
+    if arr_sess_retests.size() > maxDays
+        arr_sess_retests.pop()
+    if arr_crossovers.size()   > maxDays
+        arr_crossovers.pop()
+
+// ─── Distribution Stats (for table counts) ───────────────────────────────────
+float rth_ret_mean  = arr_rth_retests.size()  > 0 ? arr_rth_retests.avg()  : na
+float sess_ret_mean = arr_sess_retests.size()  > 0 ? arr_sess_retests.avg() : na
+float cross_mean    = arr_crossovers.size()    > 0 ? arr_crossovers.avg()   : na
+float rth_ret_med   = f_median(arr_rth_retests)
+float sess_ret_med  = f_median(arr_sess_retests)
+float cross_med     = f_median(arr_crossovers)
+
+// ─── Timing Stats ─────────────────────────────────────────────────────────────
+float rth_ret_time_mean   = arr_rth_retest_times.size()  > 0 ? arr_rth_retest_times.avg()  : na
+float sess_ret_time_mean  = arr_sess_retest_times.size() > 0 ? arr_sess_retest_times.avg() : na
+float cross_time_mean     = arr_crossover_times.size()   > 0 ? arr_crossover_times.avg()   : na
+float rth_ret_time_med    = f_median(arr_rth_retest_times)
+float sess_ret_time_med   = f_median(arr_sess_retest_times)
+float cross_time_med      = f_median(arr_crossover_times)
+
+int pk_rth_ret  = f_peak_bucket(bucket_rth_ret)
+int pk_sess_ret = f_peak_bucket(bucket_sess_ret)
+int pk_cross    = f_peak_bucket(bucket_cross)
+
+
+// These run bar-by-bar inside the RTH session to build the deviation
+// distribution from which all bands are derived.
+
+var float band_vol_sum   = 0.0   // Σ vol
+var float band_pvv_sum   = 0.0   // Σ vol×dev²            → weighted variance
+var float band_pvv_hi    = 0.0   // Σ vol×dev² (dev > 0)  → upper variance
+var float band_pvv_lo    = 0.0   // Σ vol×dev² (dev < 0)  → lower variance
+var float band_vol_hi    = 0.0   // Σ vol where dev > 0
+var float band_vol_lo    = 0.0   // Σ vol where dev < 0
+var float band_vwd_num   = 0.0   // Σ vol×dev             → VWAP of deviations
+var array<float> band_devs    = array.new<float>()   // per-bar deviations
+var array<float> band_abs_dev = array.new<float>()   // per-bar |deviation|
+
+// Anchor: midpoint of the two live VWAPs
+float band_anchor = not na(rth_vwap) and not na(sess_vwap_live) ? (rth_vwap + sess_vwap_live) / 2 : na
+
+// Reset at RTH open
+if rth_session and not rth_session[1]
+    band_vol_sum  := 0.0
+    band_pvv_sum  := 0.0
+    band_pvv_hi   := 0.0
+    band_pvv_lo   := 0.0
+    band_vol_hi   := 0.0
+    band_vol_lo   := 0.0
+    band_vwd_num  := 0.0
+    band_devs.clear()
+    band_abs_dev.clear()
+
+// Accumulate each bar inside RTH
+if rth_session and not na(band_anchor)
+    float dev  = vsrc - band_anchor
+    float adev = math.abs(dev)
+    band_vol_sum  += volume
+    band_pvv_sum  += volume * dev * dev
+    band_vwd_num  += volume * dev
+    band_devs.push(dev)
+    band_abs_dev.push(adev)
+    if dev > 0
+        band_pvv_hi += volume * dev * dev
+        band_vol_hi += volume
+    else if dev < 0
+        band_pvv_lo += volume * dev * dev
+        band_vol_lo += volume
+
+// ─── Percentile helper (linear interpolation) ────────────────────────────────
+f_pct(array<float> arr, float p) =>
+    // p in [0,100]
+    float result = na
+    int n = arr.size()
+    if n >= 2
+        sorted = arr.copy()
+        sorted.sort()
+        float idx = p / 100.0 * (n - 1)
+        int   lo  = int(idx)
+        int   hi  = math.min(lo + 1, n - 1)
+        float frac = idx - lo
+        result := sorted.get(lo) * (1 - frac) + sorted.get(hi) * frac
+    result
+
+// ─── Band Level Calculation ───────────────────────────────────────────────────
+// Symmetric stdev
+float b_stdev     = band_vol_sum > 0 ? math.sqrt(band_pvv_sum / band_vol_sum) : na
+float b_1s_hi     = show1s and not na(band_anchor) and not na(b_stdev) ? band_anchor + b_stdev       : na
+float b_1s_lo     = show1s and not na(band_anchor) and not na(b_stdev) ? band_anchor - b_stdev       : na
+float b_2s_hi     = show2s and not na(band_anchor) and not na(b_stdev) ? band_anchor + 2 * b_stdev   : na
+float b_2s_lo     = show2s and not na(band_anchor) and not na(b_stdev) ? band_anchor - 2 * b_stdev   : na
+
+// Asymmetric stdev
+float b_stdev_hi  = band_vol_hi > 0 ? math.sqrt(band_pvv_hi / band_vol_hi) : na
+float b_stdev_lo  = band_vol_lo > 0 ? math.sqrt(band_pvv_lo / band_vol_lo) : na
+float b_asym_hi   = showAsym and not na(band_anchor) and not na(b_stdev_hi) ? band_anchor + b_stdev_hi : na
+float b_asym_lo   = showAsym and not na(band_anchor) and not na(b_stdev_lo) ? band_anchor - b_stdev_lo : na
+
+// MAD (median of absolute deviations)
+float b_mad       = f_median(band_abs_dev)
+float b_mad_hi    = showMAD and not na(band_anchor) and not na(b_mad) ? band_anchor + b_mad : na
+float b_mad_lo    = showMAD and not na(band_anchor) and not na(b_mad) ? band_anchor - b_mad : na
+
+// Percentile bands (offsets added to anchor)
+float b_pct10     = showPct and not na(band_anchor) ? band_anchor + f_pct(band_devs, 10) : na
+float b_pct25     = showPct and not na(band_anchor) ? band_anchor + f_pct(band_devs, 25) : na
+float b_pct75     = showPct and not na(band_anchor) ? band_anchor + f_pct(band_devs, 75) : na
+float b_pct90     = showPct and not na(band_anchor) ? band_anchor + f_pct(band_devs, 90) : na
+
+// VWAP of deviations (volume-weighted mean deviation, offset from anchor)
+float b_vwd_raw   = band_vol_sum > 0 ? band_vwd_num / band_vol_sum : na
+float b_vwd       = showVWD and not na(band_anchor) and not na(b_vwd_raw) ? band_anchor + b_vwd_raw : na
+
+// ─── Live status ──────────────────────────────────────────────────────────────
+bool today_rth_active = not na(rth_vwap)
+bool today_rth_above  = today_rth_active and not na(sess_vwap_live) and rth_vwap > sess_vwap_live
+bool today_bull       = not na(snap_open) and close > snap_open
+
+// ─── Stats Table ──────────────────────────────────────────────────────────────
+if showTable and barstate.islast
+    if not na(_tbl)
+        _tbl.delete()
+
+    // Rows: 0 = coverage info, 1 = spacer/header W/L, 2 subhead, 3-6 W/L rows,
+    //       7 = header retests, 8 subhead, 9-11 count rows,
+    //       12 = header timing, 13 subhead, 14-16 timing rows,
+    //       17 = header hourly, 18 subhead, 19-25 hourly rows  → 26 rows total
+    _tbl := table.new(f_pos(), 3, 26,
+         bgcolor      = color.new(color.black, 0),
+         border_width = 1,
+         border_color = color.new(color.gray, 50),
+         frame_width  = 1,
+         frame_color  = color.new(color.gray, 50))
+
+    // ── Row 0: Coverage info ──────────────────────────────────────────────
+    string cov_txt = ' SESSIONS: ' + str.tostring(stat_total) + ' days  |  max tracked: ' + str.tostring(maxDays)
+    table.cell(_tbl, 0, 0, cov_txt, text_color = color.yellow, text_size = f_size(), bgcolor = color.new(color.black, 0), text_halign = text.align_left, text_font_family = font.family_monospace)
+    table.merge_cells(_tbl, 0, 0, 2, 0)
+
+    // ── Section 1: Win/Loss Stats ─────────────────────────────────────────
+    f_header(1, ' WIN / LOSS')
+    f_subhead(2, 'METRIC', 'VALUE', 'DETAIL')
+
+    string today_pos = today_rth_active ? (today_rth_above ? 'RTH ABOVE' : 'RTH BELOW') : 'AWAITING'
+    string today_dir = today_rth_active ? (today_bull      ? 'BULL'      : 'BEAR')      : '-'
+    f_row(3, 'TODAY', today_pos, today_dir)
+
+    float  wr     = stat_total > 0 ? (stat_wins / stat_total) * 100 : 0.0
+    f_row(4, 'WIN RATE', f_round2(wr) + '%', str.tostring(stat_wins) + '/' + str.tostring(stat_total) + ' days')
+    f_row(5, 'BULL/BEAR', str.tostring(stat_bullish) + 'B / ' + str.tostring(stat_bearish) + 'b', 'confirmed')
+
+    string sk_dir = stat_streak_win ? 'WIN' : 'LOSS'
+    f_row(6, 'STREAK', sk_dir, str.tostring(stat_streak) + (stat_streak == 1 ? ' day' : ' days'))
+
+    // ── Section 2: Retests & Crossovers (counts) ──────────────────────────
+    f_header(7, ' RETESTS & CROSSOVERS')
+    f_subhead(8, 'METRIC', 'MEAN/DAY', 'MED/DAY')
+    f_row(9,  'RTH RETEST',  na(rth_ret_mean)  ? 'n/a' : f_round2(rth_ret_mean),  na(rth_ret_med)  ? 'n/a' : f_round2(rth_ret_med))
+    f_row(10, 'SESS RETEST', na(sess_ret_mean) ? 'n/a' : f_round2(sess_ret_mean), na(sess_ret_med) ? 'n/a' : f_round2(sess_ret_med))
+    f_row(11, 'CROSSOVERS',  na(cross_mean)    ? 'n/a' : f_round2(cross_mean),    na(cross_med)    ? 'n/a' : f_round2(cross_med))
+
+    // ── Section 3: Event Timing ───────────────────────────────────────────
+    f_header(12, ' EVENT TIMING (EST)')
+    f_subhead(13, 'EVENT', 'AVG TIME', 'MED / PEAK HR')
+    f_row(14, 'RTH RETEST',
+         na(rth_ret_time_mean) ? 'n/a' : f_hhmm(rth_ret_time_mean),
+         (na(rth_ret_time_med) ? 'n/a' : f_hhmm(rth_ret_time_med)) + ' / ' + f_bucket_label(pk_rth_ret) + 'h')
+    f_row(15, 'SESS RETEST',
+         na(sess_ret_time_mean) ? 'n/a' : f_hhmm(sess_ret_time_mean),
+         (na(sess_ret_time_med) ? 'n/a' : f_hhmm(sess_ret_time_med)) + ' / ' + f_bucket_label(pk_sess_ret) + 'h')
+    f_row(16, 'CROSSOVER',
+         na(cross_time_mean) ? 'n/a' : f_hhmm(cross_time_mean),
+         (na(cross_time_med) ? 'n/a' : f_hhmm(cross_time_med)) + ' / ' + f_bucket_label(pk_cross) + 'h')
+
+    // ── Section 4: Hourly Breakdown ───────────────────────────────────────
+    f_header(17, ' HOURLY EVENT COUNT')
+    f_subhead(18, 'HOUR', 'RTH RET', 'SESS RET / CROSS')
+    for i = 0 to 6
+        f_row(19 + i,
+             f_bucket_label(i) + ':00',
+             str.tostring(bucket_rth_ret.get(i)),
+             str.tostring(bucket_sess_ret.get(i)) + ' / ' + str.tostring(bucket_cross.get(i)))
+
+// ─── Band Plots ───────────────────────────────────────────────────────────────
+plot(showAnchor ? band_anchor : na, title = 'Anchor (midpoint)',  color = anchorCol, linewidth = 1, style = plot.style_linebr)
+
+plot(b_1s_hi,   title = '+1σ',            color = col1s,    linewidth = 1, style = plot.style_linebr)
+plot(b_1s_lo,   title = '-1σ',            color = col1s,    linewidth = 1, style = plot.style_linebr)
+plot(b_2s_hi,   title = '+2σ',            color = col2s,    linewidth = 1, style = plot.style_linebr)
+plot(b_2s_lo,   title = '-2σ',            color = col2s,    linewidth = 1, style = plot.style_linebr)
+
+plot(b_asym_hi, title = 'Asym σ upper',   color = colAsymHi, linewidth = 1, style = plot.style_linebr)
+plot(b_asym_lo, title = 'Asym σ lower',   color = colAsymLo, linewidth = 1, style = plot.style_linebr)
+
+plot(b_mad_hi,  title = 'MAD upper',      color = colMAD,   linewidth = 1, style = plot.style_linebr)
+plot(b_mad_lo,  title = 'MAD lower',      color = colMAD,   linewidth = 1, style = plot.style_linebr)
+
+plot(b_pct90,   title = '90th pct',       color = colPct90, linewidth = 1, style = plot.style_linebr)
+plot(b_pct75,   title = '75th pct',       color = colPct75, linewidth = 1, style = plot.style_linebr)
+plot(b_pct25,   title = '25th pct',       color = colPct25, linewidth = 1, style = plot.style_linebr)
+plot(b_pct10,   title = '10th pct',       color = colPct10, linewidth = 1, style = plot.style_linebr)
+
+plot(b_vwd,     title = 'VWAP of devs',   color = colVWD,   linewidth = 1, style = plot.style_linebr)
+
+// ─── Plots ────────────────────────────────────────────────────────────────────
+bgcolor(not na(session) and highlight ? hCol : na)
+plot(showRTH and rth_session ? rth_vwap : na, title = "RTH VWAP", color = rthCol, linewidth = rthW, style = plot.style_linebr)

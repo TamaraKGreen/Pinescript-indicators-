@@ -1,0 +1,366 @@
+//@version=5
+indicator(title="Deviation based reversion with Stats", shorttitle='Reversion', overlay=true)
+
+// === BULLISH INPUTS === //
+// Bullish General Settings
+bull_length = input.int(20, title="Lookback Period", minval=1, group="Bullish Signal Settings", inline="bull_general")
+bull_trendFilter = input.bool(true, title="Enable Trend Filter", group="Bullish Signal Settings", inline="bull_general")
+bull_cooldownBars = input.int(10, title="Cooldown Period (Bars)", minval=0, group="Bullish Signal Settings", inline="bull_general")
+
+// Bullish Deviation Settings
+bull_deviation_type = input.string("MAD", title="Deviation Measure", options=["MAD", "Standard Deviation", "ATR", "Z-Score", "IQR", "Mean AD"], group="Bullish Signal Settings", inline="bull_deviation")
+bull_madMult = input.float(2.7, title="Deviation Multiplier", minval=0.1, step=0.1, group="Bullish Signal Settings", inline="bull_deviation")
+
+// Bullish Volume Settings
+bull_volLength = input.int(14, title="Volume Avg Period", minval=1, group="Bullish Signal Settings", inline="bull_volume")
+bull_volThreshold = input.float(1.7, title="Volume Spike Threshold", minval=1.0, step=0.1, group="Bullish Signal Settings", inline="bull_volume")
+
+// Bullish Performance Settings
+bull_lookForwardBars = input.int(7, title="Look-Forward Bars", minval=1, group="Bullish Signal Settings", inline="bull_performance")
+bull_successThreshold = input.float(20.0, title="Success Threshold", minval=0.1, step=0.1, group="Bullish Signal Settings", inline="bull_performance")
+bull_failureThreshold = input.float(20.0, title="Failure Threshold", minval=0.1, step=0.1, group="Bullish Signal Settings", inline="bull_performance")
+bull_successThresholdType = input.string("Points", title="Threshold Type", options=["Percent", "Points"], group="Bullish Signal Settings", inline="bull_performance")
+
+// Bullish Visualization
+bullish_conviction_color = input.color(color.blue, title="Conviction Arrow Color", group="Bullish Signal Settings")
+
+// Bullish Moving Average Settings
+bull_ma_type = input.string(title="MA Type", defval="T3", options=["SMA", "EMA", "WMA", "RMA", "HMA", "DEMA", "TEMA", "VWMA", "ALMA", "TVMA", "T3", "ZLEMA", "KAMA"], group="Bullish MA Settings")
+bull_alma_offset = input.float(6, title="ALMA Offset", minval=0, step=0.1, group="Bullish MA Settings", inline="bull_alma")
+bull_alma_sigma = input.float(0.85, title="ALMA Sigma", minval=0, step=0.1, group="Bullish MA Settings", inline="bull_alma")
+bull_tvma_length = input.int(3, title="TVMA Length (>1)", minval=2, group="Bullish MA Settings")
+bull_t3_factor = input.float(0.7, title="T3 Factor", minval=0, maxval=1, step=0.1, group="Bullish MA Settings")
+bull_kama_fast_len = input.int(2, title="KAMA Fast EMA Length", minval=1, group="Bullish MA Settings", inline="bull_kama")
+bull_kama_slow_len = input.int(30, title="KAMA Slow EMA Length", minval=1, group="Bullish MA Settings", inline="bull_kama")
+
+// === BEARISH INPUTS === //
+// Bearish General Settings
+bear_length = input.int(8, title="Lookback Period", minval=1, group="Bearish Signal Settings", inline="bear_general")
+bear_trendFilter = input.bool(true, title="Enable Trend Filter", group="Bearish Signal Settings", inline="bear_general")
+bear_cooldownBars = input.int(10, title="Cooldown Period (Bars)", minval=0, group="Bearish Signal Settings", inline="bear_general")
+
+// Bearish Deviation Settings
+bear_deviation_type = input.string("MAD", title="Deviation Measure", options=["MAD", "Standard Deviation", "ATR", "Z-Score", "IQR", "Mean AD"], group="Bearish Signal Settings", inline="bear_deviation")
+bear_madMult = input.float(2.0, title="Deviation Multiplier", minval=0.1, step=0.1, group="Bearish Signal Settings", inline="bear_deviation")
+
+// Bearish Volume Settings
+bear_volLength = input.int(14, title="Volume Avg Period", minval=1, group="Bearish Signal Settings", inline="bear_volume")
+bear_volThreshold = input.float(1.5, title="Volume Spike Threshold", minval=1.0, step=0.1, group="Bearish Signal Settings", inline="bear_volume")
+
+// Bearish Performance Settings
+bear_lookForwardBars = input.int(5, title="Look-Forward Bars", minval=1, group="Bearish Signal Settings", inline="bear_performance")
+bear_successThreshold = input.float(20.0, title="Success Threshold", minval=0.1, step=0.1, group="Bearish Signal Settings", inline="bear_performance")
+bear_failureThreshold = input.float(20.0, title="Failure Threshold", minval=0.1, step=0.1, group="Bearish Signal Settings", inline="bear_performance")
+bear_successThresholdType = input.string("Points", title="Threshold Type", options=["Percent", "Points"], group="Bearish Signal Settings", inline="bear_performance")
+
+// Bearish Visualization
+bearish_conviction_color = input.color(color.purple, title="Convexity Arrow Color", group="Bearish Signal Settings")
+
+// Bearish Moving Average Settings
+bear_ma_type = input.string(title="MA Type", defval="EMA", options=["SMA", "EMA", "WMA", "RMA", "HMA", "DEMA", "TEMA", "VWMA", "ALMA", "TVMA", "T3", "ZLEMA", "KAMA"], group="Bearish MA Settings")
+bear_alma_offset = input.float(6, title="ALMA Offset", minval=0, step=0.1, group="Bearish MA Settings", inline="bear_alma")
+bear_alma_sigma = input.float(0.85, title="ALMA Sigma", minval=0, step=0.1, group="Bearish MA Settings", inline="bear_alma")
+bear_tvma_length = input.int(3, title="TVMA Length (>1)", minval=2, group="Bearish MA Settings")
+bear_t3_factor = input.float(0.7, title="T3 Factor", minval=0, maxval=1, step=0.1, group="Bearish MA Settings")
+bear_kama_fast_len = input.int(2, title="KAMA Fast EMA Length", minval=1, group="Bearish MA Settings", inline="bear_kama")
+bear_kama_slow_len = input.int(30, title="KAMA Slow EMA Length", minval=1, group="Bearish MA Settings", inline="bear_kama")
+
+// === MOVING AVERAGE CALCULATIONS (UNCHANGED) === //
+gd(src, len, factor) =>
+    ta.ema(src, len) * (1 + factor) - ta.ema(ta.ema(src, len), len) * factor
+
+ma(type, src, len, alma_offset, alma_sigma, tvma_length, t3_factor, kama_fast_len, kama_slow_len) =>
+    var float result = na
+    if type == "SMA"
+        result := ta.sma(src, len)
+    else if type == "EMA"
+        result := ta.ema(src, len)
+    else if type == "WMA"
+        result := ta.wma(src, len)
+    else if type == "RMA"
+        result := ta.rma(src, len)
+    else if type == "HMA"
+        result := ta.hma(src, len)
+    else if type == "DEMA"
+        e = ta.ema(src, len)
+        result := 2 * e - ta.ema(e, len)
+    else if type == "TEMA"
+        e = ta.ema(src, len)
+        result := 3 * (e - ta.ema(e, len)) + ta.ema(ta.ema(e, len), len)
+    else if type == "VWMA"
+        result := ta.vwma(src, len)
+    else if type == "ALMA"
+        result := ta.alma(src, len, alma_offset, alma_sigma)
+    else if type == "TVMA"
+        alpha = 2.0 / (tvma_length + 1)
+        alphaSum = 0.0
+        vmaSum = 0.0
+        for i = 0 to len - 1 by 1
+            alphaSum += math.pow(alpha, i)
+            vmaSum += src[len - i - 1] * math.pow(alpha, i)
+        result := alphaSum != 0 ? vmaSum / alphaSum : na
+    else if type == "T3"
+        result := gd(gd(gd(src, len, t3_factor), len, t3_factor), len, t3_factor)
+    else if type == "ZLEMA"
+        lag = math.floor((len - 1) / 2)
+        result := ta.ema(src + src - src[lag], len)
+    else if type == "KAMA"
+        mom_kauf = math.abs(ta.change(src))
+        volatility_kauf = math.sum(math.abs(ta.change(src)), len)
+        er_kauf = volatility_kauf != 0 ? mom_kauf / volatility_kauf : 0
+        fastAlpha_kauf = 2 / (kama_fast_len + 1)
+        slowAlpha_kauf = 2 / (kama_slow_len + 1)
+        alpha_kauf = math.pow(er_kauf * (fastAlpha_kauf - slowAlpha_kauf) + slowAlpha_kauf, 2)
+        result := alpha_kauf * src + (1 - alpha_kauf) * nz(result[1], src)
+    result
+
+// === PRICE & VOLUME CALCULATIONS === //
+price = close
+bull_sma = ma(bull_ma_type, price, bull_length, bull_alma_offset, bull_alma_sigma, bull_tvma_length, bull_t3_factor, bull_kama_fast_len, bull_kama_slow_len)
+bear_sma = ma(bear_ma_type, price, bear_length, bear_alma_offset, bear_alma_sigma, bear_tvma_length, bear_t3_factor, bear_kama_fast_len, bear_kama_slow_len)
+linreg = ta.linreg(price, bull_length, 0)
+bull_volSMA = ta.sma(volume, bull_volLength)
+bear_volSMA = ta.sma(volume, bear_volLength)
+bull_volScore = volume / bull_volSMA
+bear_volScore = volume / bear_volSMA
+
+// === DEVIATION CALCULATIONS === //
+calc_deviation(type, src, length, linreg) =>
+    var float deviation = na
+    raw_dev = src - linreg
+    if type == "MAD"
+        medianPrice = ta.median(src, length)
+        absDev = math.abs(src - medianPrice)
+        mad = ta.median(absDev, length)
+        deviation := mad > 0 ? raw_dev / mad : 0
+    else if type == "Standard Deviation"
+        std = ta.stdev(src, length)
+        deviation := std > 0 ? raw_dev / std : 0
+    else if type == "ATR"
+        atr = ta.atr(length)
+        deviation := atr > 0 ? raw_dev / atr : 0
+    else if type == "Z-Score"
+        mean = ta.sma(src, length)
+        std = ta.stdev(src, length)
+        deviation := std > 0 ? (src - mean) / std : 0
+    else if type == "IQR"
+        q1 = ta.percentile_nearest_rank(src, length, 25)
+        q3 = ta.percentile_nearest_rank(src, length, 75)
+        iqr = q3 - q1
+        deviation := iqr > 0 ? raw_dev / iqr : 0
+    else if type == "Mean AD"
+        mean = ta.sma(src, length)
+        mean_ad = ta.sma(math.abs(src - mean), length)
+        deviation := mean_ad > 0 ? raw_dev / mean_ad : 0
+    deviation
+
+// Calculate deviations for bullish and bearish signals
+bull_deviation = calc_deviation(bull_deviation_type, price, bull_length, linreg)
+bear_deviation = calc_deviation(bear_deviation_type, price, bear_length, linreg)
+
+// === TREND FILTER === //
+bull_smaSlope = ta.change(bull_sma, 5)
+bear_smaSlope = ta.change(bear_sma, 5)
+isUptrend = bull_trendFilter ? price > bull_sma and bull_smaSlope > 0 : true
+isDowntrend = bear_trendFilter ? price < bear_sma and bear_smaSlope < 0 : true
+
+// === SIGNAL LOGIC === //
+rawBullish = price > linreg and bull_deviation > bull_madMult and bull_volScore > bull_volThreshold and isUptrend
+rawBearish = price < linreg and bear_deviation < -bear_madMult and bear_volScore > bear_volThreshold and isDowntrend
+
+// === COOLDOWN FILTER === //
+var int lastBullish = na
+var int lastBearish = na
+newBullish = rawBullish and (na(lastBullish) or bar_index - lastBullish > bull_cooldownBars)
+newBearish = rawBearish and (na(lastBearish) or bar_index - lastBearish > bear_cooldownBars)
+if newBullish
+    lastBullish := bar_index
+if newBearish
+    lastBearish := bar_index
+
+// === STATISTICS TRACKING (UNCHANGED) === //
+var int bullSignalCount = 0
+var int bearSignalCount = 0
+var float bullPriceChangeSum = 0.0
+var float bearPriceChangeSum = 0.0
+var int bullSuccessCount = 0
+var int bearSuccessCount = 0
+var int bullFailureCount = 0
+var int bearFailureCount = 0
+var float bullBarsToSuccessSum = 0.0
+var float bearBarsToSuccessSum = 0.0
+var float bullMAESum = 0.0
+var float bearMAESum = 0.0
+var float bullMFESum = 0.0
+var float bearMFESum = 0.0
+var float bullSignalStrengthSum = 0.0
+var float bearSignalStrengthSum = 0.0
+var float lastBullPrice = na
+var float lastBearPrice = na
+var int lastBullBar = na
+var int lastBearBar = na
+var float lastBullDev = na
+var float lastBearDev = na
+var bool bullIsSuccess = false
+var bool bearIsSuccess = false
+var bool bullSuccessRecorded = false
+var bool bearSuccessRecorded = false
+var float bullCurrentMAE = 0.0
+var float bearCurrentMAE = 0.0
+var float bullCurrentMFE = 0.0
+var float bearCurrentMFE = 0.0
+
+// Track price and deviation at signal
+if newBullish
+    bullSignalCount := bullSignalCount + 1
+    lastBullPrice := price
+    lastBullBar := bar_index
+    lastBullDev := bull_deviation
+    bullSignalStrengthSum := bullSignalStrengthSum + math.abs(bull_deviation)
+    bullIsSuccess := false
+    bullSuccessRecorded := false
+    bullCurrentMAE := 0.0
+    bullCurrentMFE := 0.0
+if newBearish
+    bearSignalCount := bearSignalCount + 1
+    lastBearPrice := price
+    lastBearBar := bar_index
+    lastBearDev := bear_deviation
+    bearSignalStrengthSum := bearSignalStrengthSum + math.abs(bear_deviation)
+    bearIsSuccess := false
+    bearSuccessRecorded := false
+    bearCurrentMAE := 0.0
+    bearCurrentMFE := 0.0
+
+// Calculate price change, success, failure, MAE, MFE, and bars to success
+if not na(lastBullBar) and bar_index >= lastBullBar and bar_index <= lastBullBar + bull_lookForwardBars
+    float priceChange = (price - lastBullPrice) / lastBullPrice * 100
+    float priceChangePoints = price - lastBullPrice
+    float mae = lastBullPrice - low
+    float mfe = high - lastBullPrice
+    bullCurrentMAE := math.max(bullCurrentMAE, mae)
+    bullCurrentMFE := math.max(bullCurrentMFE, mfe)
+    if not bullIsSuccess and not bullSuccessRecorded
+        bool isSuccess = bull_successThresholdType == "Percent" ? priceChange >= bull_successThreshold : priceChangePoints >= bull_successThreshold
+        if isSuccess
+            bullIsSuccess := true
+            int barsSinceSignal = bar_index - lastBullBar
+            bullBarsToSuccessSum := bullBarsToSuccessSum + barsSinceSignal
+            bullSuccessRecorded := true
+    if bar_index == lastBullBar + bull_lookForwardBars
+        bullPriceChangeSum := bullPriceChangeSum + priceChange
+        bullMAESum := bullMAESum + bullCurrentMAE
+        bullMFESum := bullMFESum + bullCurrentMFE
+        bool isSuccess = bull_successThresholdType == "Percent" ? priceChange >= bull_successThreshold : priceChangePoints >= bull_successThreshold
+        bool isFailure = bull_successThresholdType == "Percent" ? priceChange <= -bull_failureThreshold : priceChangePoints <= -bull_failureThreshold
+        bullSuccessCount := bullSuccessCount + (isSuccess ? 1 : 0)
+        bullFailureCount := bullFailureCount + (isFailure ? 1 : 0)
+if not na(lastBearBar) and bar_index >= lastBearBar and bar_index <= lastBearBar + bear_lookForwardBars
+    float priceChange = (lastBearPrice - price) / lastBearPrice * 100
+    float priceChangePoints = lastBearPrice - price
+    float mae = high - lastBearPrice
+    float mfe = lastBearPrice - low
+    bearCurrentMAE := math.max(bearCurrentMAE, mae)
+    bearCurrentMFE := math.max(bearCurrentMFE, mfe)
+    if not bearIsSuccess and not bearSuccessRecorded
+        bool isSuccess = bear_successThresholdType == "Percent" ? priceChange >= bear_successThreshold : priceChangePoints >= bear_successThreshold
+        if isSuccess
+            bearIsSuccess := true
+            int barsSinceSignal = bar_index - lastBearBar
+            bearBarsToSuccessSum := bearBarsToSuccessSum + barsSinceSignal
+            bearSuccessRecorded := true
+    if bar_index == lastBearBar + bear_lookForwardBars
+        bearPriceChangeSum := bearPriceChangeSum + priceChange
+        bearMAESum := bearMAESum + bearCurrentMAE
+        bearMFESum := bearMFESum + bearCurrentMFE
+        bool isSuccess = bear_successThresholdType == "Percent" ? priceChange >= bear_successThreshold : priceChangePoints >= bear_successThreshold
+        bool isFailure = bear_successThresholdType == "Percent" ? priceChange <= -bear_failureThreshold : priceChangePoints <= -bear_failureThreshold
+        bearSuccessCount := bearSuccessCount + (isSuccess ? 1 : 0)
+        bearFailureCount := bearFailureCount + (isFailure ? 1 : 0)
+
+// === TABLE FOR STATISTICS (UNCHANGED) === //
+var table statsTable = na
+if na(statsTable)
+    statsTable := table.new(position.top_right, 20, 20, border_width=1, bgcolor=color.white)
+
+if barstate.isconfirmed
+    table.cell(statsTable, 0, 0, "Metric", bgcolor=color.black, text_color=color.white, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 0, "Value", bgcolor=color.black, text_color=color.white, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 1, "Bullish Signals", bgcolor=color.black, text_color=color.white, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 1, str.tostring(bullSignalCount), bgcolor=color.black, text_color=color.white, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 2, "Bull Success Rate", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 2, bullSignalCount > 0 ? str.tostring(math.round(bullSuccessCount / bullSignalCount * 100, 1)) + "%" : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 3, "Bull Failure Rate", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 3, bullSignalCount > 0 ? str.tostring(math.round(bullFailureCount / bullSignalCount * 100, 1)) + "%" : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 4, "Bull Avg Price Change", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 4, bullSignalCount > 0 ? str.tostring(math.round(bullPriceChangeSum / bullSignalCount, 2)) + "%" : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 5, "Bull Avg Bars to Success", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 5, bullSuccessCount > 0 ? str.tostring(math.round(bullBarsToSuccessSum / bullSuccessCount, 1)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 6, "Bull Avg MAE (Points)", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 6, bullSignalCount > 0 ? str.tostring(math.round(bullMAESum / bullSignalCount, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 7, "Bull Avg MFE (Points)", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 7, bullSignalCount > 0 ? str.tostring(math.round(bullMFESum / bullSignalCount, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 8, "Bull Win/Loss Ratio", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 8, str.tostring(math.round(bullSuccessCount / math.max(bullFailureCount, 1), 2)), bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 9, "Bull Avg Signal Strength", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 9, bullSignalCount > 0 ? str.tostring(math.round(bullSignalStrengthSum / bullSignalCount, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 10, "Bearish Signals", bgcolor=color.black, text_color=color.white, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 10, str.tostring(bearSignalCount), bgcolor=color.black, text_color=color.white, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 11, "Bear Success Rate", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 11, bearSignalCount > 0 ? str.tostring(math.round(bearSuccessCount / bearSignalCount * 100, 1)) + "%" : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 12, "Bear Failure Rate", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 12, bearSignalCount > 0 ? str.tostring(math.round(bearFailureCount / bearSignalCount * 100, 1)) + "%" : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 13, "Bear Avg Price Change", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 13, bearSignalCount > 0 ? str.tostring(math.round(bearPriceChangeSum / bearSignalCount, 2)) + "%" : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 14, "Bear Avg Bars to Success", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 14, bearSuccessCount > 0 ? str.tostring(math.round(bearBarsToSuccessSum / bearSuccessCount, 1)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 15, "Bear Avg MAE (Points)", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 15, bearSignalCount > 0 ? str.tostring(math.round(bearMAESum / bearSignalCount, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 16, "Bear Avg MFE (Points)", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 16, bearSignalCount > 0 ? str.tostring(math.round(bearMFESum / bearSignalCount, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 17, "Bear Win/Loss Ratio", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 17, str.tostring(math.round(bearSuccessCount / math.max(bearFailureCount, 1), 2)), bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 18, "Bear Avg Signal Strength", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 18, bearSignalCount > 0 ? str.tostring(math.round(bearSignalStrengthSum / bearSignalCount, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 0, 19, "Signal Frequency (per 100 bars)", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 19, bar_index > 0 ? str.tostring(math.round((bullSignalCount + bearSignalCount) / bar_index * 100, 2)) : "N/A", bgcolor=color.white, text_color=color.black, text_size=size.small, text_font_family=font.family_monospace)
+
+// === PLOT ARROWS === //
+plotshape(newBullish, title="Bullish Conviction Arrow", location=location.belowbar, color=bullish_conviction_color, style=shape.triangleup, size=size.tiny, text="Buy", textcolor=bullish_conviction_color)
+plotshape(newBearish, title="Bearish Conviction Arrow", location=location.abovebar, color=bearish_conviction_color, style=shape.triangledown, size=size.tiny, text="Short", textcolor=bearish_conviction_color)
+
+// === OPTIONAL DEBUG PLOTS (UNCHANGED) === //
+bull_ma_color = switch bull_ma_type
+    "SMA" => color.gray
+    "EMA" => color.blue
+    "WMA" => color.green
+    "RMA" => color.red
+    "HMA" => color.purple
+    "DEMA" => color.orange
+    "TEMA" => color.yellow
+    "VWMA" => color.teal
+    "ALMA" => color.fuchsia
+    "TVMA" => color.lime
+    "T3" => color.aqua
+    "ZLEMA" => color.navy
+    "KAMA" => color.maroon
+    => color.gray
+
+bear_ma_color = switch bear_ma_type
+    "SMA" => color.new(color.gray, 50)
+    "EMA" => color.new(color.blue, 50)
+    "WMA" => color.new(color.green, 50)
+    "RMA" => color.new(color.red, 50)
+    "HMA" => color.new(color.purple, 50)
+    "DEMA" => color.new(color.orange, 50)
+    "TEMA" => color.new(color.yellow, 50)
+    "VWMA" => color.new(color.teal, 50)
+    "ALMA" => color.new(color.fuchsia, 50)
+    "TVMA" => color.new(color.lime, 50)
+    "T3" => color.new(color.aqua, 50)
+    "ZLEMA" => color.new(color.navy, 50)
+    "KAMA" => color.new(color.maroon, 50)
+    => color.new(color.gray, 50)
+
+plot(bull_sma, title="Bullish MA", color=bull_ma_color, linewidth=1, style=plot.style_stepline)
+plot(bear_sma, title="Bearish MA", color=bear_ma_color, linewidth=1, style=plot.style_stepline)

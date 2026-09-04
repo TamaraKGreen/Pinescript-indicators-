@@ -1,0 +1,366 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Weekly IB", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500, max_bars_back = 5000)
+
+//Beginning of the day every day
+bod=input(true, title='Show beginning of the day', group = 'Day of week display')
+t5 = time(timeframe.period, "1700-1701:1234567","America/New_York")
+bgcolor(bod and t5 ? color.new(color.silver, 80) : na)
+
+// Show stats option
+show_stats = input(true, "Show statistics table", group="Hit Tracking")
+
+
+//WHite for black background
+showDOW = input(false, title='Dark background')
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.sunday : false, text='Beginning\nof week\nSunday', char = ".", color=color.new(color.white, 20), location=location.bottom, offset=-10)
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.monday : false, text='Monday', char = ".", color=color.new(color.white, 50), location=location.bottom, offset=-10)
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.tuesday : false, text='Tuesday', char = ".", color=color.new(color.white, 50), location=location.bottom, offset=-10)
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.wednesday : false, text='Wednesday', char = ".", color=color.new(color.white, 50), location=location.bottom, offset=-10)
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.thursday : false, text='Thursday', char = ".", color=color.new(color.white, 50), location=location.bottom, offset=-10)
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.friday : false, text='Friday', char = ".", color=color.new(color.white, 50), location=location.bottom, offset=-10)
+plotchar(showDOW ? hour == 9 and minute == 0 and dayofweek == dayofweek.saturday : false, text='Saturday', char = ".", color=color.new(color.white, 50), location=location.bottom, offset=-10)
+
+//Black for white background
+showDOWB = input(true, title='Light background')
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.sunday : false, text='Beginning\nof week\nSunday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.monday : false, text='Monday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.tuesday : false, text='Tuesday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.wednesday : false, text='Wednesday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.thursday : false, text='Thursday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.friday : false, text='Friday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+plotchar(showDOWB ? hour == 9 and minute == 0 and dayofweek == dayofweek.saturday : false, text='Saturday', char = ".", color=color.rgb(45, 46, 48, 11), location=location.bottom, offset=-10)
+
+
+// Session Configuration
+session  = input.session("2200-2100", title="Trading Session", group = 'Weekly IB settings')
+timeZone = input.string("UTC", title="Time Zone",group = 'Weekly IB settings')
+monSession = input.bool(true, title="Mon ", group="Weekly IB settings", inline="d1")
+tueSession = input.bool(true, title="Tue ", group="Weekly IB settings", inline="d1")
+
+// Function to get session low
+SessionLow(sessionTime, sessionTimeZone=syminfo.timezone) =>
+    insideSession = not na(time(timeframe.period, sessionTime, sessionTimeZone))
+    var float sessionLowPrice = na
+    if insideSession and not insideSession[1]
+        sessionLowPrice := low
+    else if insideSession
+        sessionLowPrice := math.min(sessionLowPrice, low)
+    sessionLowPrice
+
+// Function to get session high
+SessionHigh(sessionTime, sessionTimeZone=syminfo.timezone) =>
+    insideSession = not na(time(timeframe.period, sessionTime, sessionTimeZone))
+    var float sessionHighPrice = na
+    if insideSession and not insideSession[1]
+        sessionHighPrice := high
+    else if insideSession
+        sessionHighPrice := math.max(sessionHighPrice, high)
+    sessionHighPrice
+
+// Function to check if a bar is inside the session
+InSession(sessionTimes, sessionTimeZone=syminfo.timezone) =>
+    not na(time(timeframe.period, sessionTimes, sessionTimeZone))
+
+// Make a string representing the session days
+sessionDays = ""
+if monSession
+    sessionDays += "2"
+if tueSession
+    sessionDays += "3"
+
+// Construct the session string by combining time and days
+tradingSession = session + ":" + sessionDays
+
+// Fetch the session low and high
+sessLow = SessionLow(tradingSession, timeZone)
+sessHigh = SessionHigh(tradingSession, timeZone)
+
+// Check if we are currently in the session
+inSession = InSession(tradingSession, timeZone)
+
+// If we are in session, set the plot value to `na`, else plot the session low and high
+plotLow = inSession ? na : sessLow
+plotHigh = inSession ? na : sessHigh
+
+// Function to calculate the midpoint (50% Fibonacci level)
+get_fibonacci_midpoint(high_price, low_price) =>
+    (plotHigh + plotLow) / 2
+
+// Calculate 50% Fibonacci levels for each session
+midpoint = get_fibonacci_midpoint(plotHigh, plotLow)
+
+ib_range = plotHigh - plotLow
+
+
+// Plot the session low, high & midpoint only after the session closes
+plot(plotLow, color=color.rgb(177, 5, 5), title="Weekly IB Low", style=plot.style_steplinebr, linewidth = 2)
+plot(plotHigh, color=color.rgb(4, 131, 93), title="Weekly IB High", style=plot.style_steplinebr, linewidth = 2)
+plot(midpoint, color=color.rgb(79, 11, 189), title="Weekly IB 50%", style=plot.style_cross, linewidth = 1)
+
+// Calculate measured moves
+
+fib_levels = input(true, 'Show fib retracements', group="Fib settings") 
+fib1 = input.float(0.3, 'Fib retracement level 1', group="Fib settings")
+fib2 = input.float(0.7, 'Fib retracement level 1', group="Fib settings")
+
+// Fibonacci Retracement Levels
+
+fib_214 = plotHigh - fib1 * ib_range
+fib_293 = plotHigh - fib2 * ib_range
+
+// Plot the Fibonacci levels
+plot(fib_levels ? fib_214 : na, color=color.rgb(4, 50, 201), title="Fib 21.4%", linewidth=1, style=plot.style_linebr)
+plot(fib_levels ? fib_293 : na, color=color.rgb(4, 50, 201), title="Fib 29.3%", linewidth=1, style=plot.style_linebr)
+
+// Stats
+
+// Hit tracking arrays - adding fib levels
+var float[] high_hits_sun = array.new_float(0)
+var float[] high_hits_mon = array.new_float(0)
+var float[] high_hits_tue = array.new_float(0)
+var float[] high_hits_wed = array.new_float(0)
+var float[] high_hits_thu = array.new_float(0)
+var float[] high_hits_fri = array.new_float(0)
+var float[] high_hits_sat = array.new_float(0)
+
+var float[] low_hits_sun = array.new_float(0)
+var float[] low_hits_mon = array.new_float(0)
+var float[] low_hits_tue = array.new_float(0)
+var float[] low_hits_wed = array.new_float(0)
+var float[] low_hits_thu = array.new_float(0)
+var float[] low_hits_fri = array.new_float(0)
+var float[] low_hits_sat = array.new_float(0)
+
+var float[] mid_hits_sun = array.new_float(0)
+var float[] mid_hits_mon = array.new_float(0)
+var float[] mid_hits_tue = array.new_float(0)
+var float[] mid_hits_wed = array.new_float(0)
+var float[] mid_hits_thu = array.new_float(0)
+var float[] mid_hits_fri = array.new_float(0)
+var float[] mid_hits_sat = array.new_float(0)
+
+var float[] fib1_hits_sun = array.new_float(0)
+var float[] fib1_hits_mon = array.new_float(0)
+var float[] fib1_hits_tue = array.new_float(0)
+var float[] fib1_hits_wed = array.new_float(0)
+var float[] fib1_hits_thu = array.new_float(0)
+var float[] fib1_hits_fri = array.new_float(0)
+var float[] fib1_hits_sat = array.new_float(0)
+
+var float[] fib2_hits_sun = array.new_float(0)
+var float[] fib2_hits_mon = array.new_float(0)
+var float[] fib2_hits_tue = array.new_float(0)
+var float[] fib2_hits_wed = array.new_float(0)
+var float[] fib2_hits_thu = array.new_float(0)
+var float[] fib2_hits_fri = array.new_float(0)
+var float[] fib2_hits_sat = array.new_float(0)
+
+// Function to check if price hits a level
+hit_level(level) =>
+    high >= level and low <= level
+
+// Track hits
+new_day = dayofweek != dayofweek[1]
+if new_day
+    array.push(high_hits_sun, 0)
+    array.push(high_hits_mon, 0)
+    array.push(high_hits_tue, 0)
+    array.push(high_hits_wed, 0)
+    array.push(high_hits_thu, 0)
+    array.push(high_hits_fri, 0)
+    array.push(high_hits_sat, 0)
+    array.push(low_hits_sun, 0)
+    array.push(low_hits_mon, 0)
+    array.push(low_hits_tue, 0)
+    array.push(low_hits_wed, 0)
+    array.push(low_hits_thu, 0)
+    array.push(low_hits_fri, 0)
+    array.push(low_hits_sat, 0)
+    array.push(mid_hits_sun, 0)
+    array.push(mid_hits_mon, 0)
+    array.push(mid_hits_tue, 0)
+    array.push(mid_hits_wed, 0)
+    array.push(mid_hits_thu, 0)
+    array.push(mid_hits_fri, 0)
+    array.push(mid_hits_sat, 0)
+    array.push(fib1_hits_sun, 0)
+    array.push(fib1_hits_mon, 0)
+    array.push(fib1_hits_tue, 0)
+    array.push(fib1_hits_wed, 0)
+    array.push(fib1_hits_thu, 0)
+    array.push(fib1_hits_fri, 0)
+    array.push(fib1_hits_sat, 0)
+    array.push(fib2_hits_sun, 0)
+    array.push(fib2_hits_mon, 0)
+    array.push(fib2_hits_tue, 0)
+    array.push(fib2_hits_wed, 0)
+    array.push(fib2_hits_thu, 0)
+    array.push(fib2_hits_fri, 0)
+    array.push(fib2_hits_sat, 0)
+
+// Record hits for current day
+if hit_level(plotHigh)
+    switch dayofweek
+        dayofweek.sunday => array.set(high_hits_sun, array.size(high_hits_sun)-1, array.get(high_hits_sun, array.size(high_hits_sun)-1) + 1)
+        dayofweek.monday => array.set(high_hits_mon, array.size(high_hits_mon)-1, array.get(high_hits_mon, array.size(high_hits_mon)-1) + 1)
+        dayofweek.tuesday => array.set(high_hits_tue, array.size(high_hits_tue)-1, array.get(high_hits_tue, array.size(high_hits_tue)-1) + 1)
+        dayofweek.wednesday => array.set(high_hits_wed, array.size(high_hits_wed)-1, array.get(high_hits_wed, array.size(high_hits_wed)-1) + 1)
+        dayofweek.thursday => array.set(high_hits_thu, array.size(high_hits_thu)-1, array.get(high_hits_thu, array.size(high_hits_thu)-1) + 1)
+        dayofweek.friday => array.set(high_hits_fri, array.size(high_hits_fri)-1, array.get(high_hits_fri, array.size(high_hits_fri)-1) + 1)
+        dayofweek.saturday => array.set(high_hits_sat, array.size(high_hits_sat)-1, array.get(high_hits_sat, array.size(high_hits_sat)-1) + 1)
+
+if hit_level(plotLow)
+    switch dayofweek
+        dayofweek.sunday => array.set(low_hits_sun, array.size(low_hits_sun)-1, array.get(low_hits_sun, array.size(low_hits_sun)-1) + 1)
+        dayofweek.monday => array.set(low_hits_mon, array.size(low_hits_mon)-1, array.get(low_hits_mon, array.size(low_hits_mon)-1) + 1)
+        dayofweek.tuesday => array.set(low_hits_tue, array.size(low_hits_tue)-1, array.get(low_hits_tue, array.size(low_hits_tue)-1) + 1)
+        dayofweek.wednesday => array.set(low_hits_wed, array.size(low_hits_wed)-1, array.get(low_hits_wed, array.size(low_hits_wed)-1) + 1)
+        dayofweek.thursday => array.set(low_hits_thu, array.size(low_hits_thu)-1, array.get(low_hits_thu, array.size(low_hits_thu)-1) + 1)
+        dayofweek.friday => array.set(low_hits_fri, array.size(low_hits_fri)-1, array.get(low_hits_fri, array.size(low_hits_fri)-1) + 1)
+        dayofweek.saturday => array.set(low_hits_sat, array.size(low_hits_sat)-1, array.get(low_hits_sat, array.size(low_hits_sat)-1) + 1)
+
+if hit_level(midpoint)
+    switch dayofweek
+        dayofweek.sunday => array.set(mid_hits_sun, array.size(mid_hits_sun)-1, array.get(mid_hits_sun, array.size(mid_hits_sun)-1) + 1)
+        dayofweek.monday => array.set(mid_hits_mon, array.size(mid_hits_mon)-1, array.get(mid_hits_mon, array.size(mid_hits_mon)-1) + 1)
+        dayofweek.tuesday => array.set(mid_hits_tue, array.size(mid_hits_tue)-1, array.get(mid_hits_tue, array.size(mid_hits_tue)-1) + 1)
+        dayofweek.wednesday => array.set(mid_hits_wed, array.size(mid_hits_wed)-1, array.get(mid_hits_wed, array.size(mid_hits_wed)-1) + 1)
+        dayofweek.thursday => array.set(mid_hits_thu, array.size(mid_hits_thu)-1, array.get(mid_hits_thu, array.size(mid_hits_thu)-1) + 1)
+        dayofweek.friday => array.set(mid_hits_fri, array.size(mid_hits_fri)-1, array.get(mid_hits_fri, array.size(mid_hits_fri)-1) + 1)
+        dayofweek.saturday => array.set(mid_hits_sat, array.size(mid_hits_sat)-1, array.get(mid_hits_sat, array.size(mid_hits_sat)-1) + 1)
+
+if hit_level(fib_214)
+    switch dayofweek
+        dayofweek.sunday => array.set(fib1_hits_sun, array.size(fib1_hits_sun)-1, array.get(fib1_hits_sun, array.size(fib1_hits_sun)-1) + 1)
+        dayofweek.monday => array.set(fib1_hits_mon, array.size(fib1_hits_mon)-1, array.get(fib1_hits_mon, array.size(fib1_hits_mon)-1) + 1)
+        dayofweek.tuesday => array.set(fib1_hits_tue, array.size(fib1_hits_tue)-1, array.get(fib1_hits_tue, array.size(fib1_hits_tue)-1) + 1)
+        dayofweek.wednesday => array.set(fib1_hits_wed, array.size(fib1_hits_wed)-1, array.get(fib1_hits_wed, array.size(fib1_hits_wed)-1) + 1)
+        dayofweek.thursday => array.set(fib1_hits_thu, array.size(fib1_hits_thu)-1, array.get(fib1_hits_thu, array.size(fib1_hits_thu)-1) + 1)
+        dayofweek.friday => array.set(fib1_hits_fri, array.size(fib1_hits_fri)-1, array.get(fib1_hits_fri, array.size(fib1_hits_fri)-1) + 1)
+        dayofweek.saturday => array.set(fib1_hits_sat, array.size(fib1_hits_sat)-1, array.get(fib1_hits_sat, array.size(fib1_hits_sat)-1) + 1)
+
+if hit_level(fib_293)
+    switch dayofweek
+        dayofweek.sunday => array.set(fib2_hits_sun, array.size(fib2_hits_sun)-1, array.get(fib2_hits_sun, array.size(fib2_hits_sun)-1) + 1)
+        dayofweek.monday => array.set(fib2_hits_mon, array.size(fib2_hits_mon)-1, array.get(fib2_hits_mon, array.size(fib2_hits_mon)-1) + 1)
+        dayofweek.tuesday => array.set(fib2_hits_tue, array.size(fib2_hits_tue)-1, array.get(fib2_hits_tue, array.size(fib2_hits_tue)-1) + 1)
+        dayofweek.wednesday => array.set(fib2_hits_wed, array.size(fib2_hits_wed)-1, array.get(fib2_hits_wed, array.size(fib2_hits_wed)-1) + 1)
+        dayofweek.thursday => array.set(fib2_hits_thu, array.size(fib2_hits_thu)-1, array.get(fib2_hits_thu, array.size(fib2_hits_thu)-1) + 1)
+        dayofweek.friday => array.set(fib2_hits_fri, array.size(fib2_hits_fri)-1, array.get(fib2_hits_fri, array.size(fib2_hits_fri)-1) + 1)
+        dayofweek.saturday => array.set(fib2_hits_sat, array.size(fib2_hits_sat)-1, array.get(fib2_hits_sat, array.size(fib2_hits_sat)-1) + 1)
+
+// Calculate totals and percentages
+total_high_hits = array.sum(high_hits_sun) + array.sum(high_hits_mon) + array.sum(high_hits_tue) + array.sum(high_hits_wed) + array.sum(high_hits_thu) + array.sum(high_hits_fri) + array.sum(high_hits_sat)
+total_low_hits = array.sum(low_hits_sun) + array.sum(low_hits_mon) + array.sum(low_hits_tue) + array.sum(low_hits_wed) + array.sum(low_hits_thu) + array.sum(low_hits_fri) + array.sum(low_hits_sat)
+total_mid_hits = array.sum(mid_hits_sun) + array.sum(mid_hits_mon) + array.sum(mid_hits_tue) + array.sum(mid_hits_wed) + array.sum(mid_hits_thu) + array.sum(mid_hits_fri) + array.sum(mid_hits_sat)
+total_fib1_hits = array.sum(fib1_hits_sun) + array.sum(fib1_hits_mon) + array.sum(fib1_hits_tue) + array.sum(fib1_hits_wed) + array.sum(fib1_hits_thu) + array.sum(fib1_hits_fri) + array.sum(fib1_hits_sat)
+total_fib2_hits = array.sum(fib2_hits_sun) + array.sum(fib2_hits_mon) + array.sum(fib2_hits_tue) + array.sum(fib2_hits_wed) + array.sum(fib2_hits_thu) + array.sum(fib2_hits_fri) + array.sum(fib2_hits_sat)
+
+// Table Configuration
+var g_TABLE = "Table"
+table_position      = input.string('Top Right', "Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group = g_TABLE)
+table_size          = input.string('Tiny', "Text Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group = g_TABLE)
+table_text          = input.color(color.black, "Text", group = g_TABLE)
+table_bg            = input.color(color.white, "Table Background", group = g_TABLE)
+table_frame         = input.color(color.black, "Table Frame", group = g_TABLE)
+table_border        = input.color(color.black, "Table Border", group = g_TABLE)
+table_border_width  = input.int(1, "Table Border Width", group = g_TABLE)
+table_frame_width   = input.int(2, "Table Frame Width", group = g_TABLE)
+
+// Function to get table position
+get_table_position(pos) =>
+    switch pos
+        'Bottom Center' => position.bottom_center
+        'Bottom Left' => position.bottom_left
+        'Bottom Right' => position.bottom_right
+        'Middle Center' => position.middle_center
+        'Middle Left' => position.middle_left
+        'Middle Right' => position.middle_right
+        'Top Center' => position.top_center
+        'Top Left' => position.top_left
+        'Top Right' => position.top_right
+
+// Function to get text size
+get_table_text_size(size) =>
+    switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+// Create and populate table
+// Calculate total days and weeks
+total_days = array.size(high_hits_sun)  // Using one array's size since all are synchronized
+total_weeks = math.round(total_days / 7, 1)  // Approximate weeks, rounded to 1 decimal
+
+// Create and populate table
+if show_stats
+    var stats = table.new(get_table_position(table_position), 8, 14, bgcolor = table_bg, frame_color = table_frame, frame_width = table_frame_width, border_color = table_border, border_width = table_border_width)
+    
+    if barstate.islast
+        ts = get_table_text_size(table_size)
+        
+        // Headers
+        table.cell(stats, 0, 0, "Level", text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 0, "Sun", text_color=table_text, text_size=ts)
+        table.cell(stats, 2, 0, "Mon", text_color=table_text, text_size=ts)
+        table.cell(stats, 3, 0, "Tue", text_color=table_text, text_size=ts)
+        table.cell(stats, 4, 0, "Wed", text_color=table_text, text_size=ts)
+        table.cell(stats, 5, 0, "Thu", text_color=table_text, text_size=ts)
+        table.cell(stats, 6, 0, "Fri", text_color=table_text, text_size=ts)
+        
+        // High Hits
+        table.cell(stats, 0, 1, "High", text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 1, str.tostring(array.sum(high_hits_sun)) + "\n(" + str.tostring(array.sum(high_hits_sun)/total_high_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 2, 1, str.tostring(array.sum(high_hits_mon)) + "\n(" + str.tostring(array.sum(high_hits_mon)/total_high_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 3, 1, str.tostring(array.sum(high_hits_tue)) + "\n(" + str.tostring(array.sum(high_hits_tue)/total_high_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 4, 1, str.tostring(array.sum(high_hits_wed)) + "\n(" + str.tostring(array.sum(high_hits_wed)/total_high_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 5, 1, str.tostring(array.sum(high_hits_thu)) + "\n(" + str.tostring(array.sum(high_hits_thu)/total_high_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 6, 1, str.tostring(array.sum(high_hits_fri)) + "\n(" + str.tostring(array.sum(high_hits_fri)/total_high_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        
+        // Low Hits
+        table.cell(stats, 0, 2, "Low", text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 2, str.tostring(array.sum(low_hits_sun)) + "\n(" + str.tostring(array.sum(low_hits_sun)/total_low_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 2, 2, str.tostring(array.sum(low_hits_mon)) + "\n(" + str.tostring(array.sum(low_hits_mon)/total_low_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 3, 2, str.tostring(array.sum(low_hits_tue)) + "\n(" + str.tostring(array.sum(low_hits_tue)/total_low_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 4, 2, str.tostring(array.sum(low_hits_wed)) + "\n(" + str.tostring(array.sum(low_hits_wed)/total_low_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 5, 2, str.tostring(array.sum(low_hits_thu)) + "\n(" + str.tostring(array.sum(low_hits_thu)/total_low_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 6, 2, str.tostring(array.sum(low_hits_fri)) + "\n(" + str.tostring(array.sum(low_hits_fri)/total_low_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        
+        // Mid Hits
+        table.cell(stats, 0, 3, "Mid", text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 3, str.tostring(array.sum(mid_hits_sun)) + "\n(" + str.tostring(array.sum(mid_hits_sun)/total_mid_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 2, 3, str.tostring(array.sum(mid_hits_mon)) + "\n(" + str.tostring(array.sum(mid_hits_mon)/total_mid_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 3, 3, str.tostring(array.sum(mid_hits_tue)) + "\n(" + str.tostring(array.sum(mid_hits_tue)/total_mid_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 4, 3, str.tostring(array.sum(mid_hits_wed)) + "\n(" + str.tostring(array.sum(mid_hits_wed)/total_mid_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 5, 3, str.tostring(array.sum(mid_hits_thu)) + "\n(" + str.tostring(array.sum(mid_hits_thu)/total_mid_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 6, 3, str.tostring(array.sum(mid_hits_fri)) + "\n(" + str.tostring(array.sum(mid_hits_fri)/total_mid_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        
+        // Fib 1 Hits (fib_214)
+        table.cell(stats, 0, 4, "Fib " + str.tostring(fib1*100, "#.#"), text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 4, str.tostring(array.sum(fib1_hits_sun)) + "\n(" + str.tostring(array.sum(fib1_hits_sun)/total_fib1_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 2, 4, str.tostring(array.sum(fib1_hits_mon)) + "\n(" + str.tostring(array.sum(fib1_hits_mon)/total_fib1_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 3, 4, str.tostring(array.sum(fib1_hits_tue)) + "\n(" + str.tostring(array.sum(fib1_hits_tue)/total_fib1_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 4, 4, str.tostring(array.sum(fib1_hits_wed)) + "\n(" + str.tostring(array.sum(fib1_hits_wed)/total_fib1_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 5, 4, str.tostring(array.sum(fib1_hits_thu)) + "\n(" + str.tostring(array.sum(fib1_hits_thu)/total_fib1_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 6, 4, str.tostring(array.sum(fib1_hits_fri)) + "\n(" + str.tostring(array.sum(fib1_hits_fri)/total_fib1_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        
+        // Fib 2 Hits (fib_293)
+        table.cell(stats, 0, 5, "Fib " + str.tostring(fib2*100, "#.#"), text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 5, str.tostring(array.sum(fib2_hits_sun)) + "\n(" + str.tostring(array.sum(fib2_hits_sun)/total_fib2_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 2, 5, str.tostring(array.sum(fib2_hits_mon)) + "\n(" + str.tostring(array.sum(fib2_hits_mon)/total_fib2_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 3, 5, str.tostring(array.sum(fib2_hits_tue)) + "\n(" + str.tostring(array.sum(fib2_hits_tue)/total_fib2_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 4, 5, str.tostring(array.sum(fib2_hits_wed)) + "\n(" + str.tostring(array.sum(fib2_hits_wed)/total_fib2_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 5, 5, str.tostring(array.sum(fib2_hits_thu)) + "\n(" + str.tostring(array.sum(fib2_hits_thu)/total_fib2_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        table.cell(stats, 6, 5, str.tostring(array.sum(fib2_hits_fri)) + "\n(" + str.tostring(array.sum(fib2_hits_fri)/total_fib2_hits*100, "#.##") + "%)", text_color=table_text, text_size=ts)
+        
+        // Totals
+        table.cell(stats, 0, 7, "Total Days:", text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 7, str.tostring(total_days), text_color=table_text, text_size=ts, text_halign=text.align_left)
+        table.cell(stats, 0, 8, "Total Weeks:", text_color=table_text, text_size=ts)
+        table.cell(stats, 1, 8, str.tostring(total_weeks), text_color=table_text, text_size=ts, text_halign=text.align_left)

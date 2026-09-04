@@ -1,0 +1,127 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+//@version=6
+
+indicator(title = 'TTM Squeeze divergence',shorttitle = 'Sqz', overlay = false)
+
+length = input(20, title = 'BB Length')
+mult = input(2.0, title = 'BB MultFactor')
+lengthKC = input(20, title = 'KC Length')
+multKC = input(1.5, title = 'KC MultFactor')
+
+useTrueRange = input(true, title = 'Use TrueRange (KC)')
+
+// Calculate BB
+source = close
+basis = ta.sma(source, length)
+dev = mult * ta.stdev(source, length)
+upperBB = basis + dev
+lowerBB = basis - dev
+
+// Calculate KC
+ma = ta.sma(source, lengthKC)
+range_1 = useTrueRange ? ta.tr : high - low
+rangema = ta.sma(range_1, lengthKC)
+upperKC = ma + rangema * multKC
+lowerKC = ma - rangema * multKC
+
+sqzOn = lowerBB > lowerKC and upperBB < upperKC
+sqzOff = lowerBB < lowerKC and upperBB > upperKC
+noSqz = sqzOn == false and sqzOff == false
+
+val = ta.linreg(source - math.avg(math.avg(ta.highest(high, lengthKC), ta.lowest(low, lengthKC)), ta.sma(close, lengthKC)), lengthKC, 0)
+
+iff_1 = val > nz(val[1]) ? color.yellow : color.orange
+iff_2 = val < nz(val[1]) ? color.red : color.maroon
+bcolor = val > 0 ? iff_1 : iff_2
+scolor = noSqz ? color.blue : sqzOn ? color.black : color.gray
+plot(val, color = bcolor, style = plot.style_histogram, linewidth = 4)
+plot(0, color = scolor, style = plot.style_cross, linewidth = 2)
+
+overlay_main = input(false, title = 'Plot on price (rather than on indicator)')
+osc = val
+lbR = input(title = 'Pivot Lookback Right', defval = 5)
+lbL = input(title = 'Pivot Lookback Left', defval = 5)
+rangeUpper = input(title = 'Max of Lookback Range', defval = 60)
+rangeLower = input(title = 'Min of Lookback Range', defval = 5)
+plotBull = input(title = 'Plot Bullish', defval = true)
+plotHiddenBull = input(title = 'Plot Hidden Bullish', defval = false)
+plotBear = input(title = 'Plot Bearish', defval = true)
+plotHiddenBear = input(title = 'Plot Hidden Bearish', defval = false)
+delay_plot_til_closed = input(title = 'Delay plot until candle is closed (don\'t repaint)', defval = false)
+bearColor = color.red
+bullColor = color.green
+hiddenBullColor = color.new(color.green, 80)
+hiddenBearColor = color.new(color.red, 80)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+repaint = not delay_plot_til_closed or barstate.ishistory or barstate.isconfirmed
+
+plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+//------------------------------------------------------------------------------
+// Regular Bullish
+// Osc: Higher Low
+
+oscHL = osc[lbR] > ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Lower Low
+
+priceLL = low[lbR] < ta.valuewhen(plFound, low[lbR], 1)
+bullCond = plotBull and priceLL and oscHL and plFound and repaint
+
+plot(plFound ? overlay_main ? low[lbR] : osc[lbR] : na, offset = -lbR, title = 'Regular Bullish', linewidth = 2, color = bullCond ? bullColor : noneColor)
+
+plotshape(bullCond ? overlay_main ? low[lbR] : osc[lbR] : na, offset = -lbR, title = 'Regular Bullish Label', text = ' Bull ', style = shape.labelup, location = location.absolute, color = color.new(bullColor, 0), textcolor = color.new(textColor, 0))
+
+//------------------------------------------------------------------------------
+// Hidden Bullish
+// Osc: Lower Low
+
+oscLL = osc[lbR] < ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Higher Low
+
+priceHL = low[lbR] > ta.valuewhen(plFound, low[lbR], 1)
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound and repaint
+
+plot(plFound ? overlay_main ? low[lbR] : osc[lbR] : na, offset = -lbR, title = 'Hidden Bullish', linewidth = 2, color = hiddenBullCond ? hiddenBullColor : noneColor)
+
+plotshape(hiddenBullCond ? overlay_main ? low[lbR] : osc[lbR] : na, offset = -lbR, title = 'Hidden Bullish Label', text = ' H Bull ', style = shape.labelup, location = location.absolute, color = color.new(bullColor, 0), textcolor = color.new(textColor, 0))
+
+//------------------------------------------------------------------------------
+// Regular Bearish
+// Osc: Lower High
+
+oscLH = osc[lbR] < ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Higher High
+
+priceHH = high[lbR] > ta.valuewhen(phFound, high[lbR], 1)
+
+bearCond = plotBear and priceHH and oscLH and phFound and repaint
+
+plot(phFound ? overlay_main ? high[lbR] : osc[lbR] : na, offset = -lbR, title = 'Regular Bearish', linewidth = 2, color = bearCond ? bearColor : noneColor)
+
+plotshape(bearCond ? overlay_main ? high[lbR] : osc[lbR] : na, offset = -lbR, title = 'Regular Bearish Label', text = ' Bear ', style = shape.labeldown, location = location.absolute, color = color.new(bearColor, 0), textcolor = color.new(textColor, 0))
+
+//------------------------------------------------------------------------------
+// Hidden Bearish
+// Osc: Higher High
+
+oscHH = osc[lbR] > ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Lower High
+
+priceLH = high[lbR] < ta.valuewhen(phFound, high[lbR], 1)
+
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound and repaint
+
+plot(phFound ? overlay_main ? high[lbR] : osc[lbR] : na, offset = -lbR, title = 'Hidden Bearish', linewidth = 2, color = hiddenBearCond ? hiddenBearColor : noneColor)
+
+plotshape(hiddenBearCond ? overlay_main ? high[lbR] : osc[lbR] : na, offset = -lbR, title = 'Hidden Bearish Label', text = ' H Bear ', style = shape.labeldown, location = location.absolute, color = color.new(bearColor, 0), textcolor = color.new(textColor, 0))

@@ -1,0 +1,155 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+indicator("Hourly time levels", overlay=true)
+
+// === User Inputs ===
+var grp1 = 'Show - Hour - Label Text - Color'
+
+// Manual Time Offset (Adjust for alignment)
+offsetHours = input.int(-7, title="Manual Time Offset (Hours, adjust for alignment)")
+
+// Time Settings for TAPDA Hours
+showMidnight = input.bool(true, title='Show Midnight', inline='1', group=grp1)
+colorMidnight = input.color(color.red, title='Midnight Line Color', inline='1', group=grp1)
+midnightText = input.string("12:00 AM Open", title='', inline='1', group=grp1)
+
+show2AM = input.bool(true, title='Show 2:00 AM', inline='2', group=grp1)
+color2AM = input.color(color.blue, title='2:00 AM Line Color', inline='2', group=grp1)
+twoAMText = input.string("2:00 AM Open", title='', inline='2', group=grp1)
+
+show4AM = input.bool(true, title='Show 4:00 AM', inline='3', group=grp1)
+color4AM = input.color(color.yellow, title='4:00 AM Line Color', inline='3', group=grp1)
+fourAMText = input.string("4:00 AM Open", title='', inline='3', group=grp1)
+
+show430AM = input.bool(true, title='Show 4:30 AM', inline='4', group=grp1)
+color430AM = input.color(color.teal, title='4:30 AM Line Color', inline='4', group=grp1)
+four30AMText = input.string("4:30 AM Open", title='', inline='4', group=grp1)
+
+show7AM = input.bool(true, title='Show 7:00 AM', inline='5', group=grp1)
+color7AM = input.color(color.fuchsia, title='7:00 AM Line Color', inline='5', group=grp1)
+sevenAMText = input.string("7:00 AM Open", title='', inline='5', group=grp1)
+
+show8AM = input.bool(true, title='Show 8:00 AM', inline='6', group=grp1)
+color8AM = input.color(color.lime, title='8:00 AM Line Color', inline='6', group=grp1)
+eightAMText = input.string("8:00 AM Open", title='', inline='6', group=grp1)
+
+show9AM = input.bool(true, title='Show 9:00 AM', inline='7', group=grp1)
+color9AM = input.color(color.green, title='9:00 AM Line Color', inline='7', group=grp1)
+nineAMText = input.string("9:00 AM Open", title='', inline='7', group=grp1)
+
+show930AM = input.bool(true, title='Show 9:30 AM', inline='8', group=grp1)
+color930AM = input.color(color.orange, title='9:30 AM Line Color', inline='8', group=grp1)
+nine30Text = input.string("9:30 AM Open", title='', inline='8', group=grp1)
+
+show10AM = input.bool(true, title='Show 10:00 AM', inline='9', group=grp1)
+color10AM = input.color(color.aqua, title='10:00 AM Line Color', inline='9', group=grp1)
+tenAMText = input.string("10:00 AM Open", title='', inline='9', group=grp1)
+
+show2PM = input.bool(true, title='Show 2:00 PM', inline='10', group=grp1)
+color2PM = input.color(color.purple, title='2:00 PM Line Color', inline='10', group=grp1)
+twoPMText = input.string("2:00 PM Open", title='', inline='10', group=grp1)
+
+show4PM = input.bool(true, title='Show 4:00 PM', inline='11', group=grp1)
+color4PM = input.color(color.gray, title='4:00 PM Line Color', inline='11', group=grp1)
+fourPMText = input.string("4:00 PM Open", title='', inline='11', group=grp1)
+
+// === Other Settings ===
+var grp2 = 'Other Settings'
+MAX_LINES = input.int(10, title='Max Lines to show', minval=0, maxval=200, group=grp2)
+extendHours = input.int(24, title='Extend lines for how many hours?', minval=1, maxval=24, group=grp2)
+linesWidth = input.int(1, title='Lines Width', minval=1, maxval=4, group=grp2)
+_labelSize = input.string("Tiny", title='Label Size', options=['Auto', 'Tiny', 'Small', 'Normal', 'Huge'], group=grp2)
+
+labelSize = _labelSize == "Auto" ? size.auto : _labelSize == "Tiny" ? size.tiny : _labelSize == "Small" ? size.small : _labelSize == "Normal" ? size.normal : size.huge
+
+// === Line and Label Arrays ===
+var line[] linesTop = array.new_line(0)
+var line[] linesBottom = array.new_line(0)
+var label[] labels = array.new_label(0)
+
+// === Projection Calculation ===
+_extend = extendHours * 3600000
+
+// === Calculate New York Time with Offset ===
+nyTime = timestamp("GMT" + str.tostring(offsetHours), year, month, dayofmonth, hour, minute)
+
+// Get New York hour and minute for time checks
+nyHour = hour(nyTime)
+nyMinute = minute(nyTime)
+
+// === Time Conditions with Adjusted Time ===
+inMidnight = nyHour == 0 and nyMinute == 0
+in2AM = nyHour == 2 and nyMinute == 0
+in4AM = nyHour == 4 and nyMinute == 0
+in430AM = nyHour == 4 and nyMinute == 30
+in7AM = nyHour == 7 and nyMinute == 0
+in8AM = nyHour == 8 and nyMinute == 0
+in9AM = nyHour == 9 and nyMinute == 0
+in930AM = nyHour == 9 and nyMinute == 30
+in10AM = nyHour == 10 and nyMinute == 0
+in2PM = nyHour == 14 and nyMinute == 0
+in4PM = nyHour == 16 and nyMinute == 0
+
+// === Plotting Candle Body Boxes (Top and Bottom Lines) ===
+if inMidnight and not inMidnight[1] and showMidnight
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=colorMidnight, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=colorMidnight, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, midnightText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=colorMidnight))
+
+if in2AM and not in2AM[1] and show2AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color2AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color2AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, twoAMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color2AM))
+
+if in4AM and not in4AM[1] and show4AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color4AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color4AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, fourAMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color4AM))
+
+if in430AM and not in430AM[1] and show430AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color430AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color430AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, four30AMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color430AM))
+
+if in7AM and not in7AM[1] and show7AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color7AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color7AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, sevenAMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color7AM))
+
+if in8AM and not in8AM[1] and show8AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color8AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color8AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, eightAMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color8AM))
+
+if in9AM and not in9AM[1] and show9AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color9AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color9AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, nineAMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color9AM))
+
+if in930AM and not in930AM[1] and show930AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color930AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color930AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, nine30Text, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color930AM))
+
+if in10AM and not in10AM[1] and show10AM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color10AM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color10AM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, tenAMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color10AM))
+
+if in2PM and not in2PM[1] and show2PM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color2PM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color2PM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, twoPMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color2PM))
+
+if in4PM and not in4PM[1] and show4PM
+    array.push(linesTop, line.new(time, open, time + _extend, open, xloc=xloc.bar_time, color=color4PM, width=linesWidth))
+    array.push(linesBottom, line.new(time, close, time + _extend, close, xloc=xloc.bar_time, color=color4PM, width=linesWidth))
+    array.push(labels, label.new(time + _extend, open, fourPMText, xloc=xloc.bar_time, style=label.style_none, size=labelSize, textcolor=color4PM))
+
+// === Cleanup Old Lines ===
+if array.size(linesTop) > MAX_LINES
+    line.delete(array.shift(linesTop))
+    line.delete(array.shift(linesBottom))
+    label.delete(array.shift(labels))

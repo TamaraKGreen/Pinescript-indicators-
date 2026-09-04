@@ -1,0 +1,125 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=6
+indicator('Pivot Order Blocks - Lines', shorttitle = 'Pivot - OB Lines', overlay = true, max_bars_back = 500, max_lines_count = 500)
+
+// Titles
+inputGroupTitle = '=== Pivots ==='
+plotGroupTitle = '=== Plots ==='
+
+// Inputs
+source = input.string('Body', options = ['Wicks', 'Body'], title = 'Source', group = inputGroupTitle)
+
+leftLenH = input.int(title = 'Pivot High', defval = 25, minval = 1, inline = 'Pivot High', group = inputGroupTitle)
+rightLenH = input.int(title = '/', defval = 25, minval = 1, inline = 'Pivot High', group = inputGroupTitle)
+
+leftLenL = input.int(title = 'Pivot Low', defval = 25, minval = 1, inline = 'Pivot Low', group = inputGroupTitle)
+rightLenL = input.int(title = '/', defval = 25, minval = 1, inline = 'Pivot Low', group = inputGroupTitle)
+
+bullLineColor = input.color(color.new(color.gray, 20), title = 'Bullish Color', group = plotGroupTitle, inline = '1')
+bearLineColor = input.color(color.new(color.gray, 20), title = 'Bearish Color', group = plotGroupTitle, inline = '1')
+oldLevelColor = input.color(color.new(color.gray, 50), title = 'Old/Broken Levels', group = plotGroupTitle, inline = '2')
+closedLineColor = input.color(color.new(color.gray, 100), title = 'Closed', group = plotGroupTitle, inline = '2')
+
+extendLines = input.bool(true, title = 'Extend Lines', group = plotGroupTitle, tooltip = 'Extend lines until price hits them')
+lineLength = input.int(30, title = 'Line Size', tooltip = 'If Extend Lines is off, lines will be drawn this long', group = plotGroupTitle)
+showOldLevels = input.bool(false, title = 'Show Old/Broken Levels', group = plotGroupTitle, tooltip = 'Show old levels with a custom color instead of making them transparent')
+
+// Wick / Body option
+pivotHighOption = source == 'Wicks' ? high : close
+pivotLowOption = source == 'Wicks' ? low : close
+
+// Pivot calculations
+pivotHigh = ta.pivothigh(pivotHighOption, leftLenH, rightLenH)
+pivotLow = ta.pivotlow(pivotLowOption, leftLenL, rightLenL)
+
+// Variables
+var leftBull = bar_index
+var rightBull = bar_index
+var topBull = close
+var bottomBull = close
+
+var leftBear = bar_index
+var rightBear = bar_index
+var topBear = close
+var bottomBear = close
+
+var array<line> bullTopLines = array.new_line()
+var array<line> bullBottomLines = array.new_line()
+var array<line> bearTopLines = array.new_line()
+var array<line> bearBottomLines = array.new_line()
+var array<bool> bullBroken = array.new_bool() // Tracks broken bullish levels
+var array<bool> bearBroken = array.new_bool() // Tracks broken bearish levels
+
+// Bearish Order Block Calculation
+if bool(pivotHigh)
+    leftBear := bar_index - leftLenH
+    rightBear := bar_index - (leftLenH - lineLength)
+    topBear := source == 'Body' ? close[leftLenH] > open[leftLenH] ? close[leftLenH] : open[leftLenH] : high[leftLenH]
+    bottomBear := source == 'Body' ? close[leftLenH] > open[leftLenH] ? open[leftLenH] : close[leftLenH] : close[leftLenH] > open[leftLenH] ? close[leftLenH] : open[leftLenH]
+    bottomBear
+
+// Bullish Order Block Calculation
+if bool(pivotLow)
+    leftBull := bar_index - leftLenL
+    rightBull := bar_index - (leftLenL - lineLength)
+    topBull := source == 'Body' ? close[leftLenL] > open[leftLenL] ? close[leftLenL] : open[leftLenL] : close[leftLenL] > open[leftLenL] ? open[leftLenL] : close[leftLenL]
+    bottomBull := source == 'Body' ? close[leftLenL] > open[leftLenL] ? open[leftLenL] : close[leftLenL] : low[leftLenL]
+    bottomBull
+
+// Plot Lines for Bullish Order Blocks
+if bool(pivotLow)
+    topLine = line.new(x1 = leftBull, y1 = topBull, x2 = rightBull, y2 = topBull, color = bullLineColor)
+    bottomLine = line.new(x1 = leftBull, y1 = bottomBull, x2 = rightBull, y2 = bottomBull, color = bullLineColor)
+    array.push(bullTopLines, topLine)
+    array.push(bullBottomLines, bottomLine)
+    array.push(bullBroken, false) // Initialize as not broken
+
+// Plot Lines for Bearish Order Blocks
+if bool(pivotHigh)
+    topLine = line.new(x1 = leftBear, y1 = topBear, x2 = rightBear, y2 = topBear, color = bearLineColor)
+    bottomLine = line.new(x1 = leftBear, y1 = bottomBear, x2 = rightBear, y2 = bottomBear, color = bearLineColor)
+    array.push(bearTopLines, topLine)
+    array.push(bearBottomLines, bottomLine)
+    array.push(bearBroken, false) // Initialize as not broken
+
+// Function to Extend Lines
+extend_lines(lineArrayTop, lineArrayBottom, brokenArray, type) =>
+    if array.size(lineArrayTop) > 0
+        for i = 0 to array.size(lineArrayTop) - 1 by 1
+            topLine = array.get(lineArrayTop, i)
+            bottomLine = array.get(lineArrayBottom, i)
+            topPrice = line.get_price(topLine, 0)
+            bottomPrice = line.get_price(bottomLine, 0)
+            rightBar = line.get_x2(topLine)
+            isBroken = array.get(brokenArray, i)
+
+            if type == 'bull' and rightBar == bar_index and not isBroken
+                if low > topPrice
+                    line.set_x2(topLine, bar_index + 1)
+                    line.set_x2(bottomLine, bar_index + 1)
+                else
+                    array.set(brokenArray, i, true) // Mark as broken
+                    newColor = showOldLevels ? oldLevelColor : closedLineColor
+                    line.set_color(topLine, newColor)
+                    line.set_color(bottomLine, newColor)
+                    line.set_x2(topLine, bar_index)
+                    line.set_x2(bottomLine, bar_index)
+
+            if type == 'bear' and rightBar == bar_index and not isBroken
+                if high < bottomPrice
+                    line.set_x2(topLine, bar_index + 1)
+                    line.set_x2(bottomLine, bar_index + 1)
+                else
+                    array.set(brokenArray, i, true) // Mark as broken
+                    newColor = showOldLevels ? oldLevelColor : closedLineColor
+                    line.set_color(topLine, newColor)
+                    line.set_color(bottomLine, newColor)
+                    line.set_x2(topLine, bar_index)
+                    line.set_x2(bottomLine, bar_index)
+
+// Extend Lines if Enabled
+if extendLines
+    extend_lines(bullTopLines, bullBottomLines, bullBroken, 'bull')
+    extend_lines(bearTopLines, bearBottomLines, bearBroken, 'bear')

@@ -1,0 +1,556 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("ADR levels", shorttitle = 'ADR', overlay=true, max_bars_back=5000, max_lines_count=500)
+
+// Error catching
+if (timeframe.in_seconds() >= timeframe.in_seconds('D'))
+    runtime.error('Timeframe cannot be greater than Daily')
+
+// Inputs
+adr_days    = input.int(10, title = 'Days', maxval=250, minval = 1)
+std_x       = input.float(1.0, "Scale Factor")
+width       = input.int(1, "Line Width")
+
+// ADR line inputs
+adr_color   = input.color(color.gray, "ADR Color")
+adr_style   = input.string("solid", "ADR Style", options=["solid", "dashed", "dotted"])
+
+// Standard deviation inputs
+std_dev_0_5 = input.float(0.5, "Std Dev 1 Multiplier", minval=0.1, maxval=5.0)
+std_0_5_show = input.bool(true, "Show Std Dev 1", inline="std1")
+std_0_5_color = input.color(color.gray, "Std Dev 1 Color", inline="std1")
+std_0_5_style = input.string("dotted", "Std Dev 1 Style", options=["solid", "dashed", "dotted"], inline="std1")
+std_dev_1   = input.float(1.0, "Std Dev 2 Multiplier", minval=0.1, maxval=5.0)
+std_1_show = input.bool(true, "Show Std Dev 2", inline="std2")
+std_1_color = input.color(color.gray, "Std Dev 2 Color", inline="std2")
+std_1_style = input.string("dotted", "Std Dev 2 Style", options=["solid", "dashed", "dotted"], inline="std2")
+std_dev_2   = input.float(2.0, "Std Dev 3 Multiplier", minval=0.1, maxval=5.0)
+std_2_show = input.bool(true, "Show Std Dev 3", inline="std3")
+std_2_color = input.color(color.gray, "Std Dev 3 Color", inline="std3")
+std_2_style = input.string("dotted", "Std Dev 3 Style", options=["solid", "dashed", "dotted"], inline="std3")
+
+// Fibonacci inputs
+fib_1_level = input.float(0.3, "Fib Level 1", minval=0, maxval=2.0)
+fib_1_show  = input.bool(true, "Show Fib 1", inline="fib1")
+fib_1_color = input.color(color.blue, "Fib 1 Color", inline="fib1")
+fib_1_style = input.string("dashed", "Fib 1 Style", options=["solid", "dashed", "dotted"], inline="fib1")
+fib_2_level = input.float(0.5, "Fib Level 2", minval=0, maxval=2.0)
+fib_2_show  = input.bool(true, "Show Fib 2", inline="fib2")
+fib_2_color = input.color(color.blue, "Fib 2 Color", inline="fib2")
+fib_2_style = input.string("dashed", "Fib 2 Style", options=["solid", "dashed", "dotted"], inline="fib2")
+fib_3_level = input.float(0.7, "Fib Level 3", minval=0, maxval=2.0)
+fib_3_show  = input.bool(true, "Show Fib 3", inline="fib3")
+fib_3_color = input.color(color.blue, "Fib 3 Color", inline="fib3")
+fib_3_style = input.string("dashed", "Fib 3 Style", options=["solid", "dashed", "dotted"], inline="fib3")
+show_labels = input.bool(true, "Show Labels")
+
+// Stats table inputs
+show_stats  = input.bool(true, "Show Table")
+sample_size = input.bool(true, "Show Sample Sizes")
+tbl_loc     = input.string('Bottom Right', "Table", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'])
+tbl_size    = input.string('Tiny', "", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'])
+rch_color   = input.color(color.rgb(3, 131, 99, 70), "Reached [Level]")
+csd_color   = input.color(color.rgb(127, 1, 185, 70), "Closed Through [Level]")
+
+// Function to convert style string to line style
+get_line_style(string style) =>
+    switch style
+        "solid" => line.style_solid
+        "dashed" => line.style_dashed
+        "dotted" => line.style_dotted
+
+// Variables
+reset = session.islastbar_regular[1]
+var float track_highs = 0.00
+var float track_lows  = 0.00
+var float today_adr   = 0.00
+var adrs = array.new_float(adr_days, 0.00)
+
+var line adr_pos = na
+var line adr_neg = na
+var line fib_1_pos = na
+var line fib_1_neg = na
+var line fib_2_pos = na
+var line fib_2_neg = na
+var line fib_3_pos = na
+var line fib_3_neg = na
+var line std_0_5_pos = na
+var line std_0_5_neg = na
+var line std_1_pos = na
+var line std_1_neg = na
+var line std_2_pos = na
+var line std_2_neg = na
+
+var label fib_1_pos_lbl = na
+var label fib_1_neg_lbl = na
+var label fib_2_pos_lbl = na
+var label fib_2_neg_lbl = na
+var label fib_3_pos_lbl = na
+var label fib_3_neg_lbl = na
+var label adr_pos_lbl = na
+var label adr_neg_lbl = na
+var label std_0_5_pos_lbl = na
+var label std_0_5_neg_lbl = na
+var label std_1_pos_lbl = na
+var label std_1_neg_lbl = na
+var label std_2_pos_lbl = na
+var label std_2_neg_lbl = na
+
+// ADR calculation
+track_highs := reset ? high : math.max(high, track_highs[1])
+track_lows  := reset ? low : math.min(low, track_lows[1])
+
+if reset
+    array.unshift(adrs, math.round_to_mintick(track_highs[1] - track_lows[1]))
+    if array.size(adrs) > adr_days
+        array.pop(adrs)
+    today_adr := math.round_to_mintick(array.avg(adrs))
+    
+    // Delete previous lines and labels
+    line.delete(adr_pos[1])
+    line.delete(adr_neg[1])
+    line.delete(fib_1_pos[1])
+    line.delete(fib_1_neg[1])
+    line.delete(fib_2_pos[1])
+    line.delete(fib_2_neg[1])
+    line.delete(fib_3_pos[1])
+    line.delete(fib_3_neg[1])
+    line.delete(std_0_5_pos[1])
+    line.delete(std_0_5_neg[1])
+    line.delete(std_1_pos[1])
+    line.delete(std_1_neg[1])
+    line.delete(std_2_pos[1])
+    line.delete(std_2_neg[1])
+    label.delete(fib_1_pos_lbl[1])
+    label.delete(fib_1_neg_lbl[1])
+    label.delete(fib_2_pos_lbl[1])
+    label.delete(fib_2_neg_lbl[1])
+    label.delete(fib_3_pos_lbl[1])
+    label.delete(fib_3_neg_lbl[1])
+    label.delete(adr_pos_lbl[1])
+    label.delete(adr_neg_lbl[1])
+    label.delete(std_0_5_pos_lbl[1])
+    label.delete(std_0_5_neg_lbl[1])
+    label.delete(std_1_pos_lbl[1])
+    label.delete(std_1_neg_lbl[1])
+    label.delete(std_2_pos_lbl[1])
+    label.delete(std_2_neg_lbl[1])
+    
+    // Draw ADR lines
+    adr_pos := line.new(bar_index, open + today_adr, bar_index+50, open + today_adr,
+         width=width, color=adr_color, style=get_line_style(adr_style))
+    adr_neg := line.new(bar_index, open - today_adr, bar_index+50, open - today_adr,
+         width=width, color=adr_color, style=get_line_style(adr_style))
+    
+    // Draw ADR labels
+    if show_labels
+        adr_pos_lbl := label.new(bar_index+50, open + today_adr, "ADR High (" + str.tostring(adr_days) + "D)",
+             xloc=xloc.bar_index, textalign=text.align_left, textcolor=adr_color, color=color.new(color.blue, 90), style=label.style_none)
+        adr_neg_lbl := label.new(bar_index+50, open - today_adr, "ADR Low (" + str.tostring(adr_days) + "D)",
+             xloc=xloc.bar_index, textalign=text.align_left, textcolor=adr_color, color=color.new(color.red, 90), style=label.style_none)
+    
+    // Calculate deviations
+    var float half_dev = na
+    var float one_dev = na
+    var float two_dev = na
+    half_dev := today_adr * std_dev_0_5
+    one_dev := today_adr * std_dev_1
+    two_dev := today_adr * std_dev_2
+    
+    // Draw standard deviation lines (with show/hide options)
+    if std_0_5_show
+        std_0_5_pos := line.new(bar_index, (open + today_adr) + half_dev, bar_index+50, (open + today_adr) + half_dev,
+             width=width, color=std_0_5_color, style=get_line_style(std_0_5_style))
+        std_0_5_neg := line.new(bar_index, (open - today_adr) - half_dev, bar_index+50, (open - today_adr) - half_dev,
+             width=width, color=std_0_5_color, style=get_line_style(std_0_5_style))
+        if show_labels
+            std_0_5_pos_lbl := label.new(bar_index+50, (open + today_adr) + half_dev, "Std " + str.tostring(std_dev_0_5),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=std_0_5_color, color=color.new(#000000,100), style=label.style_none)
+            std_0_5_neg_lbl := label.new(bar_index+50, (open - today_adr) - half_dev, "Std -" + str.tostring(std_dev_0_5),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=std_0_5_color, color=color.new(#000000,100), style=label.style_none)
+    
+    if std_1_show
+        std_1_pos := line.new(bar_index, (open + today_adr) + one_dev, bar_index+50, (open + today_adr) + one_dev,
+             width=width, color=std_1_color, style=get_line_style(std_1_style))
+        std_1_neg := line.new(bar_index, (open - today_adr) - one_dev, bar_index+50, (open - today_adr) - one_dev,
+             width=width, color=std_1_color, style=get_line_style(std_1_style))
+        if show_labels
+            std_1_pos_lbl := label.new(bar_index+50, (open + today_adr) + one_dev, "Std " + str.tostring(std_dev_1),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=std_1_color, color=color.new(#000000,100), style=label.style_none)
+            std_1_neg_lbl := label.new(bar_index+50, (open - today_adr) - one_dev, "Std -" + str.tostring(std_dev_1),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=std_1_color, color=color.new(#000000,100), style=label.style_none)
+    
+    if std_2_show
+        std_2_pos := line.new(bar_index, (open + today_adr) + two_dev, bar_index+50, (open + today_adr) + two_dev,
+             width=width, color=std_2_color, style=get_line_style(std_2_style))
+        std_2_neg := line.new(bar_index, (open - today_adr) - two_dev, bar_index+50, (open - today_adr) - two_dev,
+             width=width, color=std_2_color, style=get_line_style(std_2_style))
+        if show_labels
+            std_2_pos_lbl := label.new(bar_index+50, (open + today_adr) + two_dev, "Std " + str.tostring(std_dev_2),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=std_2_color, color=color.new(#000000,100), style=label.style_none)
+            std_2_neg_lbl := label.new(bar_index+50, (open - today_adr) - two_dev, "Std -" + str.tostring(std_dev_2),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=std_2_color, color=color.new(#000000,100), style=label.style_none)
+    
+    // Draw Fibonacci lines
+    if fib_1_show
+        fib_1_pos := line.new(bar_index, open + today_adr * fib_1_level, bar_index+50, open + today_adr * fib_1_level,
+             width=width, color=fib_1_color, style=get_line_style(fib_1_style))
+        fib_1_neg := line.new(bar_index, open - today_adr * fib_1_level, bar_index+50, open - today_adr * fib_1_level,
+             width=width, color=fib_1_color, style=get_line_style(fib_1_style))
+        if show_labels
+            fib_1_pos_lbl := label.new(bar_index+50, open + today_adr * fib_1_level, "Fib " + str.tostring(fib_1_level),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=fib_1_color, color=color.new(#000000,100), style=label.style_none)
+            fib_1_neg_lbl := label.new(bar_index+50, open - today_adr * fib_1_level, "Fib -" + str.tostring(fib_1_level),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=fib_1_color, color=color.new(#000000,100), style=label.style_none)
+    
+    if fib_2_show
+        fib_2_pos := line.new(bar_index, open + today_adr * fib_2_level, bar_index+50, open + today_adr * fib_2_level,
+             width=width, color=fib_2_color, style=get_line_style(fib_2_style))
+        fib_2_neg := line.new(bar_index, open - today_adr * fib_2_level, bar_index+50, open - today_adr * fib_2_level,
+             width=width, color=fib_2_color, style=get_line_style(fib_2_style))
+        if show_labels
+            fib_2_pos_lbl := label.new(bar_index+50, open + today_adr * fib_2_level, "Fib " + str.tostring(fib_2_level),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=fib_2_color, color=color.new(#000000,100), style=label.style_none)
+            fib_2_neg_lbl := label.new(bar_index+50, open - today_adr * fib_2_level, "Fib -" + str.tostring(fib_2_level),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=fib_2_color, color=color.new(#000000,100), style=label.style_none)
+    
+    if fib_3_show
+        fib_3_pos := line.new(bar_index, open + today_adr * fib_3_level, bar_index+50, open + today_adr * fib_3_level,
+             width=width, color=fib_3_color, style=get_line_style(fib_3_style))
+        fib_3_neg := line.new(bar_index, open - today_adr * fib_3_level, bar_index+50, open - today_adr * fib_3_level,
+             width=width, color=fib_3_color, style=get_line_style(fib_3_style))
+        if show_labels
+            fib_3_pos_lbl := label.new(bar_index+50, open + today_adr * fib_3_level, "Fib " + str.tostring(fib_3_level),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=fib_3_color, color=color.new(#000000,100), style=label.style_none)
+            fib_3_neg_lbl := label.new(bar_index+50, open - today_adr * fib_3_level, "Fib -" + str.tostring(fib_3_level),
+                 xloc=xloc.bar_index, textalign=text.align_left, textcolor=fib_3_color, color=color.new(#000000,100), style=label.style_none)
+else
+    today_adr := today_adr[1]
+    line.set_x2(adr_pos, bar_index+50)
+    line.set_x2(adr_neg, bar_index+50)
+    if show_labels
+        label.set_x(adr_pos_lbl, bar_index+50)
+        label.set_x(adr_neg_lbl, bar_index+50)
+    if std_0_5_show
+        line.set_x2(std_0_5_pos, bar_index+50)
+        line.set_x2(std_0_5_neg, bar_index+50)
+        if show_labels
+            label.set_x(std_0_5_pos_lbl, bar_index+50)
+            label.set_x(std_0_5_neg_lbl, bar_index+50)
+    if std_1_show
+        line.set_x2(std_1_pos, bar_index+50)
+        line.set_x2(std_1_neg, bar_index+50)
+        if show_labels
+            label.set_x(std_1_pos_lbl, bar_index+50)
+            label.set_x(std_1_neg_lbl, bar_index+50)
+    if std_2_show
+        line.set_x2(std_2_pos, bar_index+50)
+        line.set_x2(std_2_neg, bar_index+50)
+        if show_labels
+            label.set_x(std_2_pos_lbl, bar_index+50)
+            label.set_x(std_2_neg_lbl, bar_index+50)
+    if fib_1_show
+        line.set_x2(fib_1_pos, bar_index+50)
+        line.set_x2(fib_1_neg, bar_index+50)
+        if show_labels
+            label.set_x(fib_1_pos_lbl, bar_index+50)
+            label.set_x(fib_1_neg_lbl, bar_index+50)
+    if fib_2_show
+        line.set_x2(fib_2_pos, bar_index+50)
+        line.set_x2(fib_2_neg, bar_index+50)
+        if show_labels
+            label.set_x(fib_2_pos_lbl, bar_index+50)
+            label.set_x(fib_2_neg_lbl, bar_index+50)
+    if fib_3_show
+        line.set_x2(fib_3_pos, bar_index+50)
+        line.set_x2(fib_3_neg, bar_index+50)
+        if show_labels
+            label.set_x(fib_3_pos_lbl, bar_index+50)
+            label.set_x(fib_3_neg_lbl, bar_index+50)
+
+// Stats calculation
+var float d_hi = high
+var float d_lo = low
+var float d_open = open
+var float[] d_range = array.new_float()
+var float adr_val = na
+var float d_adr_hi = na
+var float d_adr_lo = na
+
+type adr_stats 
+    int hit_adr_hi = 0
+    int hit_adr_lo = 0
+    int hit_adr_both = 0
+    int thru_adr_hi = 0
+    int thru_adr_lo = 0
+    int hit_fib_1_hi = 0
+    int hit_fib_1_lo = 0
+    int hit_fib_2_hi = 0
+    int hit_fib_2_lo = 0
+    int hit_fib_3_hi = 0
+    int hit_fib_3_lo = 0
+    int hit_std_0_5_hi = 0
+    int hit_std_0_5_lo = 0
+    int hit_std_1_hi = 0
+    int hit_std_1_lo = 0
+    int hit_std_2_hi = 0
+    int hit_std_2_lo = 0
+    int d_count = 0
+
+var adr_sun = adr_stats.new()
+var adr_mon = adr_stats.new()
+var adr_tue = adr_stats.new()
+var adr_wed = adr_stats.new()
+var adr_thu = adr_stats.new()
+var adr_fri = adr_stats.new()
+var adr_sat = adr_stats.new()
+
+if timeframe.change("D")
+    x = adr_mon
+    dow = dayofweek(time[1], "America/New_York")
+    if dow == dayofweek.tuesday
+        x := adr_tue
+    else if dow == dayofweek.wednesday
+        x := adr_wed
+    else if dow == dayofweek.thursday
+        x := adr_thu
+    else if dow == dayofweek.friday
+        x := adr_fri
+    else if dow == dayofweek.saturday
+        x := adr_sat
+    else if dow == dayofweek.sunday
+        x := adr_sun
+
+    if not na(adr_val)
+        x.d_count += 1
+        if d_hi > d_adr_hi
+            x.hit_adr_hi += 1
+        if d_lo < d_adr_lo
+            x.hit_adr_lo += 1
+        if d_hi > d_adr_hi and d_lo < d_adr_lo
+            x.hit_adr_both += 1
+        if close[1] > d_adr_hi
+            x.thru_adr_hi += 1
+        if close[1] < d_adr_lo
+            x.thru_adr_lo += 1
+        if fib_1_show
+            if d_hi > d_open + (adr_val * fib_1_level)
+                x.hit_fib_1_hi += 1
+            if d_lo < d_open - (adr_val * fib_1_level)
+                x.hit_fib_1_lo += 1
+        if fib_2_show
+            if d_hi > d_open + (adr_val * fib_2_level)
+                x.hit_fib_2_hi += 1
+            if d_lo < d_open - (adr_val * fib_2_level)
+                x.hit_fib_2_lo += 1
+        if fib_3_show
+            if d_hi > d_open + (adr_val * fib_3_level)
+                x.hit_fib_3_hi += 1
+            if d_lo < d_open - (adr_val * fib_3_level)
+                x.hit_fib_3_lo += 1
+        if std_0_5_show
+            if d_hi > d_adr_hi + (adr_val * std_dev_0_5)
+                x.hit_std_0_5_hi += 1
+            if d_lo < d_adr_lo - (adr_val * std_dev_0_5)
+                x.hit_std_0_5_lo += 1
+        if std_1_show
+            if d_hi > d_adr_hi + (adr_val * std_dev_1)
+                x.hit_std_1_hi += 1
+            if d_lo < d_adr_lo - (adr_val * std_dev_1)
+                x.hit_std_1_lo += 1
+        if std_2_show
+            if d_hi > d_adr_hi + (adr_val * std_dev_2)
+                x.hit_std_2_hi += 1
+            if d_lo < d_adr_lo - (adr_val * std_dev_2)
+                x.hit_std_2_lo += 1
+
+if timeframe.change("D")
+    d_open := open
+    array.unshift(d_range, d_hi - d_lo)
+    if array.size(d_range) > adr_days
+        array.pop(d_range)
+    if array.size(d_range) == adr_days
+        adr_val := array.avg(d_range)
+        d_adr_hi := open + (adr_val*std_x)/2
+        d_adr_lo := open - (adr_val*std_x)/2
+    d_hi := high
+    d_lo := low
+else
+    d_hi := math.max(high, d_hi)
+    d_lo := math.min(low, d_lo)
+
+// Table functions
+get_table_pos(pos) =>
+    switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+var _loc = get_table_pos(tbl_loc)
+
+get_table_size(size) =>
+    switch size
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+        'Auto' => size.auto
+var _size = get_table_size(tbl_size)
+
+fmt_sample(s, float pct, int count) =>
+    str.format("{0,number,percent}", pct) + (sample_size ? " ("+str.tostring(count)+")" : "")
+
+// Draw table
+if barstate.islast and show_stats
+    var tbl = table.new(_loc, 100, 100, chart.bg_color, chart.fg_color, 2, chart.fg_color, 1)
+    
+    // Column headers (days + empty first cell)
+    table.cell(tbl, 0, 0, "Level", text_size = _size)
+    table.cell(tbl, 1, 0, "Mon", bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 2, 0, "Tue", bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 3, 0, "Wed", bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 4, 0, "Thu", bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 5, 0, "Fri", bgcolor = rch_color, text_size = _size)
+    
+    // Row headers and data
+    var row = 1
+    table.cell(tbl, 0, row, "ADR High", text_size = _size)
+    table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_adr_hi / adr_mon.d_count, adr_mon.hit_adr_hi), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_adr_hi / adr_tue.d_count, adr_tue.hit_adr_hi), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_adr_hi / adr_wed.d_count, adr_wed.hit_adr_hi), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_adr_hi / adr_thu.d_count, adr_thu.hit_adr_hi), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_adr_hi / adr_fri.d_count, adr_fri.hit_adr_hi), bgcolor = rch_color, text_size = _size)
+    row := row + 1
+    
+    table.cell(tbl, 0, row, "ADR Low", text_size = _size)
+    table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_adr_lo / adr_mon.d_count, adr_mon.hit_adr_lo), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_adr_lo / adr_tue.d_count, adr_tue.hit_adr_lo), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_adr_lo / adr_wed.d_count, adr_wed.hit_adr_lo), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_adr_lo / adr_thu.d_count, adr_thu.hit_adr_lo), bgcolor = rch_color, text_size = _size)
+    table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_adr_lo / adr_fri.d_count, adr_fri.hit_adr_lo), bgcolor = rch_color, text_size = _size)
+    row := row + 1
+    
+    table.cell(tbl, 0, row, "ADR High (Close)", text_size = _size)
+    table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.thru_adr_hi / adr_mon.d_count, adr_mon.thru_adr_hi), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.thru_adr_hi / adr_tue.d_count, adr_tue.thru_adr_hi), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.thru_adr_hi / adr_wed.d_count, adr_wed.thru_adr_hi), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.thru_adr_hi / adr_thu.d_count, adr_thu.thru_adr_hi), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.thru_adr_hi / adr_fri.d_count, adr_fri.thru_adr_hi), bgcolor = csd_color, text_size = _size)
+    row := row + 1
+    
+    table.cell(tbl, 0, row, "ADR Low (Close)", text_size = _size)
+    table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.thru_adr_lo / adr_mon.d_count, adr_mon.thru_adr_lo), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.thru_adr_lo / adr_tue.d_count, adr_tue.thru_adr_lo), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.thru_adr_lo / adr_wed.d_count, adr_wed.thru_adr_lo), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.thru_adr_lo / adr_thu.d_count, adr_thu.thru_adr_lo), bgcolor = csd_color, text_size = _size)
+    table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.thru_adr_lo / adr_fri.d_count, adr_fri.thru_adr_lo), bgcolor = csd_color, text_size = _size)
+    row := row + 1
+    
+    if fib_1_show
+        table.cell(tbl, 0, row, "Fib " + str.tostring(fib_1_level), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_fib_1_hi / adr_mon.d_count, adr_mon.hit_fib_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_fib_1_hi / adr_tue.d_count, adr_tue.hit_fib_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_fib_1_hi / adr_wed.d_count, adr_wed.hit_fib_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_fib_1_hi / adr_thu.d_count, adr_thu.hit_fib_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_fib_1_hi / adr_fri.d_count, adr_fri.hit_fib_1_hi), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+        
+        table.cell(tbl, 0, row, "Fib -" + str.tostring(fib_1_level), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_fib_1_lo / adr_mon.d_count, adr_mon.hit_fib_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_fib_1_lo / adr_tue.d_count, adr_tue.hit_fib_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_fib_1_lo / adr_wed.d_count, adr_wed.hit_fib_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_fib_1_lo / adr_thu.d_count, adr_thu.hit_fib_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_fib_1_lo / adr_fri.d_count, adr_fri.hit_fib_1_lo), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+    
+    if fib_2_show
+        table.cell(tbl, 0, row, "Fib " + str.tostring(fib_2_level), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_fib_2_hi / adr_mon.d_count, adr_mon.hit_fib_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_fib_2_hi / adr_tue.d_count, adr_tue.hit_fib_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_fib_2_hi / adr_wed.d_count, adr_wed.hit_fib_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_fib_2_hi / adr_thu.d_count, adr_thu.hit_fib_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_fib_2_hi / adr_fri.d_count, adr_fri.hit_fib_2_hi), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+        
+        table.cell(tbl, 0, row, "Fib -" + str.tostring(fib_2_level), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_fib_2_lo / adr_mon.d_count, adr_mon.hit_fib_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_fib_2_lo / adr_tue.d_count, adr_tue.hit_fib_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_fib_2_lo / adr_wed.d_count, adr_wed.hit_fib_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_fib_2_lo / adr_thu.d_count, adr_thu.hit_fib_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_fib_2_lo / adr_fri.d_count, adr_fri.hit_fib_2_lo), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+    
+    if fib_3_show
+        table.cell(tbl, 0, row, "Fib " + str.tostring(fib_3_level), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_fib_3_hi / adr_mon.d_count, adr_mon.hit_fib_3_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_fib_3_hi / adr_tue.d_count, adr_tue.hit_fib_3_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_fib_3_hi / adr_wed.d_count, adr_wed.hit_fib_3_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_fib_3_hi / adr_thu.d_count, adr_thu.hit_fib_3_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_fib_3_hi / adr_fri.d_count, adr_fri.hit_fib_3_hi), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+        
+        table.cell(tbl, 0, row, "Fib -" + str.tostring(fib_3_level), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_fib_3_lo / adr_mon.d_count, adr_mon.hit_fib_3_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_fib_3_lo / adr_tue.d_count, adr_tue.hit_fib_3_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_fib_3_lo / adr_wed.d_count, adr_wed.hit_fib_3_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_fib_3_lo / adr_thu.d_count, adr_thu.hit_fib_3_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_fib_3_lo / adr_fri.d_count, adr_fri.hit_fib_3_lo), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+    
+    if std_0_5_show
+        table.cell(tbl, 0, row, "Std " + str.tostring(std_dev_0_5), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_std_0_5_hi / adr_mon.d_count, adr_mon.hit_std_0_5_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_std_0_5_hi / adr_tue.d_count, adr_tue.hit_std_0_5_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_std_0_5_hi / adr_wed.d_count, adr_wed.hit_std_0_5_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_std_0_5_hi / adr_thu.d_count, adr_thu.hit_std_0_5_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_std_0_5_hi / adr_fri.d_count, adr_fri.hit_std_0_5_hi), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+        
+        table.cell(tbl, 0, row, "Std -" + str.tostring(std_dev_0_5), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_std_0_5_lo / adr_mon.d_count, adr_mon.hit_std_0_5_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_std_0_5_lo / adr_tue.d_count, adr_tue.hit_std_0_5_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_std_0_5_lo / adr_wed.d_count, adr_wed.hit_std_0_5_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_std_0_5_lo / adr_thu.d_count, adr_thu.hit_std_0_5_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_std_0_5_lo / adr_fri.d_count, adr_fri.hit_std_0_5_lo), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+    
+    if std_1_show
+        table.cell(tbl, 0, row, "Std " + str.tostring(std_dev_1), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_std_1_hi / adr_mon.d_count, adr_mon.hit_std_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_std_1_hi / adr_tue.d_count, adr_tue.hit_std_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_std_1_hi / adr_wed.d_count, adr_wed.hit_std_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_std_1_hi / adr_thu.d_count, adr_thu.hit_std_1_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_std_1_hi / adr_fri.d_count, adr_fri.hit_std_1_hi), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+        
+        table.cell(tbl, 0, row, "Std -" + str.tostring(std_dev_1), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_std_1_lo / adr_mon.d_count, adr_mon.hit_std_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_std_1_lo / adr_tue.d_count, adr_tue.hit_std_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_std_1_lo / adr_wed.d_count, adr_wed.hit_std_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_std_1_lo / adr_thu.d_count, adr_thu.hit_std_1_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_std_1_lo / adr_fri.d_count, adr_fri.hit_std_1_lo), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+    
+    if std_2_show
+        table.cell(tbl, 0, row, "Std " + str.tostring(std_dev_2), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_std_2_hi / adr_mon.d_count, adr_mon.hit_std_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_std_2_hi / adr_tue.d_count, adr_tue.hit_std_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_std_2_hi / adr_wed.d_count, adr_wed.hit_std_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_std_2_hi / adr_thu.d_count, adr_thu.hit_std_2_hi), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_std_2_hi / adr_fri.d_count, adr_fri.hit_std_2_hi), bgcolor = rch_color, text_size = _size)
+        row := row + 1
+        
+        table.cell(tbl, 0, row, "Std -" + str.tostring(std_dev_2), text_size = _size)
+        table.cell(tbl, 1, row, fmt_sample(adr_mon.d_count, adr_mon.hit_std_2_lo / adr_mon.d_count, adr_mon.hit_std_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 2, row, fmt_sample(adr_tue.d_count, adr_tue.hit_std_2_lo / adr_tue.d_count, adr_tue.hit_std_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 3, row, fmt_sample(adr_wed.d_count, adr_wed.hit_std_2_lo / adr_wed.d_count, adr_wed.hit_std_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 4, row, fmt_sample(adr_thu.d_count, adr_thu.hit_std_2_lo / adr_thu.d_count, adr_thu.hit_std_2_lo), bgcolor = rch_color, text_size = _size)
+        table.cell(tbl, 5, row, fmt_sample(adr_fri.d_count, adr_fri.hit_std_2_lo / adr_fri.d_count, adr_fri.hit_std_2_lo), bgcolor = rch_color, text_size = _size)

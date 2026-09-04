@@ -1,0 +1,936 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Confluence Suite", "CS", overlay = true, max_labels_count = 500)
+
+// ============================================================================
+// # ============================[GET USERS INPUT]============================ #
+// ============================================================================
+groupBasic = "BASIC SETTINGS"
+showSignals         = input(true,   "Show Signals",           inline = "1",  group = groupBasic, tooltip = "Enables or disables the signals")
+signalPresets       = input.string("None", "Presets / Filters", ["None","Trend Trader [Preset]","Scalper [Preset]","Swing Trader [Preset]","Contrarian Trader [Preset]","Smart Trail [Filter]","Trend Tracer [Filter]","Trend Strength [Filter]","Trend Catcher [Filter]","Neo Cloud [Filter]"], tooltip = "Automatically sets settings or filters for a given category", group = groupBasic)
+signalMode          = input.string("Confirmation + Exits", "Signal Mode", ["Confirmation + Exits","Contrarian + Exits","None"], tooltip = "Changes the Mode of the signals", group = groupBasic)
+signalClassifier    = input(true,  "AI Signal Classifier",   tooltip = "Shows signal quality from 1-4 on signals", group = groupBasic)
+sensitivity         = input.float(5, "Signal Sensitivity",   minval = 1, maxval = 26, step = 0.1, tooltip = "Lower = more short-term signals; higher = longer-term signals.", group = groupBasic)
+atrLength           = input.int(10,  "Signal Tuner",         minval = 1, maxval = 25, step = 1,   tooltip = "Higher = more refined but laggier signals.", group = groupBasic)
+candleColorType     = input.string("Confirmation Simple", "Candle Coloring", ["Confirmation Simple","Confirmation Gradient","Contrarian Gradient","None"], tooltip = "Changes the type of signal coloring", group = groupBasic)
+
+groupOverlay = "INDICATOR OVERLAY"
+smartTrail          = input(true,  "Smart Trail",        inline = "1", group = groupOverlay)
+trendCatcher        = input(false, "Trend Catcher",      inline = "2", group = groupOverlay)
+neoCloud            = input(false, "Neo Cloud",          inline = "3", group = groupOverlay)
+reversalZone        = input(true,  "Reversal Zones",     inline = "1", group = groupOverlay)
+trendTracer         = input(false, "Trend Tracer",       inline = "2", group = groupOverlay)
+showDashboard       = input(true,  "Dashboard",          inline = "3", group = groupOverlay)
+showTrailingStoploss = input(false,"Trailing Stoploss",  inline = "4", group = groupOverlay)
+showMovingAverage   = input(false, "AI Moving Average",  inline = "4", group = groupOverlay)
+
+groupAdvanced = "ADVANCED SETTINGS"
+autopilotMode       = input.string("Off", "Autopilot Sensitivity", ["Off","Short-Term","Mid-Term","Long-Term"], tooltip = "Sets automatic settings for signals and improves their quality", inline = "3", group = groupAdvanced)
+dashboardLocation   = input.string("Bottom Right", "Dashboard Location", ["Top Right","Bottom Right","Bottom Left"], inline = "4", tooltip = "Changes dashboard position", group = groupAdvanced)
+dashboardSize       = input.string("Normal", "Dashboard Size", ["Tiny","Small","Normal","Large"], inline = "5", tooltip = "Changes the size of the dashboard", group = groupAdvanced)
+
+
+// ============================================================================
+// Apply presets (must happen before any preset-dependent logic)
+// ============================================================================
+if signalPresets == "Trend Trader [Preset]"
+    smartTrail   := true
+    trendCatcher := true
+    neoCloud     := true
+    trendTracer  := true
+if signalPresets == "Scalper [Preset]"
+    sensitivity      := 4
+    smartTrail       := true
+    trendTracer      := true
+    candleColorType  := "Confirmation Gradient"
+if signalPresets == "Swing Trader [Preset]"
+    sensitivity     := 18
+    neoCloud        := true
+    candleColorType := "Confirmation Simple"
+if signalPresets == "Contrarian Trader [Preset]"
+    reversalZone    := true
+    smartTrail      := true
+    candleColorType := "Contrarian Gradient"
+
+n = bar_index
+
+
+// ============================================================================
+// # ============================[FUNCTIONS]============ #
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// 1. SMART TRAIL
+//    This uses "Ultra Smart Trail" by Rathack (open source).
+//    Uses a Trend Flow Line (hybrid HMA + double-WMA) as the midline,
+//    with stdev-based bands at two multipliers (0.618 and 1.0).
+//    Uptrend: lower bands plotted below price (bull colour)
+//    Downtrend: upper bands plotted above price (bear colour)
+//    Direction = TFL rising vs iSmooth bars ago.
+//    Returns: [inner band, outer band, direction_string]
+// ----------------------------------------------------------------------------
+st_iLength = 24
+st_iSmooth = 9
+st_fMult1  = 0.618
+st_fMult2  = 1.0
+st_cBull   = #0084ff
+st_cBear   = #ff9100
+
+f_calcTrendFlowLine(float _src, int _len) =>
+    int   _hmaLen = int(_len * 100 / 24 * 20 / 100)
+    float _hma    = ta.wma(2 * ta.wma(_src, _hmaLen / 2) - ta.wma(_src, _hmaLen), math.floor(math.sqrt(_hmaLen)))
+    int   _w1     = math.round(_len / 3)
+    int   _w2     = math.round((_len - _w1) / 3)
+    float _dwma   = ta.wma(ta.wma(_src, _w2), _w1)
+    math.avg(_hma, _dwma, _hma)
+
+f_getSmartTrail(_len, _smooth, _m1, _m2) =>
+    float _tfl  = f_calcTrendFlowLine(close, _len)
+    float _dev1 = _m1 * ta.stdev(close, _len)
+    float _dev2 = _m2 * ta.stdev(close, _len)
+    bool  _bull = _tfl > _tfl[_smooth]
+    float _inner = _bull ? _tfl - _dev1 : _tfl + _dev1
+    float _outer = _bull ? _tfl - _dev2 : _tfl + _dev2
+    string _dir  = _bull ? 'long' : 'short'
+    [_inner, _outer, _dir, _tfl, _bull]
+
+[smartTrailLine, fillerLine, smartTrailDirection, st_tfl, st_bull] = f_getSmartTrail(st_iLength, st_iSmooth, st_fMult1, st_fMult2)
+
+
+// ----------------------------------------------------------------------------
+// 2. TREND CATCHER
+//    SuperSmoother MA (length 50) coloured by its own slope direction.
+//    SuperSmoother is an Ehlers filter 
+//    Returns color.blue when rising, color.red when falling
+//    Returns: [line_value, color]
+// ----------------------------------------------------------------------------
+f_superSmootherTC(_src, _len) =>
+    _a1 = math.exp(-math.sqrt(2) * math.pi / _len)
+    _b1 = 2 * _a1 * math.cos(math.sqrt(2) * math.pi / _len)
+    _c3 = -math.pow(_a1, 2)
+    _c2 = _b1
+    _c1 = 1 - _c2 - _c3
+    float ss = 0.0
+    ss := _c1 * _src + _c2 * nz(ss[1], _src[1]) + _c3 * nz(ss[2], _src[2])
+    ss
+
+f_getTrendCatcher() =>
+    _ss    = f_superSmootherTC(close, 50)
+    _color = _ss > _ss[1] ? color.blue : color.red
+    [_ss, _color]
+
+[trendCatcherLine, trendCatcherColor] = f_getTrendCatcher()
+newTrendCatcherColor = trendCatcherColor == color.blue ? #02ff65 : #ff1100
+
+
+// ----------------------------------------------------------------------------
+// 3. TREND TRACER
+//    Donchian midpoint (highest high / lowest low over 20 bars) used as
+//    a dynamic support/resistance line, coloured by price position.
+//    Returns: [line_value, color]
+// ----------------------------------------------------------------------------
+f_getTrendTracer() =>
+    _len   = 20
+    _mid   = math.avg(ta.highest(high, _len), ta.lowest(low, _len))
+    _color = close >= _mid ? #02ff65 : #ff1100
+    [_mid, _color]
+
+[trendTracerLine, trendTracerDirection] = f_getTrendTracer()
+
+
+// ----------------------------------------------------------------------------
+// 4. TREND STRENGTH METRIC
+//    ADX-style directional movement index.
+//    Uses RMA smoothing (length 14) for DX and EMA (length 21) for ADX.
+//    Returned value is then multiplied by 2.5 in the main script.
+//    Returns: float (raw ADX, 0–100)
+// ----------------------------------------------------------------------------
+// Trend Strength: VWMA/ATR method (Alpha Extract approach)
+// (close - VWMA) / ATR gives a normalised distance clamped to -2..+2
+// Scaled to 0-100 for dashboard display: 0 = max bearish, 50 = neutral, 100 = max bullish
+
+f_getTrendStrengthMetric(_len) =>
+    _vwma = ta.vwma(close, _len)
+    _atr  = ta.atr(_len)
+    math.max(-2.0, math.min(2.0, (close - _vwma) / _atr))
+
+float trendStrengthRaw    = f_getTrendStrengthMetric(14)
+// Scale -2..+2 → -100..+100 so sign is always clear: negative = bearish, positive = bullish
+float trendStrengthMetric = trendStrengthRaw / 2.0 * 100.0
+
+
+// ----------------------------------------------------------------------------
+// 5. VOLATILITY METRIC
+//    Normalised ATR expressed as a 0–100 percentage of price.
+//    Thresholds used: <30 = Stable, <80 = Moderate, else Volatile.
+//    Returns: float (0–100)
+// ----------------------------------------------------------------------------
+f_getVolatilityMetric() =>
+    _raw   = ta.atr(14) / close * 100   // ATR as % of price
+    // Scale so typical equity/crypto ranges map to 0–100
+    // Raw values ~0–4% become 0–100 after ×25 cap at 100
+    math.min(_raw * 25, 100.0)
+
+volatilityMetric  = f_getVolatilityMetric()
+volatilityMetric2 = ta.sma(f_getVolatilityMetric(), 8)
+
+
+// ----------------------------------------------------------------------------
+// 6. SQUEEZE METRIC
+//    LazyBear-style Bollinger/Keltner squeeze.
+//    Parameters: BB length = 45, KC multiplier factor = 20 (used as length).
+//    Returns a 0–100 value representing momentum compression intensity.
+//    Returns: float (0–100)
+// ----------------------------------------------------------------------------
+f_getSqueezeMetric(_bbLen, _kcLen) =>
+    _bbMult = 2.0
+    _kcMult = 1.5
+    _basis  = ta.sma(close, _bbLen)
+    _dev    = _bbMult * ta.stdev(close, _bbLen)
+    _bbUpper = _basis + _dev
+    _bbLower = _basis - _dev
+    _trueRange = ta.atr(_kcLen)
+    _kcUpper = _basis + _kcMult * _trueRange
+    _kcLower = _basis - _kcMult * _trueRange
+    // Squeeze fires when BB is inside KC
+    _sqzOn  = _bbLower > _kcLower and _bbUpper < _kcUpper
+    // Momentum value (delta of linear regression of close minus midpoint)
+    _mid    = math.avg(math.avg(ta.highest(high, _kcLen), ta.lowest(low, _kcLen)), _basis)
+    _val    = ta.linreg(close - _mid, _bbLen, 0)
+    // Normalise momentum to 0–100 squeeze intensity
+    _maxVal = ta.highest(math.abs(_val), 100)
+    _norm   = _maxVal != 0 ? math.abs(_val) / _maxVal * 100 : 0.0
+    // When in squeeze, return the compression reading; else decay toward 0
+    _sqzOn ? _norm : _norm * 0.5
+
+squeezeMetric = f_getSqueezeMetric(45, 20)
+squeezeIsHigh = squeezeMetric >= 80
+
+
+// ----------------------------------------------------------------------------
+// 7. GAUSSIAN KERNEL (Nadaraya-Watson estimator)
+//    Weighted average where weights = exp(-0.5 * ((i/h)^2))
+//    h = bandwidth, start = bar offset to begin kernel window
+//    Returns: float (smoothed estimate of the series)
+// ----------------------------------------------------------------------------
+f_gaussian(_src, _bandwidth, _start) =>
+    float _sum    = 0.0
+    float _wSum   = 0.0
+    int   _window = math.min(bar_index, 100)   // cap lookback at 100 bars
+    for i = _start to _window
+        float _w  = math.exp(-0.5 * math.pow(i / _bandwidth, 2))
+        _sum  += nz(_src[i]) * _w
+        _wSum += _w
+    _wSum > 0 ? _sum / _wSum : _src
+
+
+// ============================================================================
+// # ============================[FUNCTIONS]================================= #
+// ============================================================================
+type bar
+    float o = open
+    float h = high
+    float l = low
+    float c = close
+    float v = volume
+    int   i = bar_index
+
+bar b = bar.new()
+nzV = nz(b.v)
+
+f_calcV() =>
+    uV = 0.0
+    dV = 0.0
+    switch
+        (b.c - b.l) > (b.h - b.c) => uV := nzV
+        (b.c - b.l) < (b.h - b.c) => dV := -nzV
+        b.c > b.o                  => uV := nzV
+        b.c < b.o                  => dV := -nzV
+        b.c > nz(b.c[1])           => uV := nzV
+        b.c < nz(b.c[1])           => dV := -nzV
+        nz(uV[1]) > 0              => uV := uV + nzV
+        nz(dV[1]) < 0              => dV := dV - nzV
+    [uV, dV]
+
+
+// ============================================================================
+// # ============================[CONSTANTS]=================================== #
+// ============================================================================
+sma4 = ta.sma(close, 4)
+sma5 = ta.sma(close, 5)
+sma9 = ta.sma(close, 9)
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+bullishSignalColor    = #59e08a
+bearishSignalColor    = #ff5959
+dashboardRedText      = #ee787d
+dashboardGreenText    = #42bda8
+dashboardGreenBackground = #284444
+dashboardRedBackground   = #49343e
+
+
+// ============================================================================
+// # ============================[CANDLE COLORING]=========================== #
+// ============================================================================
+macdFastLength   = 12
+macdSlowLength   = 26
+macdSignalLength = 9
+
+if candleColorType != 'Confirmation Simple'
+    macdFastLength   := 10
+    macdSlowLength   := 25
+    macdSignalLength := 8
+
+[MacdX, signalX, histX] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+
+greenHigh    = #4ce653
+greenMidHigh = #4ce653
+greenMidLow  = #4ce653
+greenLow     = #56328f
+yellowLow    = #56328f
+redHigh      = #ff0000
+redMidHigh   = #ff0000
+redMidLow    = #ff0000
+redLow       = #56328f
+
+if candleColorType == 'Confirmation Gradient'
+    greenHigh    := #01d70c
+    greenMidHigh := #269444
+    greenMidLow  := #4f966c
+    greenLow     := #425970
+    yellowLow    := #513a88
+    redHigh      := #ff0000
+    redMidHigh   := #c21637
+    redMidLow    := #c33252
+    redLow       := #8e215f
+
+if candleColorType == 'Contrarian Gradient'
+    redHigh      := #01d70c
+    redMidHigh   := #269444
+    redMidLow    := #4f966c
+    redLow       := #425970
+    yellowLow    := #513a88
+    greenHigh    := #ff0000
+    greenMidHigh := #c21637
+    greenMidLow  := #c33252
+    greenLow     := #8e215f
+
+candleBody = yellowLow
+if histX > 0
+    if histX > histX[1] and histX[1] > 0
+        candleBody := greenLow
+if histX < 0
+    if histX < histX[1] and histX[1] < 0
+        candleBody := redLow
+if MacdX > 0 and histX > 0
+    candleBody := greenMidLow
+    if histX > histX[1] and MacdX[1] > 0 and histX[1] > 0
+        candleBody := greenMidHigh
+        if histX > histX[2] and MacdX[2] > 0 and histX[2] > 0
+            candleBody := greenHigh
+if MacdX < 0 and histX < 0
+    candleBody := redMidLow
+    if histX < histX[1] and MacdX[1] < 0 and histX[1] < 0
+        candleBody := redMidHigh
+        if histX < histX[2] and MacdX[2] < 0 and histX[2] < 0
+            candleBody := redHigh
+
+barcolor(candleColorType == 'None' ? na : candleBody, editable = false)
+
+
+// ============================================================================
+// # ============================[SMART TRAIL]================================ #
+// ============================================================================
+
+// Guard conditions matching original Ultra Smart Trail logic
+st_dev2      = st_fMult2 * ta.stdev(close, st_iLength)
+st_notTooLow  = close[1] > (f_calcTrendFlowLine(close, st_iLength) - st_dev2)
+st_notTooHigh = close[1] < (f_calcTrendFlowLine(close, st_iLength) + st_dev2)
+
+// Four plot lines — upper pair (bearish) and lower pair (bullish)
+
+st_upper2 = plot(smartTrail and not st_bull and st_notTooHigh ? fillerLine   : na, 'ST Upper Outer', color.new(st_cBear, 50),  style = plot.style_linebr, editable = false)
+st_lower2 = plot(smartTrail and st_bull     and st_notTooLow  ? fillerLine   : na, 'ST Lower Outer', color.new(st_cBull, 50),  style = plot.style_linebr, editable = false)
+st_upper1 = plot(smartTrail and not st_bull and st_notTooHigh ? smartTrailLine : na, 'ST Upper Inner', color.new(st_cBear, 100), style = plot.style_linebr, editable = false)
+st_lower1 = plot(smartTrail and st_bull     and st_notTooLow  ? smartTrailLine : na, 'ST Lower Inner', color.new(st_cBull, 100), style = plot.style_linebr, editable = false)
+fill(st_lower2, st_lower1, smartTrailLine, fillerLine,   color.new(st_cBull, 100), color.new(st_cBull, 80), 'Smart Trail Lower')
+fill(st_upper1, st_upper2, smartTrailLine, fillerLine,   color.new(st_cBear, 100), color.new(st_cBear, 80), 'Smart Trail Upper')
+plot(smartTrail ? st_tfl : na, 'Trend Flow Line', st_bull ? st_cBull : st_cBear, 2, editable = false)
+
+
+// ============================================================================
+// # ============================[TREND CATCHER]============================== #
+// ============================================================================
+
+plot(trendCatcher ? trendCatcherLine : na, title = 'Trend Catcher', linewidth = 2,
+  color = newTrendCatcherColor, editable = false)
+
+
+// ============================================================================
+// # ============================[TREND TRACER]=============================== #
+// ============================================================================
+
+plot(trendTracer ? trendTracerLine : na, title = 'Trend Tracer', linewidth = 2,
+  style = plot.style_cross, color = trendTracerDirection, editable = false)
+
+
+// ============================================================================
+// # ============================[REVERSAL ZONES]============================= #
+// ============================================================================
+
+// Neural Probability Channel [AlgoPoint] — Rational Quadratic Kernel regression
+// midline with hybrid ATR/mean-deviation bands at inner (1.5x) and outer (2.5x)
+// multipliers. Replaces SuperSmoother approach with cleaner kernel maths.
+
+npc_src    = hlc3
+npc_len    = 24
+npc_h      = 8.0
+npc_r      = 2.0
+npc_inner  = 1.5
+npc_outer  = 2.5
+npc_col_up = color.rgb(83, 1, 150)    // purple (upper / bearish zone)
+npc_col_dn = color.rgb(2, 139, 55)    // green  (lower / bullish zone)
+
+// Rational Quadratic Kernel weight
+f_npc_weight(int _i, float _h, float _r) =>
+    float d = math.pow(_i, 2)
+    math.pow(1 + d / (2 * _r * math.pow(_h, 2)), -_r)
+
+// Kernel regression baseline (y_hat)
+var float npc_yhat = 0.0
+float npc_num = 0.0
+float npc_den = 0.0
+for _i = 0 to npc_len - 1
+    float _w = f_npc_weight(_i, npc_h, npc_r)
+    npc_num += npc_src[_i] * _w
+    npc_den += _w
+npc_yhat := npc_num / npc_den
+
+// Hybrid volatility: mean deviation + ATR
+float npc_err = 0.0
+for _i = 0 to npc_len - 1
+    npc_err += math.abs(npc_src[_i] - npc_yhat)
+float npc_vol = (npc_err / npc_len + ta.atr(npc_len)) / 2
+
+// Band levels
+float npc_upper_inner = reversalZone ? npc_yhat + npc_vol * npc_inner : na
+float npc_upper_outer = reversalZone ? npc_yhat + npc_vol * npc_outer : na
+float npc_lower_inner = reversalZone ? npc_yhat - npc_vol * npc_inner : na
+float npc_lower_outer = reversalZone ? npc_yhat - npc_vol * npc_outer : na
+
+// Plots — transparent lines, gradient fills between inner/outer
+up_i = plot(npc_upper_inner, 'RZ Upper Inner', color.new(npc_col_up, 100), editable = false)
+up_o = plot(npc_upper_outer, 'RZ Upper Outer', color.new(npc_col_up, 100), editable = false)
+dn_i = plot(npc_lower_inner, 'RZ Lower Inner', color.new(npc_col_dn, 100), editable = false)
+dn_o = plot(npc_lower_outer, 'RZ Lower Outer', color.new(npc_col_dn, 100), editable = false)
+fill(up_i, up_o, npc_upper_inner, npc_upper_outer, color.new(npc_col_up, 100), color.new(npc_col_up, 60), 'RZ Upper Fill', editable = false)
+fill(dn_i, dn_o, npc_lower_inner, npc_lower_outer, color.new(npc_col_dn, 100), color.new(npc_col_dn, 60), 'RZ Lower Fill', editable = false)
+
+
+// ============================================================================
+// # ============================[NEO CLOUD]================================== #
+// ============================================================================
+
+tenkan_len  = 365
+tenkan_mult = 3
+kijun_len   = 365
+kijun_mult  = 7
+spanB_len   = 365
+spanB_mult  = 15
+cloud_offset = 2
+
+avg_neo(src_n, length_n, mult_n) =>
+    _atr_n = ta.atr(length_n) * mult_n
+    up_n   = hl2 + _atr_n
+    dn_n   = hl2 - _atr_n
+    var float upper_n = na
+    var float lower_n = na
+    upper_n := src_n[1] < nz(upper_n) ? math.min(up_n, nz(upper_n)) : up_n
+    lower_n := src_n[1] > nz(lower_n) ? math.max(dn_n, nz(lower_n)) : dn_n
+    var int os_n = 0
+    os_n := src_n > upper_n ? 1 : src_n < lower_n ? 0 : os_n
+    var float spt_n = na
+    spt_n  := os_n == 1 ? lower_n : upper_n
+    var float mx_n = na
+    var float mn_n = na
+    mx_n := ta.cross(src_n, spt_n) ? math.max(src_n, nz(mx_n)) : os_n == 1 ? math.max(src_n, nz(mx_n)) : spt_n
+    mn_n := ta.cross(src_n, spt_n) ? math.min(src_n, nz(mn_n)) : os_n == 0 ? math.min(src_n, nz(mn_n)) : spt_n
+    math.avg(mx_n, mn_n)
+
+tenkan  = avg_neo(close, tenkan_len, tenkan_mult)
+kijun   = avg_neo(close, kijun_len,  kijun_mult)
+senkouA = math.avg(kijun, tenkan)
+senkouB = avg_neo(close, spanB_len,  spanB_mult)
+
+tenkan_css = #2156f300
+kijun_css  = #ff5e0000
+cloud_a    = color.new(#006989, 47)
+cloud_b    = color.new(#ff5252, 66)
+
+plot(neoCloud ? tenkan  : na, 'Tenkan-Sen', tenkan_css, editable = false)
+plot(neoCloud ? kijun   : na, 'Kijun-Sen',  kijun_css,  editable = false)
+plot(neoCloud and ta.crossover( tenkan, kijun) ? kijun : na, 'Crossover',  #2156f300, 3, plot.style_circles, editable = false)
+plot(neoCloud and ta.crossunder(tenkan, kijun) ? kijun : na, 'Crossunder', #ff5e0000, 3, plot.style_circles, editable = false)
+A = plot(neoCloud ? senkouA : na, 'Senkou Span A', na, offset = cloud_offset - 1, editable = false)
+B = plot(neoCloud ? senkouB : na, 'Senkou Span B', na, offset = cloud_offset - 1, editable = false)
+fill(A, B, senkouA > senkouB ? cloud_a : cloud_b)
+
+lastNeo  = int(senkouA + senkouB)
+last5Neo = ta.sma(lastNeo, 2)
+
+plot(close, 'Chikou', #7b1fa2, offset = -cloud_offset + 1, display = display.none, editable = false)
+
+
+// ============================================================================
+// # ============================[DASHBOARD COMPONENTS]======================= #
+// ============================================================================
+
+// Scale is now -100..+100. >30 or <-30 = strong trend, else weak
+trendIndication      = math.abs(trendStrengthMetric) > 30 ? "STRONG" : "WEAK"
+
+volatilityText       = volatilityMetric < 30 ? 'Stable' : volatilityMetric < 80 ? 'Moderate' : 'Volatile'
+volatilityEmoji      = volatilityMetric2 > volatilityMetric ? 'v' : '^'
+
+[uV, dV] = f_calcV()
+totalVolume     = uV + math.abs(dV)
+volumeCellColor = dashboardRedBackground
+volumeTextColor = totalVolume >= 50 ? dashboardGreenText : dashboardRedText
+if totalVolume >= 50
+    totalVolume     := totalVolume * 2
+    volumeCellColor := dashboardGreenBackground
+else
+    totalVolume := totalVolume * -2
+volumeSentiment = totalVolume
+
+table_position = dashboardLocation == 'Bottom Left' ? position.bottom_left
+  : dashboardLocation == 'Top Right' ? position.top_right
+  : position.bottom_right
+table_size = dashboardSize == 'Tiny'  ? size.tiny
+  : dashboardSize == 'Small' ? size.small
+  : size.normal
+
+tb = table.new(table_position, 7, 8,
+  bgcolor      = #1e222d,
+  border_color = #333333,
+  border_width = 1,
+  frame_color  = #333333,
+  frame_width  = 1)
+
+// ── Shared colours ──────────────────────────────────────────────────────────
+color valBg      = #1e222d
+color monoGreen  = #02ff65
+color monoRed    = #ff4444
+
+if showDashboard
+    if barstate.islast
+
+        // ── Header cells: black background, white monospace text ────────────
+        tb.cell(0, 2, autopilotMode == 'Off' ? "Optimal Sensitivity" : "Autopilot Enabled",
+          text_color = color.white, text_size = table_size, text_halign = text.align_left,
+          bgcolor = color.black, text_font_family = font.family_monospace)
+        tb.cell(0, 3, "Trend Strength",
+          text_color = color.white, text_size = table_size, text_halign = text.align_left,
+          bgcolor = color.black, text_font_family = font.family_monospace)
+        tb.cell(0, 4, "Volatility",
+          text_color = color.white, text_size = table_size, text_halign = text.align_left,
+          bgcolor = color.black, text_font_family = font.family_monospace)
+        tb.cell(0, 5, "Squeeze",
+          text_color = color.white, text_size = table_size, text_halign = text.align_left,
+          bgcolor = color.black, text_font_family = font.family_monospace)
+        tb.cell(0, 6, "Volume Sentiment",
+          text_color = color.white, text_size = table_size, text_halign = text.align_left,
+          bgcolor = color.black, text_font_family = font.family_monospace)
+        tb.cell(0, 7, "Trend Bias",
+          text_color = color.white, text_size = table_size, text_halign = text.align_left,
+          bgcolor = color.black, text_font_family = font.family_monospace)
+
+        // ── Value cells: dark background, green/red monospace text ──────────
+
+        // Autopilot / classifier
+        tb.cell(1, 2,
+          autopilotMode != "Off" ? autopilotMode : signalClassifier ? "On" : "Off",
+          text_color = signalClassifier ? monoGreen : color.white,
+          text_size = table_size, bgcolor = valBg,
+          text_font_family = font.family_monospace)
+
+        // Trend strength value
+        tb.cell(1, 3,
+          (trendStrengthMetric >= 0 ? "+" : "") + str.tostring(trendStrengthMetric, "#.#") + "%",
+          text_color = trendStrengthRaw >= 0 ? monoGreen : monoRed,
+          text_size = table_size, bgcolor = valBg,
+          text_font_family = font.family_monospace)
+
+        // Trend bias label
+        string tsLabel = trendStrengthMetric >= 75  ? "Strongly Bullish" :
+                         trendStrengthMetric >= 30  ? "Mildly Bullish"   :
+                         trendStrengthMetric >= -30 ? "Neutral"          :
+                         trendStrengthMetric >= -75 ? "Mildly Bearish"   :
+                                                      "Strongly Bearish"
+        color tsValColor = trendStrengthMetric >= 30  ? monoGreen :
+                           trendStrengthMetric <= -30 ? monoRed   :
+                           color.gray
+        tb.cell(1, 7, tsLabel,
+          text_color = tsValColor,
+          text_size = table_size, bgcolor = valBg,
+          text_font_family = font.family_monospace)
+
+        // Volatility
+        tb.cell(1, 4, volatilityText,
+          text_color = newTrendCatcherColor == #02ff65 ? monoGreen : monoRed,
+          text_size = table_size, bgcolor = valBg,
+          text_font_family = font.family_monospace)
+
+        // Squeeze
+        tb.cell(1, 5, str.tostring(squeezeMetric, format.percent),
+          text_color = trendTracerDirection == #02ff65 ? monoGreen : monoRed,
+          text_size = table_size, bgcolor = valBg,
+          text_font_family = font.family_monospace)
+
+        // Volume sentiment
+        tb.cell(1, 6, str.tostring(math.min(volumeSentiment, 100.), format.percent),
+          text_color = totalVolume >= 0 ? monoGreen : monoRed,
+          text_size = table_size, bgcolor = valBg,
+          text_font_family = font.family_monospace)
+
+
+// ============================================================================
+// ============================================================================
+// # ============================[EXIT MARKERS]=============================== #
+// ============================================================================
+
+// Simplified divergence exit markers
+// Uses RSI divergence + EMA cross 
+
+_rsi14       = ta.rsi(close, 14)
+_emaFast     = ta.ema(close, 9)
+_emaSlow     = ta.ema(close, 21)
+_emaCross    = ta.crossunder(_emaFast, _emaSlow)
+_emaCrossUp  = ta.crossover(_emaFast, _emaSlow)
+_rsiHigh     = ta.highest(_rsi14, 5)
+_rsiLow      = ta.lowest(_rsi14, 5)
+isBearishTriggerWave = _emaCross   and _rsiHigh > 60
+isBullishTriggerWave = _emaCrossUp and _rsiLow  < 40
+
+// # ============================[ADAPTIVE SUPERTREND / SIGNALS]============= #
+// ============================================================================
+
+var int position = 0
+
+length_st = atrLength
+minMult   = math.max(sensitivity - 4, 1)
+maxMult   = math.min(sensitivity,     26)
+
+if autopilotMode == "Short Term"
+    minMult := 1
+    maxMult := 4
+if autopilotMode == 'Mid Term'
+    minMult := 5
+    maxMult := 10
+if autopilotMode == 'Long-Term'
+    minMult := 8
+    maxMult := 13
+
+float step_st    = .5
+float perfAlpha  = 10
+fromCluster      = 'Best'
+maxIter          = 250
+maxData          = 2500
+
+bearCss    = color.red
+bullCss    = color.teal
+amaBearCss = color.new(color.red,  50)
+amaBullCss = color.new(color.teal, 50)
+
+if minMult > maxMult
+    runtime.error('Minimum factor is greater than maximum factor in the range')
+
+type supertrend
+    float upper  = hl2
+    float lower  = hl2
+    float output
+    float perf   = 0
+    float factor
+    int   trend  = 0
+
+type vector
+    array<float> out
+
+var holder  = array.new<supertrend>(0)
+var factors = array.new<float>(0)
+
+if barstate.isfirst
+    for i = 0 to int((maxMult - minMult) / step_st)
+        factors.push(minMult + i * step_st)
+        holder.push(supertrend.new())
+
+atr_st = ta.atr(length_st)
+
+k = 0
+for factor in factors
+    get_spt   = holder.get(k)
+    up_st     = hl2 + atr_st * factor
+    dn_st     = hl2 - atr_st * factor
+    get_spt.trend  := close > get_spt.upper ? 1 : close < get_spt.lower ? 0 : get_spt.trend
+    get_spt.upper  := close[1] < get_spt.upper ? math.min(up_st, get_spt.upper) : up_st
+    get_spt.lower  := close[1] > get_spt.lower ? math.max(dn_st, get_spt.lower) : dn_st
+    diff           = nz(math.sign(close[1] - get_spt.output))
+    get_spt.perf   += 2 / (perfAlpha + 1) * (nz(close - close[1]) * diff - get_spt.perf)
+    get_spt.output := get_spt.trend == 1 ? get_spt.lower : get_spt.upper
+    get_spt.factor := factor
+    k += 1
+
+factor_array = array.new<float>(0)
+data_arr     = array.new<float>(0)
+
+if last_bar_index - bar_index <= maxData
+    for element in holder
+        data_arr.push(element.perf)
+        factor_array.push(element.factor)
+
+centroids = array.new<float>(0)
+centroids.push(data_arr.percentile_linear_interpolation(25))
+centroids.push(data_arr.percentile_linear_interpolation(50))
+centroids.push(data_arr.percentile_linear_interpolation(75))
+
+var array<vector> factors_clusters = na
+var array<vector> perfclusters     = na
+
+if last_bar_index - bar_index <= maxData
+    for _ = 0 to maxIter
+        factors_clusters := array.from(vector.new(array.new<float>(0)), vector.new(array.new<float>(0)), vector.new(array.new<float>(0)))
+        perfclusters     := array.from(vector.new(array.new<float>(0)), vector.new(array.new<float>(0)), vector.new(array.new<float>(0)))
+        i = 0
+        for value in data_arr
+            dist = array.new<float>(0)
+            for centroid in centroids
+                dist.push(math.abs(value - centroid))
+            idx = dist.indexof(dist.min())
+            perfclusters.get(idx).out.push(value)
+            factors_clusters.get(idx).out.push(factor_array.get(i))
+            i += 1
+        new_centroids = array.new<float>(0)
+        for cluster_ in perfclusters
+            new_centroids.push(cluster_.out.avg())
+        if new_centroids.get(0) == centroids.get(0) and new_centroids.get(1) == centroids.get(1) and new_centroids.get(2) == centroids.get(2)
+            break
+        centroids := new_centroids
+
+var float target_factor = na
+var float perf_idx      = na
+var float perf_ama      = na
+
+var from_c = switch fromCluster
+    'Best'    => 2
+    'Average' => 1
+    'Worst'   => 0
+    => 2
+
+den_st = ta.ema(math.abs(close - close[1]), int(perfAlpha))
+
+if not na(perfclusters)
+    target_factor := nz(factors_clusters.get(from_c).out.avg(), target_factor)
+    perf_idx      := math.max(nz(perfclusters.get(from_c).out.avg()), 0) / den_st
+
+var float upper_ts = hl2
+var float lower_ts = hl2
+var int   os_ts    = 0
+
+up_ts = hl2 + atr_st * target_factor
+dn_ts = hl2 - atr_st * target_factor
+upper_ts := close[1] < upper_ts ? math.min(up_ts, upper_ts) : up_ts
+lower_ts := close[1] > lower_ts ? math.max(dn_ts, lower_ts) : dn_ts
+os_ts    := close > upper_ts ? 1 : close < lower_ts ? 0 : os_ts
+ts       = os_ts != 0 ? lower_ts : upper_ts
+
+if na(ts[1]) and not na(ts)
+    perf_ama := ts
+else
+    perf_ama += perf_idx * (ts - perf_ama)
+
+css_ts = os_ts != 0 ? bullCss : bearCss
+plot(showTrailingStoploss ? ts      : na, 'Trailing Stop',     os_ts != os_ts[1] ? na : css_ts, editable = false)
+plot(showMovingAverage    ? perf_ama : na, 'Trailing Stop AMA',
+  ta.cross(close, perf_ama) ? na : close > perf_ama ? amaBullCss : amaBearCss, editable = false)
+
+
+// ============================================================================
+// # ============================[BUY/SELL SIGNALS]========================== #
+// ============================================================================
+
+// Neural Network Signal Grading (from "Neural Network Buy and Sell Signals")
+// Scores each signal on 5 dimensions: AMF momentum, ALMA alignment,
+// support/resistance context, swing structure, and market regime (ADX).
+// Each dimension returns -1..+1, fed through a 3-layer tanh network,
+// output squeezed through sigmoid → 0..1, mapped to grade A+/A/B/C/D/F.
+
+// -- Helpers --
+f_nn_tanh(float _x) =>
+    float _ex = math.exp(2 * _x)
+    (_ex - 1) / (_ex + 1)
+
+f_nn_normalize(float _val, int _lb) =>
+    float _mean = ta.sma(_val, _lb)
+    float _var  = ta.sma(math.pow(_val - _mean, 2), _lb)
+    float _std  = math.sqrt(_var)
+    float _norm = _std > 0 ? (_val - _mean) / _std : 0.0
+    math.max(-3.0, math.min(3.0, _norm))
+
+// -- AMF score: DEMA-based oscillator vs its signal --
+f_nn_dema(float _s, int _l) =>
+    float _e1 = ta.ema(_s, _l)
+    2 * _e1 - ta.ema(_e1, _l)
+
+f_nn_amf_score(bool _isBuy) =>
+    float _atr14  = ta.atr(14)
+    float _fast   = f_nn_dema(close, 7)
+    float _med    = f_nn_dema(close, 11)
+    float _slow   = f_nn_dema(close, 18)
+    float _n      = _atr14 > 0 ? 1.5 * (close - _fast) / _atr14 : 0.0
+    float _sig    = ta.ema(ta.sma(_n * 100, 10), 10)
+    float _line   = ta.sma(_n * 100, 10)
+    float _cross  = _line > _sig and _line[1] <= _sig[1] ? 1.0 :
+                     _line < _sig and _line[1] >= _sig[1] ? -1.0 : 0.0
+    float _raw    = _isBuy ? (_cross > 0 or _line > _sig ? 1.0 : _line < _sig ? -0.6 : 0.0) :
+                             (_cross < 0 or _line < _sig ? 1.0 : _line > _sig ? -0.6 : 0.0)
+    math.max(-1.0, math.min(1.0, _raw))
+
+// -- ALMA alignment score --
+f_nn_alma_score(bool _isBuy) =>
+    float _fast = ta.alma(close, 20, 0.85, 6.0)
+    float _slow = ta.alma(close, 20, 0.77, 6.0)
+    float _gap  = math.abs(_fast - _slow) / ta.atr(14)
+    bool  _wide = _gap > 0.1
+    _isBuy ? (_fast > _slow ? 0.5 : _wide ? -0.8 : -0.2) :
+             (_fast < _slow ? 0.5 : _wide ? -0.8 : -0.2)
+
+// -- Support/Resistance score --
+f_nn_sr_score(bool _isBuy) =>
+    float _ph = ta.pivothigh(high, 10, 10)
+    float _pl = ta.pivotlow(low, 10, 10)
+    var float _res = na
+    var float _sup = na
+    if not na(_ph)
+        _res := _ph
+    if not na(_pl)
+        _sup := _pl
+    float _atr = ta.atr(14)
+    float _rd  = not na(_res) ? math.abs(close - _res) / _atr : 999.0
+    float _sd  = not na(_sup) ? math.abs(close - _sup) / _atr : 999.0
+    bool _nRes = _rd <= 0.5
+    bool _nSup = _sd <= 0.5
+    bool _brkRes = not na(_res) and close > _res and close[5] <= _res
+    bool _brkSup = not na(_sup) and close < _sup and close[5] >= _sup
+    _isBuy ? (_brkRes ? 0.8 : _nSup ? 0.5 : _nRes ? -0.6 : 0.0) :
+             (_brkSup ? 0.8 : _nRes ? 0.5 : _nSup ? -0.6 : 0.0)
+
+// -- Swing structure score --
+f_nn_swing_score(bool _isBuy) =>
+    float _rh = ta.highest(high, 20)
+    float _rl = ta.lowest(low, 20)
+    float _ph2 = ta.highest(high[20], 20)
+    float _pl2 = ta.lowest(low[20], 20)
+    bool _bull = _rh > _ph2 and _rl > _pl2
+    bool _bear = _rh < _ph2 and _rl < _pl2
+    _isBuy ? (_bull ? 0.6 : _bear ? -0.7 : -0.1) :
+             (_bear ? 0.6 : _bull ? -0.7 : -0.1)
+
+// -- Market regime score (ADX-based) --
+f_nn_regime_score(bool _isBuy) =>
+    float _tr   = ta.tr(true)
+    float _pdm  = high - high[1] > low[1] - low ? math.max(high - high[1], 0.0) : 0.0
+    float _mdm  = low[1] - low > high - high[1] ? math.max(low[1] - low, 0.0) : 0.0
+    float _atr30 = ta.rma(_tr, 30)
+    float _pdi  = 100 * ta.rma(_pdm, 30) / _atr30
+    float _mdi  = 100 * ta.rma(_mdm, 30) / _atr30
+    float _dx   = math.abs(_pdi - _mdi) / (_pdi + _mdi) * 100
+    float _adx  = ta.rma(_dx, 30)
+    bool  _trend = _adx >= 60
+    bool  _bull  = _trend and _pdi > _mdi
+    bool  _bear  = _trend and _mdi > _pdi
+    _isBuy ? (_bull ? 0.7 : _bear ? -0.8 : -0.2) :
+             (_bear ? 0.7 : _bull ? -0.8 : -0.2)
+
+// -- Volume sentiment score (-1..+1) --
+// Reuses the uV/dV already calculated; maps bullish volume % to -1..+1
+f_nn_volume_score(bool _isBuy) =>
+    float _uv   = math.max(nz(uV), 0.0)
+    float _dv   = math.abs(math.min(nz(dV), 0.0))
+    float _tot  = _uv + _dv
+    float _ratio = _tot > 0 ? (_uv - _dv) / _tot : 0.0  // -1 = all bear, +1 = all bull
+    _isBuy ? _ratio : -_ratio
+
+// -- Neural network scorer --
+// Inputs are already bounded -1..+1 so no normalisation needed.
+// 6 dimensions: AMF, ALMA, S/R, swing, regime, volume
+f_nn_score(float _amf, float _alma, float _sr, float _swing, float _regime, float _vol) =>
+    // Hidden layers — weights tuned so varied inputs produce varied outputs
+    float _h1 = f_nn_tanh(1.2*_amf + 0.4*_alma + 0.5*_sr + 0.4*_swing + 0.7*_regime + 0.8*_vol + 0.10)
+    float _h2 = f_nn_tanh(1.4*_amf + 0.3*_alma + 0.6*_sr + 0.3*_swing + 0.8*_regime + 0.6*_vol + 0.05)
+    float _h3 = f_nn_tanh(1.6*_amf + 0.4*_alma + 0.4*_sr + 0.5*_swing + 0.6*_regime + 1.0*_vol + 0.15)
+    float _raw = 0.4*_h1 + 0.4*_h2 + 0.4*_h3
+    1.0 / (1.0 + math.exp(-_raw))
+
+// -- Grade, label and colour from score --
+f_nn_grade(float _sc) =>
+    _sc >= 0.80 ? "A+" : _sc >= 0.76 ? "A" : _sc >= 0.65 ? "B" :
+     _sc >= 0.37 ? "C"  : _sc >= 0.28 ? "D" : "F"
+
+f_nn_label(float _sc, bool _isBuy) =>
+    string _str = _sc >= 0.76 ? "Strong"   :
+                  _sc >= 0.65 ? "Good"      :
+                  _sc >= 0.37 ? "Moderate"  : "Weak"
+    _isBuy ? _str + " Buy" : _str + " Sell"
+
+f_nn_color(float _sc) =>
+    _sc >= 0.76 ? color.new(#00FFFF, 0) :
+     _sc >= 0.65 ? color.new(#00CED1, 0) :
+     _sc >= 0.37 ? color.new(#008B8B, 0) :
+     _sc >= 0.28 ? color.new(#FF8000, 0) :
+                   color.new(#FF0000, 0)
+
+// -- Signal generation --
+if showSignals
+    if os_ts > os_ts[1]
+      and (signalPresets != "Smart Trail [Filter]"    or smartTrailDirection == 'long')
+      and (signalPresets != "Trend Tracer [Filter]"   or trendTracerDirection == #02ff65)
+      and (signalPresets != "Trend Strength [Filter]" or math.abs(trendStrengthMetric) > 30)
+      and (signalPresets != "Trend Catcher [Filter]"  or newTrendCatcherColor == #02ff65)
+      and (signalPresets != "Neo Cloud [Filter]"      or int(lastNeo) >= last5Neo)
+        float _sc  = f_nn_score(f_nn_amf_score(true), f_nn_alma_score(true), f_nn_sr_score(true), f_nn_swing_score(true), f_nn_regime_score(true), f_nn_volume_score(true))
+        string _gr = f_nn_grade(_sc)
+        color  _cl = signalClassifier ? f_nn_color(_sc) : bullCss
+        string _lb = signalClassifier ? f_nn_label(_sc, true) : ema50 > ema200 ? "▲+" : "▲"
+        label.new(n, low - ta.atr(30) / 2,
+          _lb,
+          color     = _cl,
+          style     = label.style_label_up,
+          textcolor = color.white,
+          yloc      = yloc.belowbar,
+          size      = size.small)
+        position := 1
+
+    if os_ts < os_ts[1]
+      and (signalPresets != "Smart Trail [Filter]"    or smartTrailDirection == 'short')
+      and (signalPresets != "Trend Tracer [Filter]"   or trendTracerDirection != #02ff65)
+      and (signalPresets != "Trend Strength [Filter]" or math.abs(trendStrengthMetric) > 30)
+      and (signalPresets != "Trend Catcher [Filter]"  or newTrendCatcherColor != #02ff65)
+      and (signalPresets != "Neo Cloud [Filter]"      or int(lastNeo) <= last5Neo)
+        float _sc  = f_nn_score(f_nn_amf_score(false), f_nn_alma_score(false), f_nn_sr_score(false), f_nn_swing_score(false), f_nn_regime_score(false), f_nn_volume_score(false))
+        string _gr = f_nn_grade(_sc)
+        color  _cl = signalClassifier ? f_nn_color(_sc) : bearCss
+        string _lb = signalClassifier ? f_nn_label(_sc, false) : ema50 < ema200 ? "▼+" : "▼"
+        label.new(n, high + ta.atr(30) / 2,
+          _lb,
+          color     = _cl,
+          style     = label.style_label_down,
+          textcolor = color.white,
+          yloc      = yloc.abovebar,
+          size      = size.small)
+        position := -1
+
+// Exit / divergence markers
+plotchar(isBearishTriggerWave and position == 1,  "Long Exit",  "✖", location.abovebar, color = #4774f5,  size = size.tiny, editable = false)
+plotchar(isBullishTriggerWave and position == -1, "Short Exit", "✖", location.belowbar, color = #ff7322,  size = size.tiny, editable = false)

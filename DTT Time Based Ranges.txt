@@ -1,0 +1,1363 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=5
+indicator('Time Based Ranges', 'TBR', overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500, max_bars_back=500, explicit_plot_zorder=true)
+
+import boitoki/Utilities/10 as util
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Timezone
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+gtzst1 = 'Timezone Settings =========================================================='
+i_tz = input.string('America/New_York', title='Timezone', options=['America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC', 'Asia/Tokyo', 'Europe/London', 'Australia/Sydney'], tooltip='Select a valid timezone, e.g., America/New_York for EST/EDT', group=gtzst1)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Modules
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+i_show = true
+gst1 = 'Turn Modules On =========================================================='
+iTimeZonesDisplay = input.bool(true, "Display Time Zones", group=gst1, inline='dttg1_1')
+iTimeZonesInnerDisplay = input.bool(true, "Show Inner Intervals", group=gst1, tooltip="If you turn on this module please check individual Time Zones settings below", inline='dttg1_1')
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Disney Princess Color Palette
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+c_moana = color.rgb(0, 150, 13)        // Teal (Moana)
+c_aurora = color.rgb(253, 2, 128)     // Pink (Aurora)
+c_rapunzel = color.rgb(0, 47, 255)     // Gold (Rapunzel)
+c_snowwhite = color.rgb(255, 0, 0)      // White (Snow White)
+c_jasmine = color.rgb(2, 182, 255)     // Turquoise (Jasmine)
+c_belle = color.rgb(0, 71, 54)        // Yellow (Belle)
+c_tiana = color.rgb(50, 205, 50)        // Green (Tiana)
+c_elsa = color.rgb(0, 9, 87)       // Light Blue (Elsa)
+c_cinderella = color.rgb(150, 3, 248) // Sky Blue (Cinderella)
+c_mulan = color.rgb(220, 20, 60)        // Crimson (Mulan)
+c_ariel = color.rgb(250, 4, 217)      // Aquamarine (Ariel)
+c_pocahontas = color.rgb(2, 89, 250)   // Brown (Pocahontas)
+c_merida = color.rgb(255, 0, 64)        // Orange (Merida)
+c_jdlunch = color.rgb(128, 0, 128)      // Purple (JD Lunch Raid)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Shared Design Inputs
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+design_group = 'Global Design Settings =========================================================='
+iPriceLinesDisplay = input.bool(true, "Show Cinderella Price Line", group=gst1, tooltip="Enable/disable the Midnight price line")
+i_line_style = input.string("Dotted", "Open Price Line Style", options=["Solid", "Dotted", "Dashed"], group=design_group, inline='design_line')
+i_line_style2 = input.string("Dashed", "Princess Session Line Style", options=["Solid", "Dotted", "Dashed"], group=design_group, inline='design_line')
+i_line_width = input.int(1, "Line Width", minval=1, maxval=3, group=design_group, inline='design_line')
+i_line_color = input.color(color.rgb(3, 250, 176, 20), "Line Color", group=design_group, inline='design_line')
+i_show_label = input.bool(true, "Show Labels", group=design_group, inline='design_label')
+i_label_size = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal"], group=design_group, inline='design_label')
+i_show_price = input.bool(true, "Show Price on Labels", group=design_group, inline='design_label')
+i_label_offset = input.int(15, "Label Offset (bars)", minval=1, group=design_group, inline='design_label')
+i_stop_at_session_end = true
+i_sess_border_width = input.int(1, 'Box Border Width', minval=0, group=design_group, inline='box_design')
+i_sess_bgopacity = input.int(97, 'Box Background Transparency', minval=0, maxval=100, step=1, group=design_group, tooltip='Transparency setting. 100 = no background color', inline='box_design')
+
+// Convert line style
+_i_line_style = i_line_style == "Solid" ? line.style_solid : i_line_style == "Dotted" ? line.style_dotted : line.style_dashed
+_i_line_style2 = i_line_style2 == "Solid" ? line.style_solid : i_line_style2 == "Dotted" ? line.style_dotted : line.style_dashed
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Price Line Inputs
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+rcplg1 = 'Price Lines =========================================================='
+
+// Midnight (00:00)
+string ST_L0 = "Cinderella"
+iL0Time = '0000-0001:1234567'
+string iL0name = input.string(ST_L0, "Label Name", group="Midnight Open Price")
+
+// 09:53
+string ST_L1 = "09:53"
+iL1Time = '0953-0954:1234567'
+string iL1name = input.string(ST_L1, "Label Name", group="Price Line [09:53 Moana]")
+
+// 10:34
+string ST_L2 = "10:34"
+iL2Time = '1034-1035:1234567'
+string iL2name = input.string(ST_L2, "Label Name", group="Price Line [10:34 Aurora]")
+
+// 11:10
+string ST_L3 = "11:10"
+iL3Time = '1110-1111:1234567'
+string iL3name = input.string(ST_L3, "Label Name", group="Price Line [11:10 Rapunzel]")
+
+// 11:21
+string ST_L4 = "11:21"
+iL4Time = '1121-1122:1234567'
+string iL4name = input.string(ST_L4, "Label Name", group="Price Line [11:21 Rapunzel]")
+
+// 12:35
+string ST_L5 = "12:35"
+iL5Time = '1235-1236:1234567'
+string iL5name = input.string(ST_L5, "Label Name", group="Price Line [12:35 Snow White]")
+
+// 13:30
+string ST_L6 = "13:30"
+iL6Time = '1330-1331:1234567'
+string iL6name = input.string(ST_L6, "Label Name", group="Price Line [13:30 - Snow White]")
+
+// 12:02
+string ST_L7 = "12:02"
+iL7Time = '1202-1203:1234567'
+string iL7name = input.string(ST_L7, "Label Name", group="Price Line [12:02 - Snow White]")
+
+// 18:07
+string ST_L8 = "18:07"
+iL8Time = '1807-1808:1234567'
+string iL8name = input.string(ST_L8, "Label Name", group="Price Line [18:07 - Belle]")
+
+// 19:37
+string ST_L9 = "19:37"
+iL9Time = '1937-1938:1234567'
+string iL9name = input.string(ST_L9, "Label Name", group="Price Line [19:37 - Tiana]")
+
+// 21:44
+string ST_L10 = "21:44"
+iL10Time = '2144-2145:1234567'
+string iL10name = input.string(ST_L10, "Label Name", group="Price Line [21:44 - Elsa]")
+
+// 00:08
+string ST_L11 = "00:08"
+iL11Time = '0008-0009:1234567'
+string iL11name = input.string(ST_L11, "Label Name", group="Price Line [00:08 - Cinderella]")
+
+// 03:12
+string ST_L12 = "03:12"
+iL12Time = '0312-0313:1234567'
+string iL12name = input.string(ST_L12, "Label Name", group="Price Line [03:12 - Mulan]")
+
+// 04:10
+string ST_L13 = "04:10"
+iL13Time = '0410-0411:1234567'
+string iL13name = input.string(ST_L13, "Label Name", group="Price Line [04:10 - Ariel]")
+
+// 05:29
+string ST_L14 = "05:29"
+iL14Time = '0529-0530:1234567'
+string iL14name = input.string(ST_L14, "Label Name", group="Price Line [05:29 - Pocahontas]")
+
+// 06:58
+string ST_L15 = "06:58"
+iL15Time = '0658-0659:1234567'
+string iL15name = input.string(ST_L15, "Label Name", group="Price Line [06:58 - Merida]")
+
+// Groups for session deletion
+iAS1Time = '0930-1700:1234567'
+iAS11Time = '1700-0300:1234567'
+iAS2Time = '1800-0300:1234567'
+iAS22Time = '0300-1800:1234567'
+iAS3Time = '0300-0930:1234567'
+iAS33Time = '0930-0300:1234567'
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function to Fetch 1-Minute Open Price
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+f_get_1m_open_price(session_time, timezone) =>
+    var float open_price = na
+    in_session = not na(time('1', session_time, timezone))
+    if in_session
+        open_price := open
+    ta.valuewhen(in_session and not in_session[1], open, 0)
+
+//  INTRADAY TIME ZONES
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// DTT INTRADAY TIME ZONES
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+g0 = 'TIME ZONES & INTERVALS - GENERAL SETTINGS'
+g1_01 = 'RANGE TIME ZONE [Moana]'
+g1_02 = 'RANGE TIME ZONE [Aurora]'
+g1_03 = 'RANGE TIME ZONE [Rapunzel]'
+g1_04 = 'RANGE TIME ZONE [Snow White]'
+g1_05 = 'RANGE TIME ZONE [Jasmine]'
+g1_06 = 'RANGE TIME ZONE [Belle]'
+g1_07 = 'RANGE TIME ZONE [Tiana]'
+g1_08 = 'RANGE TIME ZONE [Elsa]'
+g1_09 = 'RANGE TIME ZONE [Cinderella]'
+g1_10 = 'RANGE TIME ZONE [Mulan]'
+g1_11 = 'RANGE TIME ZONE [Ariel]'
+g1_12 = 'RANGE TIME ZONE [Pocahontas]'
+g1_13 = 'RANGE TIME ZONE [Merida]'
+g1_14 = 'JD VANCE RAID (cover the couch)'
+g6 = 'BOX LABELS Settings'
+
+i_sess_displayminutes = input.int(5, 'Display when TF equal or below (minutes)', minval=1, maxval=15, group=g0, tooltip="This is a general setting. It will hide all time zone features above this timeframe")
+
+i_show_sess1 = input.bool(true, 'Show', group=g1_01, inline='session1_1') and i_show
+i_sess1_label = input.string('Moana', '', group=g1_01, inline='session1_1')
+i_sess1 = input.string('0955-1020', 'Time', group=g1_01, inline='session1_1', tooltip='Session time in format HHMM-HHMM')
+i_sess1_fib = input.bool(true, 'Inner Intervals', group=g1_01, inline='session1_1')
+
+i_show_sess2 = input.bool(true, 'Show', group=g1_02, inline='session2_1') and i_show
+i_sess2_label = input.string('Aurora', '', group=g1_02, inline='session2_1')
+i_sess2 = input.string('1020-1110', 'Time', group=g1_02, inline='session2_1', tooltip='Session time in format HHMM-HHMM')
+i_sess2_fib = input.bool(true, 'Inner Intervals', group=g1_02, inline='session2_1')
+
+i_show_sess3 = input.bool(true, 'Show', group=g1_03, inline='session3_1') and i_show
+i_sess3_label = input.string('Rapunzel', '', group=g1_03, inline='session3_1')
+i_sess3 = input.string('1110-1149', 'Time', group=g1_03, inline='session3_1', tooltip='Session time in format HHMM-HHMM')
+i_sess3_fib = input.bool(true, 'Inner Intervals', group=g1_03, inline='session3_1')
+
+i_show_sess4 = input.bool(true, 'Show', group=g1_04, inline='session4_1') and i_show
+i_sess4_label = input.string('Snow White', '', group=g1_04, inline='session4_1')
+i_sess4 = input.string('1235-1409', 'Time', group=g1_04, inline='session4_1', tooltip='Session time in format HHMM-HHMM')
+i_sess4_fib = input.bool(true, 'Inner Intervals', group=g1_04, inline='session4_1')
+
+i_show_sess5 = input.bool(true, 'Show', group=g1_05, inline='session5_1') and i_show
+i_sess5_label = input.string('Jasmine', '', group=g1_05, inline='session5_1')
+i_sess5 = input.string('1409-1700', 'Time', group=g1_05, inline='session5_1', tooltip='Session time in format HHMM-HHMM')
+i_sess5_fib = input.bool(true, 'Inner Intervals', group=g1_05, inline='session5_1')
+
+i_show_sess6 = input.bool(true, 'Show', group=g1_06, inline='session6_1') and i_show
+i_sess6_label = input.string('Belle', '', group=g1_06, inline='session6_1')
+i_sess6 = input.string('1800-1901', 'Time', group=g1_06, inline='session6_1', tooltip='Session time in format HHMM-HHMM')
+i_sess6_fib = input.bool(true, 'Inner Intervals', group=g1_06, inline='session6_1')
+
+i_show_sess7 = input.bool(true, 'Show', group=g1_07, inline='session7_1') and i_show
+i_sess7_label = input.string('Tiana', '', group=g1_07, inline='session7_1')
+i_sess7 = input.string('1901-2114', 'Time', group=g1_07, inline='session7_1', tooltip='Session time in format HHMM-HHMM')
+i_sess7_fib = input.bool(true, 'Inner Intervals', group=g1_07, inline='session7_1')
+
+i_show_sess8 = input.bool(true, 'Show', group=g1_08, inline='session8_1') and i_show
+i_sess8_label = input.string('Elsa', '', group=g1_08, inline='session8_1')
+i_sess8 = input.string('2114-2304', 'Time', group=g1_08, inline='session8_1', tooltip='Session time in format HHMM-HHMM')
+i_sess8_fib = input.bool(true, 'Inner Intervals', group=g1_08, inline='session8_1')
+
+i_show_sess9 = input.bool(true, 'Show', group=g1_09, inline='session9_1') and i_show
+i_sess9_label = input.string('Cinderella', '', group=g1_09, inline='session9_1')
+i_sess9 = input.string('2304-0300', 'Time', group=g1_09, inline='session9_1', tooltip='Session time in format HHMM-HHMM')
+i_sess9_fib = input.bool(true, 'Inner Intervals', group=g1_09, inline='session9_1')
+
+i_show_sess10 = input.bool(true, 'Show', group=g1_10, inline='session10_1') and i_show
+i_sess10_label = input.string('Mulan', '', group=g1_10, inline='session10_1')
+i_sess10 = input.string('0300-0344', 'Time', group=g1_10, inline='session10_1', tooltip='Session time in format HHMM-HHMM')
+i_sess10_fib = input.bool(true, 'Inner Intervals', group=g1_10, inline='session10_1')
+
+i_show_sess11 = input.bool(true, 'Show', group=g1_11, inline='session11_1') and i_show
+i_sess11_label = input.string('Ariel', '', group=g1_11, inline='session11_1')
+i_sess11 = input.string('0344-0520', 'Time', group=g1_11, inline='session11_1', tooltip='Session time in format HHMM-HHMM')
+i_sess11_fib = input.bool(true, 'Inner Intervals', group=g1_11, inline='session11_1')
+
+i_show_sess12 = input.bool(true, 'Show', group=g1_12, inline='session12_1') and i_show
+i_sess12_label = input.string('Pocahontas', '', group=g1_12, inline='session12_1')
+i_sess12 = input.string('0520-0639', 'Time', group=g1_12, inline='session12_1', tooltip='Session time in format HHMM-HHMM')
+i_sess12_fib = input.bool(true, 'Inner Intervals', group=g1_12, inline='session12_1')
+
+i_show_sess13 = input.bool(true, 'Show', group=g1_13, inline='session13_1') and i_show
+i_sess13_label = input.string('Merida', '', group=g1_13, inline='session13_1')
+i_sess13 = input.string('0639-0930', 'Time', group=g1_13, inline='session13_1', tooltip='Session time in format HHMM-HHMM')
+i_sess13_fib = input.bool(true, 'Inner Intervals', group=g1_13, inline='session13_1')
+
+// Function to parse session time and extract hours/minutes
+f_parse_session_time(session_str) =>
+    // Extract time portion (e.g., '0955-1020' from '0955-1020:1234567')
+    colon_pos = str.pos(session_str, ":")
+    time_part = colon_pos > 0 ? str.substring(session_str, 0, colon_pos) : session_str
+    // Find the hyphen position
+    hyphen_pos = str.pos(time_part, "-")
+    // Extract start and end times
+    start_time = hyphen_pos > 0 ? str.substring(time_part, 0, hyphen_pos) : time_part
+    end_time = hyphen_pos > 0 ? str.substring(time_part, hyphen_pos + 1, str.length(time_part)) : time_part
+    // Extract hours and minutes
+    start_hour = str.tonumber(str.substring(start_time, 0, 2))
+    start_minute = str.tonumber(str.substring(start_time, 2, 4))
+    end_hour = str.tonumber(str.substring(end_time, 0, 2))
+    end_minute = str.tonumber(str.substring(end_time, 2, 4))
+    [start_hour * 60 + start_minute, end_hour * 60 + end_minute]
+
+// Parse session times
+[sess1_start, sess1_end] = f_parse_session_time(i_sess1)
+[sess2_start, sess2_end] = f_parse_session_time(i_sess2)
+[sess3_start, sess3_end] = f_parse_session_time(i_sess3)
+[sess4_start, sess4_end] = f_parse_session_time(i_sess4)
+[sess5_start, sess5_end] = f_parse_session_time(i_sess5)
+[sess6_start, sess6_end] = f_parse_session_time(i_sess6)
+[sess7_start, sess7_end] = f_parse_session_time(i_sess7)
+[sess8_start, sess8_end] = f_parse_session_time(i_sess8)
+[sess9_start, sess9_end] = f_parse_session_time(i_sess9)
+[sess10_start, sess10_end] = f_parse_session_time(i_sess10)
+[sess11_start, sess11_end] = f_parse_session_time(i_sess11)
+[sess12_start, sess12_end] = f_parse_session_time(i_sess12)
+[sess13_start, sess13_end] = f_parse_session_time(i_sess13)
+
+// Function to determine current session
+f_get_dtt_session(_hour, _minute) =>
+    time_in_minutes = _hour * 60 + _minute
+    // Check sessions, handling overnight sessions (e.g., sess9)
+    if time_in_minutes >= sess9_start or time_in_minutes < sess9_end
+        i_sess9
+    else if time_in_minutes >= sess1_start and time_in_minutes < sess1_end
+        i_sess1
+    else if time_in_minutes >= sess2_start and time_in_minutes < sess2_end
+        i_sess2
+    else if time_in_minutes >= sess3_start and time_in_minutes < sess3_end
+        i_sess3
+    else if time_in_minutes >= sess4_start and time_in_minutes < sess4_end
+        i_sess4
+    else if time_in_minutes >= sess5_start and time_in_minutes < sess5_end
+        i_sess5
+    else if time_in_minutes >= sess6_start and time_in_minutes < sess6_end
+        i_sess6
+    else if time_in_minutes >= sess7_start and time_in_minutes < sess7_end
+        i_sess7
+    else if time_in_minutes >= sess8_start and time_in_minutes < sess8_end
+        i_sess8
+    else if time_in_minutes >= sess10_start and time_in_minutes < sess10_end
+        i_sess10
+    else if time_in_minutes >= sess11_start and time_in_minutes < sess11_end
+        i_sess11
+    else if time_in_minutes >= sess12_start and time_in_minutes < sess12_end
+        i_sess12
+    else if time_in_minutes >= sess13_start and time_in_minutes < sess13_end
+        i_sess13
+    else
+        na
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function to Draw Price Lines
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+f_draw_lines(_session_time, _iLName, _delete_session, _hour, _minute, _i_tz, _i_label_offset, _i_line_color, _i_line_style, _i_line_width, _i_show_label, _i_label_size, _i_show_price, _i_stop_at_session_end) =>
+    var line lne = na
+    var label lb = na
+
+    line_style = switch _i_line_style
+        "Solid"  => line.style_solid
+        "Dotted" => line.style_dotted
+        "Dashed" => line.style_dashed
+        => _i_line_style
+
+    line_width = math.max(1, math.min(3, _i_line_width))
+
+    open_price = request.security(syminfo.tickerid, '1', f_get_1m_open_price(_session_time, _i_tz), lookahead=barmerge.lookahead_on)
+
+    in_delete_session = not na(time(timeframe.period, _delete_session, _i_tz))
+
+    dtt_session = f_get_dtt_session(_hour, _minute)
+    in_dtt_session = na(dtt_session) ? true : not na(time(timeframe.period, dtt_session, _i_tz))
+
+    if not na(open_price) and not in_delete_session and (not _i_stop_at_session_end or in_dtt_session)
+        start_time = timestamp(_i_tz, year, month, dayofmonth, _hour, _minute, 0)
+        lne := line.new(start_time, open_price, time + (_i_label_offset * timeframe.in_seconds() * 1000), open_price, xloc.bar_time, extend.none, _i_line_color, line_style, line_width)
+        if _i_show_label
+            _mcsize = switch _i_label_size
+                'Tiny'   => size.tiny
+                'Small'  => size.small
+                'Normal' => size.normal
+                => size.tiny
+            label_text = _i_show_price ? _iLName + " (" + str.tostring(open_price, "#.##") + ")" : _iLName
+            lb := label.new(time + (_i_label_offset * timeframe.in_seconds() * 1000), open_price, label_text, xloc.bar_time, yloc.price, na, label.style_label_right, _i_line_color, _mcsize, text.align_right)
+        
+        line.delete(lne[1])
+        label.delete(lb[1])
+        
+// Draw price lines
+if iPriceLinesDisplay
+    f_draw_lines(iL0Time, iL0name, iAS22Time, 0, 0, i_tz, i_label_offset, c_cinderella, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL1Time, iL1name, iAS11Time, 9, 53, i_tz, i_label_offset, c_moana, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL2Time, iL2name, iAS11Time, 10, 34, i_tz, i_label_offset, c_aurora, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL3Time, iL3name, iAS11Time, 11, 10, i_tz, i_label_offset, c_rapunzel, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL4Time, iL4name, iAS11Time, 11, 21, i_tz, i_label_offset, c_rapunzel, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL5Time, iL5name, iAS11Time, 12, 35, i_tz, i_label_offset, c_snowwhite, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL6Time, iL6name, iAS11Time, 13, 30, i_tz, i_label_offset, c_snowwhite, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL7Time, iL7name, iAS11Time, 12, 2, i_tz, i_label_offset, c_jdlunch, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL8Time, iL8name, iAS22Time, 18, 7, i_tz, i_label_offset, c_belle, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL9Time, iL9name, iAS22Time, 19, 37, i_tz, i_label_offset, c_tiana, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL10Time, iL10name, iAS22Time, 21, 44, i_tz, i_label_offset, c_elsa, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL11Time, iL11name, iAS22Time, 0, 8, i_tz, i_label_offset, c_cinderella, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL12Time, iL12name, iAS33Time, 3, 12, i_tz, i_label_offset, c_mulan, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL13Time, iL13name, iAS33Time, 4, 10, i_tz, i_label_offset, c_ariel, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL14Time, iL14name, iAS33Time, 5, 29, i_tz, i_label_offset, c_pocahontas, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+    f_draw_lines(iL15Time, iL15name, iAS33Time, 6, 58, i_tz, i_label_offset, c_merida, _i_line_style, i_line_width, i_show_label, i_label_size, i_show_price, i_stop_at_session_end)
+
+option_yes = 'Yes'
+option_no = 'No'
+option_extend1 = 'Extend'
+option_hide = '× Hide'
+option_border_style1 = '────'
+option_border_style2 = '- - - - - -'
+option_border_style3 = '•••••••••'
+
+fmt_price = '{0,number,#.#####}'
+fmt_pips = '{0,number,#.#}'
+icon_separator = ' • '
+icon_separator2 = ' * '
+color_none = color.new(color.black, 100)
+color_text = color.new(color.white, 0)
+c_none = color.new(color.black, 100)
+
+qmc_lookback = 2 * 60
+i_lookback = 4 * 60
+i_history_period = 1
+
+HourNY = hour(time, "America/New_York")
+HourUTC = hour(time, "UTC")
+var DST = false
+DST := HourUTC - HourNY == 5 or HourUTC - HourNY == -19 ? false : HourUTC - HourNY == 4 or HourUTC - HourNY == -20 ? true : na
+
+i_sess_box_style = 'Box'
+i_label_show = input.bool(true, 'Box labels', inline='label_show', group=g6) and i_show
+i_label_position_y = str.lower(input.string('Top', '', options=['Top', 'Bottom'], inline='label_show', group=g6))
+i_label_position_s = str.lower(input.string('Outside', '', options=['Inside', 'Outside'], inline='label_show', group=g6))
+i_label_format_name = input.bool(true, 'Name', inline='label_format', group=g6)
+i_label_format_day = input.bool(false, 'Day', inline='label_format', group=g6)
+i_label_format_price = input.bool(false, 'Price', inline='label_format', group=g6)
+i_label_format_pips = input.bool(false, 'Pips', inline='label_format', group=g6)
+
+i_label_show2 = input.bool(true, 'Interval labels', inline='label_show2', group=g6) and i_show
+i_label_size2 = str.lower(input.string('Tiny', '', options=['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], inline='label_show2', group=g6))
+i_label_position_y2 = str.lower(input.string('Bottom', '', options=['Top', 'Bottom'], inline='label_show2', group=g6))
+i_label_position_s2 = 'Outside'
+i_label_format_name2 = true
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Inner Intervals
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+innerint1002 = timestamp(i_tz, year, month, dayofmonth, 10, 02, 00)
+innertext1002 = '10:02'
+innerint1007 = timestamp(i_tz, year, month, dayofmonth, 10, 07, 00)
+innertext1007 = '10:07'
+innerint1012 = timestamp(i_tz, year, month, dayofmonth, 10, 12, 00)
+innertext1012 = '10:12'
+innerint1034 = timestamp(i_tz, year, month, dayofmonth, 10, 34, 00)
+innertext1034 = '10:34'
+innerint1044 = timestamp(i_tz, year, month, dayofmonth, 10, 44, 00)
+innertext1044 = '10:44'
+innerint1055 = timestamp(i_tz, year, month, dayofmonth, 10, 55, 00)
+innertext1055 = '10:55'
+innerint1121 = timestamp(i_tz, year, month, dayofmonth, 11, 21, 00)
+innertext1121 = '11:21'
+innerint1129 = timestamp(i_tz, year, month, dayofmonth, 11, 29, 00)
+innertext1129 = '11:29'
+innerint1137 = timestamp(i_tz, year, month, dayofmonth, 11, 37, 00)
+innertext1137 = '11:37'
+innerint1300 = timestamp(i_tz, year, month, dayofmonth, 13, 00, 00)
+innertext1300 = '13:00'
+innerint1320 = timestamp(i_tz, year, month, dayofmonth, 13, 20, 00)
+innertext1320 = '13:20'
+innerint1340 = timestamp(i_tz, year, month, dayofmonth, 13, 40, 00)
+innertext1340 = '13:40'
+innerint1447 = timestamp(i_tz, year, month, dayofmonth, 14, 47, 00)
+innertext1447 = '14:47'
+innerint1514 = timestamp(i_tz, year, month, dayofmonth, 15, 14, 00)
+innertext1514 = '15:14'
+innerint1545 = timestamp(i_tz, year, month, dayofmonth, 15, 45, 00)
+innertext1545 = '15:45'
+innerint1807 = timestamp(i_tz, year, month, dayofmonth, 18, 07, 00)
+innertext1807 = '18:07'
+innerint1822 = timestamp(i_tz, year, month, dayofmonth, 18, 22, 00)
+innertext1822 = '18:22'
+innerint1834 = timestamp(i_tz, year, month, dayofmonth, 18, 34, 00)
+innertext1834 = '18:34'
+innerint1916 = timestamp(i_tz, year, month, dayofmonth, 19, 16, 00)
+innertext1916 = '19:16'
+innerint1949 = timestamp(i_tz, year, month, dayofmonth, 19, 49, 00)
+innertext1949 = '19:49'
+innerint2016 = timestamp(i_tz, year, month, dayofmonth, 20, 16, 00)
+innertext2016 = '20:16'
+innerint2126 = timestamp(i_tz, year, month, dayofmonth, 21, 26, 00)
+innertext2126 = '21:26'
+innerint2154 = timestamp(i_tz, year, month, dayofmonth, 21, 54, 00)
+innertext2154 = '21:54'
+innerint2216 = timestamp(i_tz, year, month, dayofmonth, 22, 16, 00)
+innertext2216 = '22:16'
+innerint2321 = timestamp(i_tz, year, month, dayofmonth, 23, 21, 00)
+innertext2321 = '23:21'
+innerint0029 = timestamp(i_tz, year, month, dayofmonth+1, 00, 29, 00)
+innertext0029 = '00:29'
+innerint0117 = timestamp(i_tz, year, month, dayofmonth+1, 01, 17, 00)
+innertext0117 = '01:17'
+innerint2321v2 = timestamp(i_tz, year, month, dayofmonth-1, 23, 21, 00)
+innerint0029v2 = timestamp(i_tz, year, month, dayofmonth, 00, 29, 00)
+innerint0117v2 = timestamp(i_tz, year, month, dayofmonth, 01, 17, 00)
+innerint2321v3 = timestamp(i_tz, year, month, dayofmonth, 23, 21, 00)
+innerint0029v3 = timestamp(i_tz, year, month, dayofmonth+1, 00, 29, 00)
+innerint0117v3 = timestamp(i_tz, year, month, dayofmonth+1, 01, 17, 00)
+innerint0305 = timestamp(i_tz, year, month, dayofmonth, 03, 05, 00)
+innertext0305 = '03:05'
+innerint0316 = timestamp(i_tz, year, month, dayofmonth, 03, 16, 00)
+innertext0316 = '03:16'
+innerint0325 = timestamp(i_tz, year, month, dayofmonth, 03, 25, 00)
+innertext0325 = '03:25'
+innerint0355 = timestamp(i_tz, year, month, dayofmonth, 03, 55, 00)
+innertext0355 = '03:55'
+innerint0419 = timestamp(i_tz, year, month, dayofmonth, 04, 19, 00)
+innertext0419 = '04:19'
+innerint0438 = timestamp(i_tz, year, month, dayofmonth, 04, 38, 00)
+innertext0438 = '04:38'
+innerint0529 = timestamp(i_tz, year, month, dayofmonth, 05, 29, 00)
+innertext0529 = '05:29'
+innerint0548 = timestamp(i_tz, year, month, dayofmonth, 05, 48, 00)
+innertext0548 = '05:48'
+innerint0604 = timestamp(i_tz, year, month, dayofmonth, 06, 04, 00)
+innertext0604 = '06:04'
+innerint0658 = timestamp(i_tz, year, month, dayofmonth, 06, 58, 00)
+innertext0658 = '06:58'
+innerint0741 = timestamp(i_tz, year, month, dayofmonth, 07, 41, 00)
+innertext0741 = '07:41'
+innerint0815 = timestamp(i_tz, year, month, dayofmonth, 08, 15, 00)
+innertext0815 = '08:15'
+innerint1212 = timestamp(i_tz, year, month, dayofmonth, 12, 12, 00)
+innertext1212 = '12:12'
+innerint1215 = timestamp(i_tz, year, month, dayofmonth, 12, 15, 00)
+innertext1215 = '12:15'
+innerint1218 = timestamp(i_tz, year, month, dayofmonth, 12, 18, 00)
+innertext1218 = '12:18'
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Utility Functions
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+f_get_time_by_bar(bar_count) => timeframe.multiplier * bar_count * 60 * 1000
+isBelowNMinutes(n) => timeframe.multiplier <= n
+isDailyOrHigher(n) => (timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly) and timeframe.multiplier >= n
+isHigherTF() => (timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly)
+isSupHigherTF() => (timeframe.isweekly or timeframe.ismonthly)
+
+i_sess_displaytf = isBelowNMinutes(i_sess_displayminutes)
+
+
+f_get_htftime_by_bar(bar_count) =>
+    if timeframe.isintraday
+        timeframe.multiplier * bar_count * 60 * 1000
+    else
+        bar_count * 24 * 60 * 60 * 1000
+
+f_get_period(_session, _start, _lookback) =>
+    result = math.max(_start, 1)
+    for i = result to _lookback
+        if na(_session[i+1]) and _session[i]
+            result := i+1
+            break
+    result
+
+f_get_label_position(_y, _side) =>
+    switch _y
+        'top'    => _side == 'outside' ? label.style_label_lower_left : label.style_label_upper_left
+        'bottom' => _side == 'outside' ? label.style_label_upper_left : label.style_label_lower_left
+
+f_get_day(n) =>
+    switch n
+        1 => 'Sun'
+        2 => 'Mon'
+        3 => 'Tue'
+        4 => 'Wed'
+        5 => 'Thu'
+        6 => 'Fri'
+        7 => 'Sat'
+
+f_get_started(_session) => na(_session[1]) and _session
+
+f_get_ended(_session) => na(_session) and _session[1]
+
+f_border_style(_style) =>
+    switch _style
+        option_border_style1 => line.style_solid
+        option_border_style2 => line.style_dashed
+        option_border_style3 => line.style_dotted
+        => _style
+
+f_get_label_position2(_y2, _side2) =>
+    switch _y2
+        'top'    => _side2 == 'inside' ? label.style_label_lower_left : label.style_label_upper_left
+        'bottom' => _side2 == 'inside' ? label.style_label_upper_left : label.style_label_lower_left
+
+i_label_position = f_get_label_position(i_label_position_y, i_label_position_s)
+i_label_position2 = f_get_label_position2(i_label_position_y2, i_label_position_s2)
+
+f_message_limit_bars(_v) => '⚠️ This box\'s right position exceeds 500 bars(' + str.tostring(_v) + '). This box is not displayed correctly.'
+
+f_set_line_x1(_line, _x) =>
+    if (line.get_x1(_line) != _x)
+        line.set_x1(_line, _x)
+
+f_set_line_x2(_line, _x) =>
+    if (line.get_x2(_line) != _x)
+        line.set_x2(_line, _x)
+
+f_set_line_y1(_line, _y) =>
+    if (line.get_y1(_line) != _y)
+        line.set_y1(_line, _y)
+
+f_set_line_y2(_line, _y) =>
+    if (line.get_y2(_line) != _y)
+        line.set_y2(_line, _y)
+
+f_set_box_right(_box, _x) =>
+    if box.get_right(_box) != _x
+        box.set_right(_box, _x)
+
+InSession(sessionTimes) => not na(time(timeframe.period, sessionTimes, i_tz))
+
+IsLastBarSession(sessionTime, sessionTimeZone=syminfo.timezone) =>
+    var int lastBarHour = na
+    var int lastBarMinute = na
+    var int lastBarSecond = na
+    inSess = not na(time(timeframe.period, sessionTime, sessionTimeZone))
+    not inSess and inSess[1]
+
+
+f_render_session(_show, _session, _is_started, _is_ended, _color, _top, _bottom, _x1, _x2, _boxes) =>
+    var box my_box = na
+    if _show
+        if _is_started
+            my_box := box.new(_x1, _top, _x2, _bottom, _color, i_sess_border_width, _i_line_style2, bgcolor=color.new(_color, i_sess_bgopacity))
+            array.push(_boxes, my_box)
+            util.clear_boxes(_boxes, i_history_period)
+        else if _session
+            box.set_top(my_box, _top)
+            box.set_bottom(my_box, _bottom)
+        else if _is_ended
+            box.set_right(my_box, bar_index)
+    my_box
+
+f_render_label(_show, _session, _is_started, _color, _top, _bottom, _text, _labels, _label_size, _label_position) =>
+    var label my_label = na
+    var int start_time = na
+    v_position_y = (i_label_position_y == 'top') ? _top : _bottom
+    v_label = array.new_string()
+    v_chg = _top - _bottom
+    
+    if _is_started
+        start_time := time
+    
+    if i_label_format_name and not na(_text)
+        array.push(v_label, _text)
+    if i_label_format_day
+        array.push(v_label, util.get_day(dayofweek(start_time, i_tz)))
+    if i_label_format_price
+        array.push(v_label, str.format(fmt_price, v_chg))
+    if i_label_format_pips
+        array.push(v_label, str.format(fmt_pips, util.toPips(v_chg)) + ' pips')
+
+    if _show
+        if _is_started
+            my_label := label.new(bar_index, v_position_y, array.join(v_label, icon_separator), textcolor=_color, color=color_none, size=_label_size, style=_label_position)
+            array.push(_labels, my_label)
+            util.clear_labels(_labels, i_history_period)
+        else if _session
+            label.set_y(my_label, v_position_y)
+            label.set_text(my_label, array.join(v_label, icon_separator))
+
+f_render_inner_intervals(_show, _session, _is_started, _x1, _x2, _color, _top, _bottom, _innerlabels, _width, _style, _lines, _innerint, _innerint9, _innertext) =>
+    var line my_line1 = na
+    var label my_label1 = na
+    var int start_time2 = na
+    v_position_y2 = (i_label_position_y2 == 'top') ? _top : _bottom
+    v_label1 = array.new_string()
+    
+    if _is_started
+        start_time2 := time
+    if i_label_format_name2 and not na(_innertext)
+        array.push(v_label1, _innertext)
+    
+    if _show
+        if _is_started
+            my_line1 := line.new(_innerint, _top, _innerint, _bottom, xloc.bar_time, width=_width, color=color.new(_color, 30), style=_style)
+            array.push(_lines, my_line1)
+            my_label1 := label.new(_innerint9, v_position_y2, array.join(v_label1, icon_separator2), xloc.bar_time, yloc.price, na, textcolor=_color, size=i_label_size2, style=i_label_position2)
+            array.push(_innerlabels, my_label1)
+        else if _session
+            line.set_y1(my_line1, _top)
+            line.set_y2(my_line1, _bottom)
+            f_set_line_y2(my_line1, _bottom)
+            if (str.contains(i_label_position_y2, 'top'))
+                label.set_y(my_label1, v_position_y2)
+            else
+                label.set_y(my_label1, v_position_y2 - 2)
+            label.set_x(my_label1, _innerint9)
+            label.set_text(my_label1, array.join(v_label1, icon_separator2))
+
+f_render_inner_intervals2(_show, _session, _is_started, _x1, _x2, _color, _top, _bottom, _innerlabels, _width, _style, _lines, _innerint, _innerint9, _innerint99, _innertext) =>
+    var line my_line1 = na
+    var label my_label1 = na
+    var int start_time2 = na
+    v_position_y2 = (i_label_position_y2 == 'top') ? _top : _bottom
+    v_label1 = array.new_string()
+    sessionsDST1Time = '0000-0100:1234567'
+    sessionsDST11Time = '0100-2300:1234567'
+    sessionsDST111Time = '2300-0000:1234567'
+    
+    if _is_started
+        start_time2 := time
+    if i_label_format_name2 and not na(_innertext)
+        array.push(v_label1, _innertext)
+    
+    if _show
+        if InSession(sessionsDST11Time) and not (IsLastBarSession(sessionsDST11Time, i_tz))
+            if _is_started
+                my_line1 := line.new(_innerint, _top, _innerint, _bottom, xloc.bar_time, width=_width, color=color.new(_color, 30), style=_style)
+                array.push(_lines, my_line1)
+                my_label1 := label.new(_innerint9, v_position_y2, array.join(v_label1, icon_separator2), xloc.bar_time, yloc.price, na, textcolor=_color, size=i_label_size2, style=i_label_position2)
+                array.push(_innerlabels, my_label1)
+            else if _session
+                line.set_y1(my_line1, _top)
+                line.set_y2(my_line1, _bottom)
+                f_set_line_y2(my_line1, _bottom)
+                if (str.contains(i_label_position_y2, 'top'))
+                    label.set_y(my_label1, v_position_y2)
+                else
+                    label.set_y(my_label1, v_position_y2 - 2)
+                label.set_x(my_label1, _innerint9)
+                label.set_text(my_label1, array.join(v_label1, icon_separator2))
+        
+        if InSession(sessionsDST1Time) and not (IsLastBarSession(sessionsDST1Time, i_tz))
+            if _is_started
+                my_line1 := line.new(_innerint, _top, _innerint, _bottom, xloc.bar_time, width=_width, color=color.new(_color, 30), style=_style)
+                array.push(_lines, my_line1)
+                my_label1 := label.new(_innerint, v_position_y2, array.join(v_label1, icon_separator2), xloc.bar_time, yloc.price, na, textcolor=_color, size=i_label_size2, style=i_label_position2)
+                array.push(_innerlabels, my_label1)
+            else if _session
+                line.set_y1(my_line1, _top)
+                line.set_y2(my_line1, _bottom)
+                f_set_line_y2(my_line1, _bottom)
+                if (str.contains(i_label_position_y2, 'top'))
+                    label.set_y(my_label1, v_position_y2)
+                else
+                    label.set_y(my_label1, v_position_y2 - 2)
+                label.set_x(my_label1, _innerint)
+                label.set_text(my_label1, array.join(v_label1, icon_separator2))
+        
+        if InSession(sessionsDST111Time) and not (IsLastBarSession(sessionsDST111Time, i_tz))
+            if _is_started
+                my_line1 := line.new(_innerint, _top, _innerint, _bottom, xloc.bar_time, width=_width, color=color.new(_color, 30), style=_style)
+                array.push(_lines, my_line1)
+                my_label1 := label.new(_innerint99, v_position_y2, array.join(v_label1, icon_separator2), xloc.bar_time, yloc.price, na, textcolor=_color, size=i_label_size2, style=i_label_position2)
+                array.push(_innerlabels, my_label1)
+            else if _session
+                line.set_y1(my_line1, _top)
+                line.set_y2(my_line1, _bottom)
+                f_set_line_y2(my_line1, _bottom)
+                if (str.contains(i_label_position_y2, 'top'))
+                    label.set_y(my_label1, v_position_y2)
+                else
+                    label.set_y(my_label1, v_position_y2 - 2)
+                label.set_x(my_label1, _innerint99)
+                label.set_text(my_label1, array.join(v_label1, icon_separator2))
+
+f_render_limitmessage(_show, _session, _is_started, _is_ended, _x, _y, _rightbars) =>
+    var label my_note = na
+    if _show
+        if _is_started
+            if _rightbars > 500
+                my_note := label.new(_x, _y, f_message_limit_bars(_rightbars), style=label.style_label_upper_left, color=color.yellow, textalign=text.align_left, yloc=yloc.price)
+        else if _session
+            if _rightbars > 500
+                label.set_y(my_note, _y)
+                label.set_text(my_note, f_message_limit_bars(_rightbars))
+            else
+                label.delete(my_note)
+        else if _is_ended
+            label.delete(my_note)
+    true
+
+f_render_main(_show, _session, _is_started, _is_ended, _color, _top, _bottom) =>
+    var box my_box = na
+    var label my_note = na
+    var x1 = 0
+    var x2 = 0
+    var session_open = 0.0
+    var session_high = 0.0
+    var session_low = 0.0
+    x0_1 = ta.valuewhen(na(_session[1]) and _session, bar_index, 1)
+    x0_2 = ta.valuewhen(na(_session) and _session[1], bar_index, 0)
+    x0_d = math.abs(x0_2 - x0_1)
+    limit_bars = 500
+    rightbars = x0_d
+    if _show
+        if _is_started
+            x1 := bar_index
+            x2 := bar_index + (math.min(x0_d, limit_bars))
+            session_open := open
+            session_high := _top
+            session_low := _bottom
+        else if _session
+            true_x2 = x1 + x0_d
+            rightbars := true_x2 - bar_index
+            limit_bars := bar_index + 500
+            x2 := math.min(true_x2, limit_bars)
+            session_high := _top
+            session_low := _bottom
+        else if _is_ended
+            session_open := na
+    [x1, x2, session_open, session_high, session_low, rightbars]
+
+draw(_show, _session, _label, _show_fib, _lookback, _boxes_session, _lines_session, _lines_fib, _labels, _innerlabels, _innerint1, _innerint2, _innerint3, _innertext1, _innertext2, _innertext3, _innerint91, _innerint92, _innerint93) =>
+    max = f_get_period(_session, 1, _lookback)
+    top = ta.highest(high, max)
+    bottom = ta.lowest(low, max)
+    is_started = f_get_started(_session)
+    is_ended = f_get_ended(_session)
+    // Determine color based on session label
+    _color = switch _label
+        "Moana" => c_moana
+        "Aurora" => c_aurora
+        "Rapunzel" => c_rapunzel
+        "Snow White" => c_snowwhite
+        "Jasmine" => c_jasmine
+        "Belle" => c_belle
+        "Tiana" => c_tiana
+        "Elsa" => c_elsa
+        "Cinderella" => c_cinderella
+        "Mulan" => c_mulan
+        "Ariel" => c_ariel
+        "Pocahontas" => c_pocahontas
+        "Merida" => c_merida
+        => i_line_color  // Fallback to original color
+    [x1, x2, _open, _high, _low, _rightbars] = f_render_main(_show, _session, is_started, is_ended, _color, top, bottom)
+    if (i_sess_box_style == 'Box') and (i_sess_displaytf) and not (isHigherTF())
+        f_render_session(_show, _session, is_started, is_ended, _color, top, bottom, x1, x2, _boxes_session)
+    _mcsize = switch i_label_size
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.tiny
+    if (i_label_show) and (i_sess_displaytf) and not (isHigherTF())
+        f_render_label(_show, _session, is_started, _color, top, bottom, _label, _labels, _mcsize, i_label_position)
+    if (_show_fib) and (i_sess_displaytf) and (iTimeZonesInnerDisplay) and not (isHigherTF())
+        f_render_inner_intervals(_show, _session, is_started, x1, x2, _color, top, bottom, _innerlabels, i_line_width, _i_line_style, _lines_fib, _innerint1, _innerint91, _innertext1)
+        f_render_inner_intervals(_show, _session, is_started, x1, x2, _color, top, bottom, _innerlabels, i_line_width, _i_line_style, _lines_fib, _innerint2, _innerint92, _innertext2)
+        f_render_inner_intervals(_show, _session, is_started, x1, x2, _color, top, bottom, _innerlabels, i_line_width, _i_line_style, _lines_fib, _innerint3, _innerint93, _innertext3)
+        util.clear_lines(_lines_fib, i_history_period*3)
+        util.clear_labels(_innerlabels, i_history_period*3)
+    f_render_limitmessage(_show, _session, is_started, is_ended, x1, bottom, _rightbars)
+    [_session, _open, _high, _low]
+
+draw2(_show, _session, _label, _show_fib, _lookback, _boxes_session, _lines_session, _lines_fib, _labels, _innerlabels, _innerint1, _innerint2, _innerint3, _innertext1, _innertext2, _innertext3, _innerint91, _innerint92, _innerint93, _innerint911, _innerint922, _innerint933) =>
+    max = f_get_period(_session, 1, _lookback)
+    top = ta.highest(high, max)
+    bottom = ta.lowest(low, max)
+    is_started = f_get_started(_session)
+    is_ended = f_get_ended(_session)
+    // Determine color based on session label
+    _color = switch _label
+        "Moana" => c_moana
+        "Aurora" => c_aurora
+        "Rapunzel" => c_rapunzel
+        "Snow White" => c_snowwhite
+        "Jasmine" => c_jasmine
+        "Belle" => c_belle
+        "Tiana" => c_tiana
+        "Elsa" => c_elsa
+        "Cinderella" => c_cinderella
+        "Mulan" => c_mulan
+        "Ariel" => c_ariel
+        "Pocahontas" => c_pocahontas
+        "Merida" => c_merida
+        => i_line_color  // Fallback to original color
+    [x1, x2, _open, _high, _low, _rightbars] = f_render_main(_show, _session, is_started, is_ended, _color, top, bottom)
+    if (i_sess_box_style == 'Box') and (i_sess_displaytf) and not (isHigherTF())
+        f_render_session(_show, _session, is_started, is_ended, _color, top, bottom, x1, x2, _boxes_session)
+    _mcsize = switch i_label_size
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.tiny
+    if (i_label_show) and (i_sess_displaytf) and not (isHigherTF())
+        f_render_label(_show, _session, is_started, _color, top, bottom, _label, _labels, _mcsize, i_label_position)
+    if (_show_fib) and (i_sess_displaytf) and (iTimeZonesInnerDisplay) and not (isHigherTF())
+        f_render_inner_intervals2(_show, _session, is_started, x1, x2, _color, top, bottom, _innerlabels, i_line_width, _i_line_style, _lines_fib, _innerint1, _innerint91, _innerint911, _innertext1)
+        f_render_inner_intervals2(_show, _session, is_started, x1, x2, _color, top, bottom, _innerlabels, i_line_width, _i_line_style, _lines_fib, _innerint2, _innerint92, _innerint922, _innertext2)
+        f_render_inner_intervals2(_show, _session, is_started, x1, x2, _color, top, bottom, _innerlabels, i_line_width, _i_line_style, _lines_fib, _innerint3, _innerint93, _innerint933, _innertext3)
+        util.clear_lines(_lines_fib, i_history_period*3)
+        util.clear_labels(_innerlabels, i_history_period*3)
+    f_render_limitmessage(_show, _session, is_started, is_ended, x1, bottom, _rightbars)
+    [_session, _open, _high, _low]
+
+draw3(_show, _session, _label, _show_fib, _lookback, _boxes_session, _lines_session, _lines_fib, _labels, _innerlabels, _innerint1, _innerint2, _innerint3, _innertext1, _innertext2, _innertext3, _innerint91, _innerint92, _innerint93) =>
+    max = f_get_period(_session, 1, _lookback)
+    top = ta.highest(high, max)
+    bottom = ta.lowest(low, max)
+    is_started = f_get_started(_session)
+    is_ended = f_get_ended(_session)
+    // Determine color based on session label
+    _color = switch _label
+        "Moana" => c_moana
+        "Aurora" => c_aurora
+        "Rapunzel" => c_rapunzel
+        "Snow White" => c_snowwhite
+        "Jasmine" => c_jasmine
+        "Belle" => c_belle
+        "Tiana" => c_tiana
+        "Elsa" => c_elsa
+        "Cinderella" => c_cinderella
+        "Mulan" => c_mulan
+        "Ariel" => c_ariel
+        "Pocahontas" => c_pocahontas
+        "Merida" => c_merida
+        => i_line_color  // Fallback to original color
+    [x1, x2, _open, _high, _low, _rightbars] = f_render_main(_show, _session, is_started, is_ended, _color, top, bottom)
+    if (i_sess_box_style == 'Box') and (i_sess_displaytf) and not (isHigherTF())
+        f_render_session(_show, _session, is_started, is_ended, _color, top, bottom, x1, x2, _boxes_session)
+    _mcsize = switch i_label_size
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.tiny
+    if (i_label_show) and (i_sess_displaytf) and not (isHigherTF())
+        f_render_label(_show, _session, is_started, _color, top, bottom, _label, _labels, _mcsize, i_label_position)
+    f_render_limitmessage(_show, _session, is_started, is_ended, x1, bottom, _rightbars)
+    [_session, _open, _high, _low]
+
+isOneMinute = (timeframe.isintraday and timeframe.multiplier == 1)
+isBelow5Minute = (timeframe.isintraday and timeframe.multiplier < 6)
+
+var sess1_box = array.new<box>()
+var sess2_box = array.new<box>()
+var sess3_box = array.new<box>()
+var sess4_box = array.new<box>()
+var sess5_box = array.new<box>()
+var sess6_box = array.new<box>()
+var sess7_box = array.new<box>()
+var sess8_box = array.new<box>()
+var sess9_box = array.new<box>()
+var sess10_box = array.new<box>()
+var sess11_box = array.new<box>()
+var sess12_box = array.new<box>()
+var sess13_box = array.new<box>()
+var sess14_box = array.new<box>()
+
+var sess1_line = array.new<line>()
+var sess2_line = array.new<line>()
+var sess3_line = array.new<line>()
+var sess4_line = array.new<line>()
+var sess5_line = array.new<line>()
+var sess6_line = array.new<line>()
+var sess7_line = array.new<line>()
+var sess8_line = array.new<line>()
+var sess9_line = array.new<line>()
+var sess10_line = array.new<line>()
+var sess11_line = array.new<line>()
+var sess12_line = array.new<line>()
+var sess13_line = array.new<line>()
+var sess14_line = array.new<line>()
+var sess15_line = array.new<line>()
+
+var sess1_fib = array.new<line>()
+var sess2_fib = array.new<line>()
+var sess3_fib = array.new<line>()
+var sess4_fib = array.new<line>()
+var sess5_fib = array.new<line>()
+var sess6_fib = array.new<line>()
+var sess7_fib = array.new<line>()
+var sess8_fib = array.new<line>()
+var sess9_fib = array.new<line>()
+var sess10_fib = array.new<line>()
+var sess11_fib = array.new<line>()
+var sess12_fib = array.new<line>()
+var sess13_fib = array.new<line>()
+var sess14_fib = array.new<line>()
+
+var sess1_labels = array.new<label>()
+var sess2_labels = array.new<label>()
+var sess3_labels = array.new<label>()
+var sess4_labels = array.new<label>()
+var sess5_labels = array.new<label>()
+var sess6_labels = array.new<label>()
+var sess7_labels = array.new<label>()
+var sess8_labels = array.new<label>()
+var sess9_labels = array.new<label>()
+var sess10_labels = array.new<label>()
+var sess11_labels = array.new<label>()
+var sess12_labels = array.new<label>()
+var sess13_labels = array.new<label>()
+var sess14_labels = array.new<label>()
+
+var sess1_innerlabels = array.new<label>()
+var sess2_innerlabels = array.new<label>()
+var sess3_innerlabels = array.new<label>()
+var sess4_innerlabels = array.new<label>()
+var sess5_innerlabels = array.new<label>()
+var sess6_innerlabels = array.new<label>()
+var sess7_innerlabels = array.new<label>()
+var sess8_innerlabels = array.new<label>()
+var sess9_innerlabels = array.new<label>()
+var sess10_innerlabels = array.new<label>()
+var sess11_innerlabels = array.new<label>()
+var sess12_innerlabels = array.new<label>()
+var sess13_innerlabels = array.new<label>()
+var sess14_innerlabels = array.new<label>()
+
+string tz = (i_tz == option_no or i_tz == '') ? na : i_tz
+int sess1 = time(timeframe.period, i_sess1, tz)
+int sess2 = time(timeframe.period, i_sess2, tz)
+int sess3 = time(timeframe.period, i_sess3, tz)
+int sess4 = time(timeframe.period, i_sess4, tz)
+int sess5 = time(timeframe.period, i_sess5, tz)
+int sess6 = time(timeframe.period, i_sess6, tz)
+int sess7 = time(timeframe.period, i_sess7, tz)
+int sess8 = time(timeframe.period, i_sess8, tz)
+int sess9 = time(timeframe.period, i_sess9, tz)
+int sess10 = time(timeframe.period, i_sess10, tz)
+int sess11 = time(timeframe.period, i_sess11, tz)
+int sess12 = time(timeframe.period, i_sess12, tz)
+int sess13 = time(timeframe.period, i_sess13, tz)
+
+// Plotting DTT Sessions
+if iTimeZonesDisplay
+    [is_sess1, sess1_open, sess1_high, sess1_low] = draw(i_show_sess1, sess1, i_sess1_label, i_sess1_fib, i_lookback, sess1_box, sess1_line, sess1_fib, sess1_labels, sess1_innerlabels, innerint1002, innerint1007, innerint1012, innertext1002, innertext1007, innertext1012, innerint1002, innerint1007, innerint1012)
+    [is_sess2, sess2_open, sess2_high, sess2_low] = draw(i_show_sess2, sess2, i_sess2_label, i_sess2_fib, i_lookback, sess2_box, sess2_line, sess2_fib, sess2_labels, sess2_innerlabels, innerint1034, innerint1044, innerint1055, innertext1034, innertext1044, innertext1055, innerint1034, innerint1044, innerint1055)
+    [is_sess3, sess3_open, sess3_high, sess3_low] = draw(i_show_sess3, sess3, i_sess3_label, i_sess3_fib, i_lookback, sess3_box, sess3_line, sess3_fib, sess3_labels, sess3_innerlabels, innerint1121, innerint1129, innerint1137, innertext1121, innertext1129, innertext1137, innerint1121, innerint1129, innerint1137)
+    [is_sess4, sess4_open, sess4_high, sess4_low] = draw(i_show_sess4, sess4, i_sess4_label, i_sess4_fib, i_lookback, sess4_box, sess4_line, sess4_fib, sess4_labels, sess4_innerlabels, innerint1300, innerint1320, innerint1340, innertext1300, innertext1320, innertext1340, innerint1300, innerint1320, innerint1340)
+    [is_sess5, sess5_open, sess5_high, sess5_low] = draw(i_show_sess5, sess5, i_sess5_label, i_sess5_fib, i_lookback, sess5_box, sess5_line, sess5_fib, sess5_labels, sess5_innerlabels, innerint1447, innerint1514, innerint1545, innertext1447, innertext1514, innertext1545, innerint1447, innerint1514, innerint1545)
+    [is_sess6, sess6_open, sess6_high, sess6_low] = draw(i_show_sess6, sess6, i_sess6_label, i_sess6_fib, i_lookback, sess6_box, sess6_line, sess6_fib, sess6_labels, sess6_innerlabels, innerint1807, innerint1822, innerint1834, innertext1807, innertext1822, innertext1834, innerint1807, innerint1822, innerint1834)
+    [is_sess7, sess7_open, sess7_high, sess7_low] = draw(i_show_sess7, sess7, i_sess7_label, i_sess7_fib, i_lookback, sess7_box, sess7_line, sess7_fib, sess7_labels, sess7_innerlabels, innerint1916, innerint1949, innerint2016, innertext1916, innertext1949, innertext2016, innerint1916, innerint1949, innerint2016)
+    [is_sess8, sess8_open, sess8_high, sess8_low] = draw(i_show_sess8, sess8, i_sess8_label, i_sess8_fib, i_lookback, sess8_box, sess8_line, sess8_fib, sess8_labels, sess8_innerlabels, innerint2126, innerint2154, innerint2216, innertext2126, innertext2154, innertext2216, innerint2126, innerint2154, innerint2216)
+    if not DST
+        [is_sess9, sess9_open, sess9_high, sess9_low] = draw2(i_show_sess9, sess9, i_sess9_label, i_sess9_fib, i_lookback, sess9_box, sess9_line, sess9_fib, sess9_labels, sess9_innerlabels, innerint2321, innerint0029, innerint0117, innertext2321, innertext0029, innertext0117, innerint2321v2, innerint0029v2, innerint0117v2, innerint2321v3, innerint0029v3, innerint0117v3)
+    else
+        [is_sess9, sess9_open, sess9_high, sess9_low] = draw(i_show_sess9, sess9, i_sess9_label, i_sess9_fib, i_lookback, sess9_box, sess9_line, sess9_fib, sess9_labels, sess9_innerlabels, innerint2321, innerint0029, innerint0117, innertext2321, innertext0029, innertext0117, innerint2321v2, innerint0029v2, innerint0117v2)
+    [is_sess9, sess9_open, sess9_high, sess9_low] = draw3(i_show_sess9, sess9, i_sess9_label, i_sess9_fib, i_lookback, sess9_box, sess9_line, sess9_fib, sess9_labels, sess9_innerlabels, innerint2321, innerint0029, innerint0117, innertext2321, innertext0029, innertext0117, innerint2321v2, innerint0029v2, innerint0117v2)
+    [is_sess10, sess10_open, sess10_high, sess10_low] = draw(i_show_sess10, sess10, i_sess10_label, i_sess10_fib, i_lookback, sess10_box, sess10_line, sess10_fib, sess10_labels, sess10_innerlabels, innerint0305, innerint0316, innerint0325, innertext0305, innertext0316, innertext0325, innerint0305, innerint0316, innerint0325)
+    [is_sess11, sess11_open, sess11_high, sess11_low] = draw(i_show_sess11, sess11, i_sess11_label, i_sess11_fib, i_lookback, sess11_box, sess11_line, sess11_fib, sess11_labels, sess11_innerlabels, innerint0355, innerint0419, innerint0438, innertext0355, innertext0419, innertext0438, innerint0355, innerint0419, innerint0438)
+    [is_sess12, sess12_open, sess12_high, sess12_low] = draw(i_show_sess12, sess12, i_sess12_label, i_sess12_fib, i_lookback, sess12_box, sess12_line, sess12_fib, sess12_labels, sess12_innerlabels, innerint0529, innerint0548, innerint0604, innertext0529, innertext0548, innertext0604, innerint0529, innerint0548, innerint0604)
+    [is_sess13, sess13_open, sess13_high, sess13_low] = draw(i_show_sess13, sess13, i_sess13_label, i_sess13_fib, i_lookback, sess13_box, sess13_line, sess13_fib, sess13_labels, sess13_innerlabels, innerint0658, innerint0741, innerint0815, innertext0658, innertext0741, innertext0815, innerint0658, innerint0741, innerint0815)
+
+
+//////////////////////////////////////////////////////////////////////////
+// Statistics ////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+
+// Add arrays to store ranges for each session by day of the week
+var array<float> sess1_ranges_mon = array.new_float(0)
+var array<float> sess1_ranges_tue = array.new_float(0)
+var array<float> sess1_ranges_wed = array.new_float(0)
+var array<float> sess1_ranges_thu = array.new_float(0)
+var array<float> sess1_ranges_fri = array.new_float(0)
+
+var array<float> sess2_ranges_mon = array.new_float(0)
+var array<float> sess2_ranges_tue = array.new_float(0)
+var array<float> sess2_ranges_wed = array.new_float(0)
+var array<float> sess2_ranges_thu = array.new_float(0)
+var array<float> sess2_ranges_fri = array.new_float(0)
+
+// Repeat for all 14 sessions
+var array<float> sess3_ranges_mon = array.new_float(0)
+var array<float> sess3_ranges_tue = array.new_float(0)
+var array<float> sess3_ranges_wed = array.new_float(0)
+var array<float> sess3_ranges_thu = array.new_float(0)
+var array<float> sess3_ranges_fri = array.new_float(0)
+
+var array<float> sess4_ranges_mon = array.new_float(0)
+var array<float> sess4_ranges_tue = array.new_float(0)
+var array<float> sess4_ranges_wed = array.new_float(0)
+var array<float> sess4_ranges_thu = array.new_float(0)
+var array<float> sess4_ranges_fri = array.new_float(0)
+
+var array<float> sess5_ranges_mon = array.new_float(0)
+var array<float> sess5_ranges_tue = array.new_float(0)
+var array<float> sess5_ranges_wed = array.new_float(0)
+var array<float> sess5_ranges_thu = array.new_float(0)
+var array<float> sess5_ranges_fri = array.new_float(0)
+
+var array<float> sess6_ranges_mon = array.new_float(0)
+var array<float> sess6_ranges_tue = array.new_float(0)
+var array<float> sess6_ranges_wed = array.new_float(0)
+var array<float> sess6_ranges_thu = array.new_float(0)
+var array<float> sess6_ranges_fri = array.new_float(0)
+
+var array<float> sess7_ranges_mon = array.new_float(0)
+var array<float> sess7_ranges_tue = array.new_float(0)
+var array<float> sess7_ranges_wed = array.new_float(0)
+var array<float> sess7_ranges_thu = array.new_float(0)
+var array<float> sess7_ranges_fri = array.new_float(0)
+
+var array<float> sess8_ranges_mon = array.new_float(0)
+var array<float> sess8_ranges_tue = array.new_float(0)
+var array<float> sess8_ranges_wed = array.new_float(0)
+var array<float> sess8_ranges_thu = array.new_float(0)
+var array<float> sess8_ranges_fri = array.new_float(0)
+
+var array<float> sess9_ranges_mon = array.new_float(0)
+var array<float> sess9_ranges_tue = array.new_float(0)
+var array<float> sess9_ranges_wed = array.new_float(0)
+var array<float> sess9_ranges_thu = array.new_float(0)
+var array<float> sess9_ranges_fri = array.new_float(0)
+
+var array<float> sess10_ranges_mon = array.new_float(0)
+var array<float> sess10_ranges_tue = array.new_float(0)
+var array<float> sess10_ranges_wed = array.new_float(0)
+var array<float> sess10_ranges_thu = array.new_float(0)
+var array<float> sess10_ranges_fri = array.new_float(0)
+
+var array<float> sess11_ranges_mon = array.new_float(0)
+var array<float> sess11_ranges_tue = array.new_float(0)
+var array<float> sess11_ranges_wed = array.new_float(0)
+var array<float> sess11_ranges_thu = array.new_float(0)
+var array<float> sess11_ranges_fri = array.new_float(0)
+
+var array<float> sess12_ranges_mon = array.new_float(0)
+var array<float> sess12_ranges_tue = array.new_float(0)
+var array<float> sess12_ranges_wed = array.new_float(0)
+var array<float> sess12_ranges_thu = array.new_float(0)
+var array<float> sess12_ranges_fri = array.new_float(0)
+
+var array<float> sess13_ranges_mon = array.new_float(0)
+var array<float> sess13_ranges_tue = array.new_float(0)
+var array<float> sess13_ranges_wed = array.new_float(0)
+var array<float> sess13_ranges_thu = array.new_float(0)
+var array<float> sess13_ranges_fri = array.new_float(0)
+
+var array<float> sess14_ranges_mon = array.new_float(0)
+var array<float> sess14_ranges_tue = array.new_float(0)
+var array<float> sess14_ranges_wed = array.new_float(0)
+var array<float> sess14_ranges_thu = array.new_float(0)
+var array<float> sess14_ranges_fri = array.new_float(0)
+
+// Function to update ranges when a session ends
+f_update_ranges(session, high, low, ranges_mon, ranges_tue, ranges_wed, ranges_thu, ranges_fri) =>
+    if f_get_ended(session)
+        _range = high - low
+        dow = dayofweek(time, i_tz)
+        switch dow
+            2 => array.push(ranges_mon, _range)
+            3 => array.push(ranges_tue, _range)
+            4 => array.push(ranges_wed, _range)
+            5 => array.push(ranges_thu, _range)
+            6 => array.push(ranges_fri, _range)
+
+// Function to calculate average range
+f_avg_range(ranges) =>
+    array.size(ranges) > 0 ? array.avg(ranges) : na
+
+// Table to display average ranges
+
+var g_TABLE = "Table Settings"
+
+// Function to map string size to text_size
+get_text_size(string size) =>
+    result = switch size
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+    result
+
+// Function to map string position to table position
+get_table_pos(string pos) =>
+    result = switch pos
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Middle Center" => position.middle_center
+        "Left Center" => position.middle_left
+        "Right Center" => position.middle_right
+        "Bottom Middle" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right        
+    result
+
+tbl_pos = input.string("Bottom Right", "Avg Range Table Position", options=["Top Right", "Top Left", "Top Center", "Middle Center", "Left Center", "Right Center", "Bottom Middle", "Bottom Left", "Bottom Right"], group=g_TABLE)
+show_range_table = input.bool(true, "Show Range Extensions Table", tooltip="Enable or disable the Range Extensions statistics table", group=g_TABLE) // New input
+show_tsd_table = input.bool(true, "Show TSD Table", tooltip="Enable or disable the True Standard Deviation statistics table", group=g_TABLE) // New input
+tbl_bg = input.color(color.white, "Table Background", group=g_TABLE)
+tbl_bd = input.color(color.black, "Table Borders", group=g_TABLE)
+tbl_txt = input.color(color.black, "Table Text", group=g_TABLE)
+tbl_size = input.string("small", "Table Size", options=["tiny", "small", "normal", "large"], group=g_TABLE)
+
+//@version=5
+// Assume all necessary variables (e.g., i_sess1_label, sess1_ranges_mon, tbl_bg, tbl_txt, etc.) are defined elsewhere in the script.
+// Assume draw() and f_update_ranges() functions are defined and return/set the necessary variables.
+
+// Declare is_sessX variables globally
+var bool is_sess1 = false
+var bool is_sess2 = false
+var bool is_sess3 = false
+var bool is_sess4 = false
+var bool is_sess5 = false
+var bool is_sess6 = false
+var bool is_sess7 = false
+var bool is_sess8 = false
+var bool is_sess9 = false
+var bool is_sess10 = false
+var bool is_sess11 = false
+var bool is_sess12 = false
+var bool is_sess13 = false
+
+// Function to format session time
+f_format_session_time(session_str) =>
+    // Extract the time portion (e.g., '0955-1020' from '0955-1020:1234567')
+    colon_pos = str.pos(session_str, ":")
+    time_part = colon_pos >= 0 ? str.substring(session_str, 0, colon_pos) : session_str
+    // Find the hyphen position
+    hyphen_pos = str.pos(time_part, "-")
+    // Extract start and end times
+    start_time = hyphen_pos >= 0 ? str.substring(time_part, 0, hyphen_pos) : time_part
+    end_time = hyphen_pos >= 0 ? str.substring(time_part, hyphen_pos + 1, str.length(time_part)) : time_part
+    // Format as HH:MM-HH:MM
+    start_formatted = str.substring(start_time, 0, 2) + ":" + str.substring(start_time, 2, 4)
+    end_formatted = str.substring(end_time, 0, 2) + ":" + str.substring(end_time, 2, 4)
+    start_formatted + "-" + end_formatted
+
+var table avg_range_table = na
+if ta.change(time('D')) or array.size(sess1_ranges_mon) == 0
+    if not na(avg_range_table)
+        table.delete(avg_range_table[1])
+    // Updated table to have 7 columns (including Session Time) and 16 rows (including Total Sessions)
+    avg_range_table := table.new(get_table_pos(tbl_pos), 7, 16, bgcolor=tbl_bg, border_color=tbl_bd, frame_color=tbl_bd, frame_width=1, border_width=1)
+
+    // Table headers
+    table.cell(avg_range_table, 0, 0, "Session", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+    table.cell(avg_range_table, 1, 0, "Time", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+    table.cell(avg_range_table, 2, 0, "Monday", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+    table.cell(avg_range_table, 3, 0, "Tuesday", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+    table.cell(avg_range_table, 4, 0, "Wednesday", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+    table.cell(avg_range_table, 5, 0, "Thursday", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+    table.cell(avg_range_table, 6, 0, "Friday", text_color=tbl_bg, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_txt)
+
+    // Session names and dynamic times
+    table.cell(avg_range_table, 0, 1, i_sess1_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 1, f_format_session_time(i_sess1), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 2, i_sess2_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 2, f_format_session_time(i_sess2), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 3, i_sess3_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 3, f_format_session_time(i_sess3), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 4, i_sess4_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 4, f_format_session_time(i_sess4), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 5, i_sess5_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 5, f_format_session_time(i_sess5), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 6, i_sess6_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 6, f_format_session_time(i_sess6), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 7, i_sess7_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 7, f_format_session_time(i_sess7), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 8, i_sess8_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 8, f_format_session_time(i_sess8), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 9, i_sess9_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 9, f_format_session_time(i_sess9), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 10, i_sess10_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 10, f_format_session_time(i_sess10), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 11, i_sess11_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 11, f_format_session_time(i_sess11), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 12, i_sess12_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 12, f_format_session_time(i_sess12), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 0, 13, i_sess13_label, text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 1, 13, f_format_session_time(i_sess13), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    // Total sessions row
+    table.cell(avg_range_table, 0, 15, "Total Sessions", text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 2, 15, str.tostring(array.size(sess1_ranges_mon), '#'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 15, str.tostring(array.size(sess1_ranges_tue), '#'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 15, str.tostring(array.size(sess1_ranges_wed), '#'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 15, str.tostring(array.size(sess1_ranges_thu), '#'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 15, str.tostring(array.size(sess1_ranges_fri), '#'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    // Populate average ranges (unchanged from previous code)
+    table.cell(avg_range_table, 2, 1, str.tostring(f_avg_range(sess1_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 1, str.tostring(f_avg_range(sess1_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 1, str.tostring(f_avg_range(sess1_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 1, str.tostring(f_avg_range(sess1_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 1, str.tostring(f_avg_range(sess1_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 2, str.tostring(f_avg_range(sess2_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 2, str.tostring(f_avg_range(sess2_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 2, str.tostring(f_avg_range(sess2_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 2, str.tostring(f_avg_range(sess2_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 2, str.tostring(f_avg_range(sess2_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 3, str.tostring(f_avg_range(sess3_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 3, str.tostring(f_avg_range(sess3_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 3, str.tostring(f_avg_range(sess3_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 3, str.tostring(f_avg_range(sess3_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 3, str.tostring(f_avg_range(sess3_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 4, str.tostring(f_avg_range(sess4_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 4, str.tostring(f_avg_range(sess4_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 4, str.tostring(f_avg_range(sess4_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 4, str.tostring(f_avg_range(sess4_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 4, str.tostring(f_avg_range(sess4_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 5, str.tostring(f_avg_range(sess5_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 5, str.tostring(f_avg_range(sess5_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 5, str.tostring(f_avg_range(sess5_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 5, str.tostring(f_avg_range(sess5_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 5, str.tostring(f_avg_range(sess5_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 6, str.tostring(f_avg_range(sess6_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 6, str.tostring(f_avg_range(sess6_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 6, str.tostring(f_avg_range(sess6_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 6, str.tostring(f_avg_range(sess6_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 6, str.tostring(f_avg_range(sess6_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 7, str.tostring(f_avg_range(sess7_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 7, str.tostring(f_avg_range(sess7_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 7, str.tostring(f_avg_range(sess7_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 7, str.tostring(f_avg_range(sess7_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 7, str.tostring(f_avg_range(sess7_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 8, str.tostring(f_avg_range(sess8_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 8, str.tostring(f_avg_range(sess8_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 8, str.tostring(f_avg_range(sess8_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 8, str.tostring(f_avg_range(sess8_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 8, str.tostring(f_avg_range(sess8_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 9, str.tostring(f_avg_range(sess9_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 9, str.tostring(f_avg_range(sess9_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 9, str.tostring(f_avg_range(sess9_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 9, str.tostring(f_avg_range(sess9_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 9, str.tostring(f_avg_range(sess9_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 10, str.tostring(f_avg_range(sess10_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 10, str.tostring(f_avg_range(sess10_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 10, str.tostring(f_avg_range(sess10_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 10, str.tostring(f_avg_range(sess10_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 10, str.tostring(f_avg_range(sess10_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 11, str.tostring(f_avg_range(sess11_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 11, str.tostring(f_avg_range(sess11_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 11, str.tostring(f_avg_range(sess11_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 11, str.tostring(f_avg_range(sess11_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 11, str.tostring(f_avg_range(sess11_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 12, str.tostring(f_avg_range(sess12_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 12, str.tostring(f_avg_range(sess12_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 12, str.tostring(f_avg_range(sess12_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 12, str.tostring(f_avg_range(sess12_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 12, str.tostring(f_avg_range(sess12_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+
+    table.cell(avg_range_table, 2, 13, str.tostring(f_avg_range(sess13_ranges_mon), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 3, 13, str.tostring(f_avg_range(sess13_ranges_tue), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 4, 13, str.tostring(f_avg_range(sess13_ranges_wed), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 5, 13, str.tostring(f_avg_range(sess13_ranges_thu), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    table.cell(avg_range_table, 6, 13, str.tostring(f_avg_range(sess13_ranges_fri), '#.##'), text_color=tbl_txt, text_size=get_text_size(tbl_size), text_font_family=font.family_monospace, bgcolor=tbl_bg)
+    
+// Update ranges for each session
+if iTimeZonesDisplay
+    [is_sess1, sess1_open, sess1_high, sess1_low] = draw(i_show_sess1, sess1, i_sess1_label, i_sess1_fib, i_lookback, sess1_box, sess1_line, sess1_fib, sess1_labels, sess1_innerlabels, innerint1002, innerint1007, innerint1012, innertext1002, innertext1007, innertext1012, innerint1002, innerint1007, innerint1012)
+    f_update_ranges(is_sess1, sess1_high, sess1_low, sess1_ranges_mon, sess1_ranges_tue, sess1_ranges_wed, sess1_ranges_thu, sess1_ranges_fri)
+
+    [is_sess2, sess2_open, sess2_high, sess2_low] = draw(i_show_sess2, sess2, i_sess2_label, i_sess2_fib, i_lookback, sess2_box, sess2_line, sess2_fib, sess2_labels, sess2_innerlabels, innerint1034, innerint1044, innerint1055, innertext1034, innertext1044, innertext1055, innerint1034, innerint1044, innerint1055)
+    f_update_ranges(is_sess2, sess2_high, sess2_low, sess2_ranges_mon, sess2_ranges_tue, sess2_ranges_wed, sess2_ranges_thu, sess2_ranges_fri)
+
+    [is_sess3, sess3_open, sess3_high, sess3_low] = draw(i_show_sess3, sess3, i_sess3_label, i_sess3_fib, i_lookback, sess3_box, sess3_line, sess3_fib, sess3_labels, sess3_innerlabels, innerint1121, innerint1129, innerint1137, innertext1121, innertext1129, innertext1137, innerint1121, innerint1129, innerint1137)
+    f_update_ranges(is_sess3, sess3_high, sess3_low, sess3_ranges_mon, sess3_ranges_tue, sess3_ranges_wed, sess3_ranges_thu, sess3_ranges_fri)
+
+    [is_sess4, sess4_open, sess4_high, sess4_low] = draw(i_show_sess4, sess4, i_sess4_label, i_sess4_fib, i_lookback, sess4_box, sess4_line, sess4_fib, sess4_labels, sess4_innerlabels, innerint1300, innerint1320, innerint1340, innertext1300, innertext1320, innertext1340, innerint1300, innerint1320, innerint1340)
+    f_update_ranges(is_sess4, sess4_high, sess4_low, sess4_ranges_mon, sess4_ranges_tue, sess4_ranges_wed, sess4_ranges_thu, sess4_ranges_fri)
+
+    [is_sess5, sess5_open, sess5_high, sess5_low] = draw(i_show_sess5, sess5, i_sess5_label, i_sess5_fib, i_lookback, sess5_box, sess5_line, sess5_fib, sess5_labels, sess5_innerlabels, innerint1447, innerint1514, innerint1545, innertext1447, innertext1514, innertext1545, innerint1447, innerint1514, innerint1545)
+    f_update_ranges(is_sess5, sess5_high, sess5_low, sess5_ranges_mon, sess5_ranges_tue, sess5_ranges_wed, sess5_ranges_thu, sess5_ranges_fri)
+
+    [is_sess6, sess6_open, sess6_high, sess6_low] = draw(i_show_sess6, sess6, i_sess6_label, i_sess6_fib, i_lookback, sess6_box, sess6_line, sess6_fib, sess6_labels, sess6_innerlabels, innerint1807, innerint1822, innerint1834, innertext1807, innertext1822, innertext1834, innerint1807, innerint1822, innerint1834)
+    f_update_ranges(is_sess6, sess6_high, sess6_low, sess6_ranges_mon, sess6_ranges_tue, sess6_ranges_wed, sess6_ranges_thu, sess6_ranges_fri)
+
+    [is_sess7, sess7_open, sess7_high, sess7_low] = draw(i_show_sess7, sess7, i_sess7_label, i_sess7_fib, i_lookback, sess7_box, sess7_line, sess7_fib, sess7_labels, sess7_innerlabels, innerint1916, innerint1949, innerint2016, innertext1916, innertext1949, innertext2016, innerint1916, innerint1949, innerint2016)
+    f_update_ranges(is_sess7, sess7_high, sess7_low, sess7_ranges_mon, sess7_ranges_tue, sess7_ranges_wed, sess7_ranges_thu, sess7_ranges_fri)
+
+    [is_sess8, sess8_open, sess8_high, sess8_low] = draw(i_show_sess8, sess8, i_sess8_label, i_sess8_fib, i_lookback, sess8_box, sess8_line, sess8_fib, sess8_labels, sess8_innerlabels, innerint2126, innerint2154, innerint2216, innertext2126, innertext2154, innertext2216, innerint2126, innerint2154, innerint2216)
+    f_update_ranges(is_sess8, sess8_high, sess8_low, sess8_ranges_mon, sess8_ranges_tue, sess8_ranges_wed, sess8_ranges_thu, sess8_ranges_fri)
+
+    [is_sess9, sess9_open, sess9_high, sess9_low] = draw(i_show_sess9, sess9, i_sess9_label, i_sess9_fib, i_lookback, sess9_box, sess9_line, sess9_fib, sess9_labels, sess9_innerlabels, innerint2321, innerint0029, innerint0117, innertext2321, innertext0029, innertext0117, innerint2321v2, innerint0029v2, innerint0117v2)
+    f_update_ranges(is_sess9, sess9_high, sess9_low, sess9_ranges_mon, sess9_ranges_tue, sess9_ranges_wed, sess9_ranges_thu, sess9_ranges_fri)
+
+    [is_sess10, sess10_open, sess10_high, sess10_low] = draw(i_show_sess10, sess10, i_sess10_label, i_sess10_fib, i_lookback, sess10_box, sess10_line, sess10_fib, sess10_labels, sess10_innerlabels, innerint0305, innerint0316, innerint0325, innertext0305, innertext0316, innertext0325, innerint0305, innerint0316, innerint0325)
+    f_update_ranges(is_sess10, sess10_high, sess10_low, sess10_ranges_mon, sess10_ranges_tue, sess10_ranges_wed, sess10_ranges_thu, sess10_ranges_fri)
+
+    [is_sess11, sess11_open, sess11_high, sess11_low] = draw(i_show_sess11, sess11, i_sess11_label, i_sess11_fib, i_lookback, sess11_box, sess11_line, sess11_fib, sess11_labels, sess11_innerlabels, innerint0355, innerint0419, innerint0438, innertext0355, innertext0419, innertext0438, innerint0355, innerint0419, innerint0438)
+    f_update_ranges(is_sess11, sess11_high, sess11_low, sess11_ranges_mon, sess11_ranges_tue, sess11_ranges_wed, sess11_ranges_thu, sess11_ranges_fri)
+
+    [is_sess12, sess12_open, sess12_high, sess12_low] = draw(i_show_sess12, sess12, i_sess12_label, i_sess12_fib, i_lookback, sess12_box, sess12_line, sess12_fib, sess12_labels, sess12_innerlabels, innerint0529, innerint0548, innerint0604, innertext0529, innertext0548, innertext0604, innerint0529, innerint0548, innerint0604)
+    f_update_ranges(is_sess12, sess12_high, sess12_low, sess12_ranges_mon, sess12_ranges_tue, sess12_ranges_wed, sess12_ranges_thu, sess12_ranges_fri)
+
+    [is_sess13, sess13_open, sess13_high, sess13_low] = draw(i_show_sess13, sess13, i_sess13_label, i_sess13_fib, i_lookback, sess13_box, sess13_line, sess13_fib, sess13_labels, sess13_innerlabels, innerint0658, innerint0741, innerint0815, innertext0658, innertext0741, innertext0815, innerint0658, innerint0741, innerint0815)
+    f_update_ranges(is_sess13, sess13_high, sess13_low, sess13_ranges_mon, sess13_ranges_tue, sess13_ranges_wed, sess13_ranges_thu, sess13_ranges_fri)
+

@@ -1,0 +1,255 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("NQ Stats - ALN profiler", "ALN profiler", true, max_boxes_count=500)
+
+// ---------------------------------------------- Inputs --------------------------------------------------
+
+// Trading Sessions
+var g_SESS = "========= Trading Sessions =========="
+show_sesa = input(true, '', inline='sesa', group=g_SESS)
+sesa_txt = input('New York', '', inline='sesa', group=g_SESS)
+sesa_css = input.color(color.rgb(255, 0, 55), '', inline='sesa', group=g_SESS)
+sesa_range = input(true, 'Range', inline='sesa_overlays', group=g_SESS)
+
+show_sesb = input(true, '', inline='sesb', group=g_SESS)
+sesb_txt = input('London', '', inline='sesb', group=g_SESS)
+sesb_css = input.color(color.rgb(33, 87, 243), '', inline='sesb', group=g_SESS)
+sesb_range = input(true, 'Range', inline='sesb_overlays', group=g_SESS)
+
+show_sesc = input(true, '', inline='sesc', group=g_SESS)
+sesc_txt = input('Asia', '', inline='sesc', group=g_SESS)
+sesc_css = input.color(color.rgb(255, 152, 0), '', inline='sesc', group=g_SESS)
+sesc_range = input(true, 'Range', inline='sesc_overlays', group=g_SESS)
+
+bg_transp = input.float(90, 'Range Area Transparency', group=g_SESS)
+show_outline = input(true, 'Range Outline', group=g_SESS)
+show_txt = input(true, 'Range Label', group=g_SESS)
+
+// Additional Settings
+nbarsforward = input.int(20, 'Offset Labels N Bars Right', group="More Settings")
+multforward = input.float(1, "Multiply Offset for Yesterday's Labels", minval=0.25, step=0.25, group="More Settings")
+label_size = input.string('small', options=['auto', 'tiny', 'small', 'normal', 'large', 'huge'], title='Label Size', group="More Settings")
+
+// Table Settings
+var g_TABLES = "========= Table Settings ========="
+show_status_table = input(true, "Show Session Status Table", group=g_TABLES)
+status_table_pos = input.string("Top Right", "Status Table Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+status_table_size = input.string("Small", "Status Table Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+
+// ---------------------------------------------- Sessions --------------------------------------------------
+
+// Session Range Function
+get_range(session, session_name, session_css, high_array, low_array)=>
+    var t = 0 
+    var max = high
+    var min = low
+    var box bx = na
+    var label lbl = na 
+    var int start_idx = na
+    var float vol = 0.0
+    var float atr_sum = 0.0
+    var int bar_count = 0
+    
+    if session > session[1]
+        t := time
+        max := high
+        min := low
+        start_idx := bar_index
+        vol := 0.0
+        atr_sum := 0.0
+        bar_count := 0
+        bx := box.new(bar_index, max, bar_index, min, bgcolor=color.new(session_css, bg_transp), border_color=show_outline ? session_css : na, border_style=line.style_dotted)
+        if show_txt
+            lbl := label.new(t, max, session_name, xloc=xloc.bar_time, textcolor=session_css, style=label.style_label_down, color=color.new(color.white, 100), size=size.tiny)
+    
+    if session and session == session[1]
+        max := math.max(high, max)
+        min := math.min(low, min)
+        vol := vol + volume
+        atr_sum := atr_sum + (high - low)
+        bar_count := bar_count + 1
+        box.set_top(bx, max)
+        box.set_rightbottom(bx, bar_index, min)
+        if show_txt
+            label.set_xy(lbl, int(math.avg(t, time)), max)
+    
+    if session[1] and not session
+        array.push(high_array, max)
+        array.push(low_array, min)
+    
+    [session ? na : max, session ? na : min, start_idx, session ? na : vol, session ? na : (bar_count > 0 ? atr_sum / bar_count : na)]
+
+// Session Timezone
+tf = timeframe.period
+var tz = "America/New_York"
+is_sesa = math.sign(nz(time(tf, "0800-1600", tz)))
+is_sesb = math.sign(nz(time(tf, "0200-0800", tz)))
+is_sesc = math.sign(nz(time(tf, "2000-0200", tz)))
+
+// Session Variables
+var float max_sesa = na
+var float min_sesa = na
+var float vol_sesa = na
+var float atr_sesa = na
+var int sesa_start_idx = na
+var sesa_highs = array.new_float(0)
+var sesa_lows = array.new_float(0)
+
+var float max_sesb = na
+var float min_sesb = na
+var float vol_sesb = na
+var float atr_sesb = na
+var int sesb_start_idx = na
+var sesb_highs = array.new_float(0)
+var sesb_lows = array.new_float(0)
+
+var float max_sesc = na
+var float min_sesc = na
+var float vol_sesc = na
+var float atr_sesc = na
+var int sesc_start_idx = na
+var sesc_highs = array.new_float(0)
+var sesc_lows = array.new_float(0)
+
+// Session Ranges
+if show_sesa and sesa_range
+    [max, min, start, vol, atr] = get_range(is_sesa, sesa_txt, sesa_css, sesa_highs, sesa_lows)
+    max_sesa := max
+    min_sesa := min
+    sesa_start_idx := start
+    vol_sesa := vol
+    atr_sesa := atr
+
+if show_sesb and sesb_range
+    [max, min, start, vol, atr] = get_range(is_sesb, sesb_txt, sesb_css, sesb_highs, sesb_lows)
+    max_sesb := max
+    min_sesb := min
+    sesb_start_idx := start
+    vol_sesb := vol
+    atr_sesb := atr
+
+if show_sesc and sesc_range
+    [max, min, start, vol, atr] = get_range(is_sesc, sesc_txt, sesc_css, sesc_highs, sesc_lows)
+    max_sesc := max
+    min_sesc := min
+    sesc_start_idx := start
+    vol_sesc := vol
+    atr_sesc := atr
+
+// ---------------------------------------------- Pattern Detection --------------------------------------------------
+
+// Pattern Detection Function
+get_session_patterns(max_sesb, min_sesb, max_sesc, min_sesc) =>
+    var string pattern = ""
+    
+    if not na(max_sesb) and not na(min_sesb) and not na(max_sesc) and not na(min_sesc)
+        // Pattern 1: London engulfs Asia (Asia high and low taken)
+        if max_sesb > max_sesc and min_sesb < min_sesc
+            pattern := "London Engulfs Asia"
+        
+        // Pattern 2: Asia engulfs London (neither Asia high nor low taken)
+        else if max_sesc >= max_sesb and min_sesc <= min_sesb
+            pattern := "Asia Engulfs London"
+        
+        // Pattern 3: London Partially Engulfs Upwards (Asia high taken, but not the low)
+        else if max_sesb > max_sesc and min_sesb >= min_sesc
+            pattern := "London Partial Up"
+        
+        // Pattern 4: London Partially Engulfs Downwards (Asia low taken, but not the high)
+        else if max_sesb <= max_sesc and min_sesb < min_sesc
+            pattern := "London Partial Down"
+    
+    pattern
+
+// First Taken Detection
+var string first_taken = "None"
+if is_sesa and not na(max_sesb) and not na(min_sesb)
+    if high > max_sesb and first_taken == "None"
+        first_taken := "London High"
+    else if low < min_sesb and first_taken == "None"
+        first_taken := "London Low"
+
+// Reset first_taken at the start of a new day
+if dayofmonth != dayofmonth[1]
+    first_taken := "None"
+
+// NY Outcome Function
+get_ny_outcome(pattern, first_taken) =>
+    var string outcome = ""
+    
+    if pattern == "London Engulfs Asia"
+        if first_taken == "London High"
+            outcome := "98% NY takes Lon Hi/Lo\n45% NY takes Lon Lo (after Hi first)\n43% NY engulfs overnight"
+        else if first_taken == "London Low"
+            outcome := "98% NY takes Lon Hi/Lo\n44% NY takes Lon Hi (after Lo first)\n43% NY engulfs overnight"
+        else
+            outcome := "98% NY takes Lon Hi/Lo\n44% NY takes Lon Hi (if Lo first)\n45% NY takes Lon Lo (if Hi first)\n43% NY engulfs overnight"
+    
+    else if pattern == "Asia Engulfs London"
+        outcome := "95% NY takes Lon Hi/Lo\n91% NY takes Asia Hi/Lo\n39% NY engulfs overnight"
+    
+    else if pattern == "London Partial Up"
+        if first_taken == "London Low"
+            outcome := "50% NY takes Lon Hi (Lo taken first)\n63% NY takes Lon Lo\n51% NY takes Asia Lo\n35% NY engulfs overnight"
+        else if first_taken == "London High"
+            outcome := "79% NY takes Lon Hi\n48% NY takes Lon Lo (Hi taken first)\n51% NY takes Asia Lo\n35% NY engulfs overnight"
+        else
+            outcome := "79% NY takes Lon Hi (50% if Lo first)\n63% NY takes Lon Lo (48% if Hi first)\n51% NY takes Asia Lo\n35% NY engulfs overnight"
+    
+    else if pattern == "London Partial Down"
+        if first_taken == "London High"
+            outcome := "66% NY takes Lon Hi\n43% NY takes Lon Lo (Hi taken first)\n54% NY takes Asia Hi\n33% NY engulfs overnight"
+        else if first_taken == "London Low"
+            outcome := "41% NY takes Lon Hi (Lo taken first)\n73% NY takes Lon Lo\n54% NY takes Asia Hi\n33% NY engulfs overnight"
+        else
+            outcome := "66% NY takes Lon Hi (41% if Lo first)\n73% NY takes Lon Lo (43% if Hi first)\n54% NY takes Asia Hi\n33% NY engulfs overnight"
+    
+    outcome == "" ? "No data" : outcome
+    
+// Table Position Function
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+// Table Text Size Function
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+// ---------------------------------------------- Table Drawing --------------------------------------------------
+
+// Table Drawing
+if show_status_table and (not is_sesb and is_sesb[1] or is_sesa)  // Update when London closes or during NY session
+    pattern = get_session_patterns(max_sesb, min_sesb, max_sesc, min_sesc)
+    ny_outcome = get_ny_outcome(pattern, first_taken)
+    
+    var table status_table = na
+    table.delete(status_table[1])
+    
+    status_pos = get_table_position(status_table_pos)
+    status_size = get_table_text_size(status_table_size)
+    
+    status_table := table.new(status_pos, 3, 2, border_width=1, border_color=color.black, bgcolor=color.white)
+    
+    table.cell(status_table, 0, 0, "Session Status", bgcolor=color.black, text_color=color.white, text_size=status_size, text_font_family=font.family_monospace)
+    table.cell(status_table, 1, 0, "First Taken", bgcolor=color.black, text_color=color.white, text_size=status_size, text_font_family=font.family_monospace)
+    table.cell(status_table, 2, 0, "NY Outcome", bgcolor=color.black, text_color=color.white, text_size=status_size, text_font_family=font.family_monospace)
+    
+    table.cell(status_table, 0, 1, pattern == "" ? "None" : pattern, bgcolor=color.white, text_color=color.black, text_size=status_size, text_font_family=font.family_monospace)
+    table.cell(status_table, 1, 1, first_taken, bgcolor=color.white, text_color=color.black, text_size=status_size, text_font_family=font.family_monospace)
+    table.cell(status_table, 2, 1, ny_outcome, bgcolor=color.white, text_color=color.black, text_size=status_size, text_font_family=font.family_monospace)

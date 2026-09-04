@@ -1,0 +1,619 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+indicator("Hour Stats with Levels", "Hour Stats", true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// INPUT GROUPS
+// ============================================================================
+
+// --- Table Settings ---
+var g_TABLE = "Table Settings"
+show_table = input.bool(true, "Show Stats Table", group=g_TABLE)
+table_position = input.string('Top Right', "Table Position", 
+     options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], 
+     group=g_TABLE)
+table_size = input.string('Tiny', "Text Size", 
+     options=['Tiny', 'Small', 'Normal'], 
+     group=g_TABLE)
+
+// --- Hour Delimiter Settings ---
+var g_DELIM = "Hour Delimiter"
+show_delimiter = input.bool(true, "Show Hour Delimiter", group=g_DELIM)
+delim_color = input.color(color.new(color.gray, 50), "Color", group=g_DELIM)
+delim_width = input.int(1, "Width", minval=1, maxval=5, group=g_DELIM)
+
+// --- Sweep Marker Settings ---
+var g_SWEEP = "Sweep Markers"
+show_sweep_markers = input.bool(true, "Show Sweep Markers", group=g_SWEEP)
+marker_shape = input.string("Diamond", "Marker Shape", options=["Diamond", "Circle", "Triangle Up", "Triangle Down"], group=g_SWEEP)
+high_sweep_color = input.color(color.new(color.green, 0), "High Sweep Color", group=g_SWEEP)
+low_sweep_color = input.color(color.new(color.red, 0), "Low Sweep Color", group=g_SWEEP)
+marker_size = input.string("Small", "Marker Size", options=["Tiny", "Small", "Normal", "Large"], group=g_SWEEP)
+
+// --- Previous Hour Levels & Current Open Target ---
+var g_TGT = "Target Levels (Prev Hour + Current Open)"
+show_targets = input.bool(true, "Show Target Levels", group=g_TGT)
+target_color = input.color(color.new(color.blue, 0), "Target Color", group=g_TGT)
+target_width = input.int(1, "Target Width", minval=1, maxval=5, group=g_TGT)
+target_style = input.string("Solid", "Target Line Style", options=["Solid", "Dashed", "Dotted"], group=g_TGT)
+
+show_prev_open = input.bool(true, "Show Prev Open", group=g_TGT)
+show_prev_high = input.bool(true, "Show Prev High", group=g_TGT)
+show_prev_low = input.bool(true, "Show Prev Low", group=g_TGT)
+show_prev_50 = input.bool(true, "Show Prev 50%", group=g_TGT)
+show_open_target = input.bool(true, "Show Current Open Target", group=g_TGT)
+
+show_target_labels = input.bool(true, "Show Target Labels", group=g_TGT)
+target_label_size = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal"], group=g_TGT)
+
+// --- Reversal Level Settings (Sweep Percentiles) ---
+var g_REV = "Reversal Levels (Statistical Sweep Zones)"
+show_reversal = input.bool(true, "Show Reversal Levels", group=g_REV)
+reversal_color = input.color(color.new(color.purple, 20), "Reversal Color", group=g_REV)
+reversal_width = input.int(2, "Reversal Width", minval=1, maxval=5, group=g_REV)
+reversal_style = input.string("Dashed", "Reversal Line Style", options=["Solid", "Dashed", "Dotted"], group=g_REV)
+
+show_25th = input.bool(true, "Show 25th Percentile", group=g_REV)
+show_median = input.bool(true, "Show Median (50th)", group=g_REV)
+show_75th = input.bool(true, "Show 75th Percentile", group=g_REV)
+
+show_rev_labels = input.bool(true, "Show Reversal Labels", group=g_REV)
+rev_label_size = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal"], group=g_REV)
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+get_position(pos) =>
+    switch pos
+        'Bottom Center' => position.bottom_center
+        'Bottom Left' => position.bottom_left
+        'Bottom Right' => position.bottom_right
+        'Middle Center' => position.middle_center
+        'Middle Left' => position.middle_left
+        'Middle Right' => position.middle_right
+        'Top Center' => position.top_center
+        'Top Left' => position.top_left
+        => position.top_right
+
+get_size(s) =>
+    switch s
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        => size.large
+
+get_line_style(s) =>
+    switch s
+        "Solid" => line.style_solid
+        "Dotted" => line.style_dotted
+        => line.style_dashed
+
+get_shape(s) =>
+    switch s
+        "Circle" => shape.circle
+        "Triangle Up" => shape.triangleup
+        "Triangle Down" => shape.triangledown
+        => shape.diamond
+
+// ============================================================================
+// DATA RETRIEVAL - STORE VALUES AT HOUR START
+// ============================================================================
+
+bool newHour = ta.change(time("60"))
+
+// Variables to store static values for the current hour
+var float stored_prevHigh = na
+var float stored_prevLow = na
+var float stored_prevOpen = na
+var float stored_prevRange = na
+var float stored_prev50 = na
+var float stored_currHourOpen = na
+var int stored_hourStartTime = na
+var int stored_hourEndTime = na
+var bool stored_isAbove = false
+
+// Track if sweeps have occurred this hour
+var bool highSweptThisHour = false
+var bool lowSweptThisHour = false
+
+// Get hourly data
+[h1_open, h1_high, h1_low, h1_close] = request.security(syminfo.tickerid, "60", [open, high, low, close])
+
+// Calculate hour end time
+getHourEnd(t) =>
+    t + 3600000  // Add 1 hour in milliseconds
+
+// Store values when new hour starts
+if newHour
+    // Store previous COMPLETED hour's data
+    stored_prevHigh := h1_high[1]
+    stored_prevLow := h1_low[1]
+    stored_prevOpen := h1_open[1]
+    stored_prevRange := stored_prevHigh - stored_prevLow
+    stored_prev50 := (stored_prevHigh + stored_prevLow) / 2
+    
+    // Store current hour's opening data
+    stored_currHourOpen := open
+    stored_hourStartTime := time
+    stored_hourEndTime := getHourEnd(time)
+    stored_isAbove := open > h1_open[1]
+    
+    // Reset sweep flags
+    highSweptThisHour := false
+    lowSweptThisHour := false
+
+// Detect sweeps
+bool highSweepNow = false
+bool lowSweepNow = false
+
+if not highSweptThisHour and high > stored_prevHigh
+    highSweptThisHour := true
+    highSweepNow := true
+
+if not lowSweptThisHour and low < stored_prevLow
+    lowSweptThisHour := true
+    lowSweepNow := true
+
+// Plot sweep markers
+if show_sweep_markers
+    shape_type = get_shape(marker_shape)
+    shape_size = get_size(marker_size)
+    
+    if highSweepNow
+        label.new(bar_index, high, "H", 
+             style=label.style_label_down, 
+             color=high_sweep_color, 
+             textcolor=color.white, 
+             size=shape_size,
+             yloc=yloc.abovebar)
+    
+    if lowSweepNow
+        label.new(bar_index, low, "L", 
+             style=label.style_label_up, 
+             color=low_sweep_color, 
+             textcolor=color.white, 
+             size=shape_size,
+             yloc=yloc.belowbar)
+
+// ============================================================================
+// STATISTICAL DATA - ALL 24 HOURS WITH COMPREHENSIVE RETRACEMENT DATA
+// ============================================================================
+
+getHourStats(h, isAbove) =>
+    // Returns: [highSweep%, lowSweep%, bothSweep%, noSweep%, 
+    //           h25, h50, h75, l25, l50, l75, 
+    //           high_ret_swept, high_ret_50, high_ret_open, high_ret_opp,
+    //           low_ret_swept, low_ret_50, low_ret_open, low_ret_opp,
+    //           totalSessions]
+    
+    if h == 0
+        if isAbove
+            [57.95, 27.43, 8.82, 23.44, 17.78, 39.52, 79.32, 18.18, 40.46, 72.22, 90.89, 34.44, 62.67, 12.00, 92.49, 39.20, 34.51, 12.44, 1553]
+        else
+            [29.41, 55.17, 7.83, 23.25, 16.25, 36.00, 72.79, 17.90, 37.50, 73.29, 90.44, 35.92, 34.37, 10.85, 94.35, 38.15, 66.39, 11.71, 1316]
+    else if h == 1
+        if isAbove
+            [67.32, 35.24, 14.46, 11.90, 20.64, 44.44, 92.05, 21.02, 50.00, 91.83, 90.51, 40.96, 65.93, 15.98, 91.41, 46.56, 40.46, 20.99, 1487]
+        else
+            [38.50, 62.45, 14.33, 13.37, 21.43, 44.54, 87.97, 25.00, 50.00, 97.55, 89.50, 39.50, 34.73, 16.60, 92.59, 45.41, 66.00, 18.47, 1361]
+    else if h == 2
+        if isAbove
+            [70.79, 36.68, 16.22, 8.75, 25.00, 53.33, 100.00, 21.05, 50.00, 100.00, 91.25, 41.16, 65.40, 17.97, 92.66, 45.69, 37.06, 18.35, 1486]
+        else
+            [39.53, 66.35, 14.39, 8.50, 22.22, 46.87, 88.64, 25.66, 53.09, 94.25, 91.54, 43.75, 39.71, 15.81, 92.66, 44.36, 67.91, 17.74, 1376]
+    else if h == 3
+        if isAbove
+            [71.15, 44.43, 23.05, 7.47, 28.92, 55.42, 101.55, 22.25, 55.02, 107.80, 93.12, 49.59, 71.31, 22.53, 93.04, 55.22, 49.28, 28.84, 1553]
+        else
+            [45.31, 73.58, 23.79, 4.90, 26.35, 58.11, 110.00, 25.73, 55.51, 111.11, 92.32, 47.02, 42.01, 21.16, 93.63, 54.34, 72.10, 26.16, 1408]
+    else if h == 4
+        if isAbove
+            [56.56, 23.84, 4.31, 23.91, 15.79, 33.64, 63.12, 15.31, 33.33, 61.81, 91.14, 23.86, 59.77, 5.57, 92.45, 28.84, 24.26, 7.28, 1556]
+        else
+            [25.24, 57.27, 4.91, 22.41, 15.71, 35.04, 63.64, 17.13, 35.29, 65.32, 89.07, 24.80, 25.87, 7.20, 92.13, 28.08, 58.17, 6.70, 1486]
+    else if h == 5
+        if isAbove
+            [60.28, 20.36, 4.58, 23.94, 14.21, 31.82, 58.82, 15.00, 33.33, 66.67, 93.62, 27.61, 63.70, 5.94, 90.55, 31.92, 29.32, 7.82, 1508]
+        else
+            [26.15, 56.35, 5.26, 22.75, 12.73, 31.03, 60.14, 15.40, 36.36, 69.03, 89.57, 26.72, 26.46, 6.87, 92.80, 32.47, 63.75, 7.67, 1503]
+    else if h == 6
+        if isAbove
+            [63.24, 27.26, 8.20, 17.70, 16.03, 32.41, 63.43, 17.19, 33.99, 67.58, 94.34, 32.51, 67.49, 9.57, 94.51, 36.28, 31.03, 10.98, 1537]
+        else
+            [28.98, 61.20, 7.68, 17.50, 18.98, 40.00, 67.26, 16.67, 38.89, 73.33, 89.74, 31.26, 29.36, 8.83, 94.01, 36.61, 63.73, 10.62, 1446]
+    else if h == 7
+        if isAbove
+            [68.68, 28.32, 9.57, 12.57, 21.88, 44.84, 80.21, 18.42, 40.00, 77.35, 91.09, 34.41, 62.37, 11.37, 90.34, 37.70, 30.57, 11.03, 1536]
+        else
+            [34.60, 59.67, 10.22, 15.95, 21.48, 45.16, 83.33, 22.17, 44.87, 89.95, 92.02, 29.74, 28.74, 10.38, 92.36, 36.00, 61.69, 13.08, 1448]
+    else if h == 8
+        if isAbove
+            [70.47, 37.70, 18.54, 10.36, 23.81, 49.73, 93.94, 26.65, 55.18, 114.76, 92.21, 46.06, 70.42, 22.14, 91.23, 43.87, 40.07, 21.85, 1602]
+        else
+            [37.95, 71.00, 19.33, 10.38, 22.11, 53.12, 110.67, 23.33, 53.08, 103.25, 92.70, 42.13, 38.01, 20.79, 93.49, 49.35, 70.87, 23.02, 1407]
+    else if h == 9
+        if isAbove
+            [81.89, 56.77, 41.17, 2.51, 34.50, 75.76, 141.68, 37.50, 81.08, 158.33, 95.28, 66.17, 80.09, 41.86, 94.44, 62.66, 55.39, 41.32, 1552]
+        else
+            [58.61, 79.37, 39.99, 2.01, 34.27, 80.33, 146.56, 40.17, 82.50, 155.43, 92.91, 60.91, 53.37, 39.09, 96.29, 66.08, 81.86, 41.27, 1493]
+    else if h == 10
+        if isAbove
+            [73.73, 27.38, 10.20, 9.09, 17.31, 34.13, 57.69, 17.59, 40.35, 81.64, 93.46, 34.28, 67.48, 10.65, 92.10, 37.92, 31.60, 11.51, 1618]
+        else
+            [28.39, 69.29, 8.76, 11.08, 14.67, 28.01, 52.66, 20.00, 40.00, 71.74, 93.25, 34.46, 33.98, 11.57, 93.78, 36.13, 65.75, 9.08, 1462]
+    else if h == 11
+        if isAbove
+            [67.33, 15.64, 2.63, 19.65, 14.73, 28.74, 48.76, 15.87, 32.96, 69.46, 92.19, 20.26, 61.43, 3.07, 88.80, 23.60, 20.40, 4.40, 1598]
+        else
+            [20.74, 57.44, 2.42, 24.24, 11.45, 23.64, 46.86, 16.11, 32.58, 57.85, 92.21, 15.91, 17.86, 3.25, 93.79, 24.97, 63.77, 3.17, 1485]
+    else if h == 12
+        if isAbove
+            [64.30, 20.28, 3.81, 19.23, 13.68, 29.19, 52.59, 15.34, 35.61, 67.48, 93.35, 24.70, 61.90, 5.10, 91.91, 26.01, 25.43, 4.34, 1706]
+        else
+            [20.25, 61.54, 3.79, 22.00, 10.53, 24.85, 47.32, 15.25, 32.00, 61.17, 91.01, 24.82, 25.54, 6.47, 92.90, 30.18, 64.50, 4.14, 1373]
+    else if h == 13
+        if isAbove
+            [68.13, 24.04, 7.40, 15.23, 16.07, 34.17, 59.79, 13.41, 36.78, 71.62, 94.03, 31.49, 66.43, 8.14, 92.31, 36.67, 30.77, 12.31, 1622]
+        else
+            [30.33, 61.46, 7.64, 15.85, 15.30, 31.03, 62.50, 18.29, 41.91, 78.22, 90.74, 25.42, 26.60, 7.13, 92.73, 35.99, 63.89, 9.85, 1388]
+    else if h == 14
+        if isAbove
+            [70.53, 29.79, 11.15, 10.83, 18.64, 36.84, 64.97, 20.90, 47.15, 84.85, 94.28, 34.42, 67.03, 11.81, 95.05, 43.87, 36.77, 18.49, 1561]
+        else
+            [32.23, 64.68, 10.05, 13.14, 16.25, 38.18, 68.85, 18.50, 41.94, 79.37, 92.43, 30.51, 28.95, 11.14, 95.67, 42.51, 69.48, 13.54, 1393]
+    else if h == 15
+        if isAbove
+            [73.18, 30.88, 12.91, 8.86, 19.94, 40.38, 70.22, 19.81, 42.62, 76.99, 95.06, 39.73, 71.18, 12.96, 92.93, 43.03, 33.13, 16.16, 1603]
+        else
+            [36.89, 66.86, 14.21, 10.46, 17.86, 40.10, 70.00, 21.08, 44.34, 82.10, 90.82, 39.72, 36.93, 13.57, 94.60, 45.15, 70.48, 16.41, 1358]
+    else if h == 16
+        if isAbove
+            [52.27, 10.18, 2.36, 39.92, 10.60, 21.66, 40.05, 12.80, 30.39, 70.51, 85.05, 12.94, 56.78, 4.02, 90.97, 21.29, 27.10, 8.39, 1523]
+        else
+            [12.61, 44.54, 1.96, 44.82, 9.49, 24.36, 57.15, 8.33, 18.24, 35.58, 83.33, 16.67, 22.22, 6.67, 91.67, 14.31, 63.52, 4.09, 1428]
+    else if h == 17
+        if isAbove
+            [28.73, 2.71, 0.00, 68.56, 8.23, 15.19, 26.58, 15.71, 25.74, 40.14, 69.81, 1.89, 32.08, 0.00, 60.00, 0.00, 0.00, 0.00, 369]
+        else
+            [3.93, 17.14, 0.00, 78.93, 11.69, 21.43, 30.39, 6.92, 14.29, 27.27, 45.45, 0.00, 0.00, 0.00, 77.08, 2.08, 43.75, 0.00, 280]
+    else if h == 18
+        if isAbove
+            [54.61, 60.28, 26.24, 11.35, 33.33, 72.73, 140.00, 28.57, 66.67, 118.18, 83.12, 62.34, 71.43, 49.35, 89.41, 45.88, 51.76, 24.71, 141]
+        else
+            [50.52, 75.26, 28.87, 3.09, 30.77, 71.43, 122.22, 37.50, 66.67, 142.86, 85.71, 53.06, 46.94, 34.69, 86.30, 61.64, 78.08, 39.73, 97]
+    else if h == 19
+        if isAbove
+            [53.44, 19.46, 4.48, 31.57, 14.58, 31.03, 63.49, 14.69, 32.50, 62.83, 88.11, 21.65, 52.44, 6.76, 89.00, 32.99, 29.21, 9.62, 1495]
+        else
+            [22.31, 49.80, 4.50, 32.40, 13.25, 31.82, 62.22, 14.29, 30.43, 59.48, 84.10, 27.22, 29.36, 9.17, 91.78, 24.38, 55.07, 7.12, 1466]
+    else if h == 20
+        if isAbove
+            [66.29, 38.45, 15.40, 10.66, 24.16, 52.76, 96.36, 23.01, 50.93, 100.00, 89.97, 40.32, 65.94, 17.97, 89.04, 45.38, 37.67, 17.81, 1519]
+        else
+            [39.07, 65.83, 15.42, 10.53, 23.67, 49.60, 100.64, 27.63, 54.37, 106.22, 89.18, 37.38, 31.31, 15.94, 91.78, 45.61, 68.92, 18.36, 1349]
+    else if h == 21
+        if isAbove
+            [63.97, 21.32, 6.74, 21.45, 17.65, 36.36, 68.54, 20.00, 40.91, 87.50, 90.98, 28.37, 60.79, 8.41, 87.23, 33.13, 27.66, 12.46, 1543]
+        else
+            [26.21, 56.97, 5.86, 22.69, 16.67, 38.07, 75.00, 17.59, 37.40, 73.06, 91.05, 26.84, 27.11, 7.37, 92.49, 32.57, 62.23, 8.11, 1450]
+    else if h == 22
+        if isAbove
+            [57.45, 19.45, 3.77, 26.87, 15.63, 31.62, 62.55, 15.79, 36.36, 66.67, 91.17, 20.50, 58.89, 4.76, 91.64, 27.42, 27.76, 7.69, 1537]
+        else
+            [21.27, 52.85, 3.46, 29.34, 14.29, 31.82, 63.01, 16.88, 33.93, 64.71, 91.53, 27.12, 25.08, 7.12, 90.86, 27.97, 60.57, 4.91, 1387]
+    else if h == 23
+        if isAbove
+            [55.73, 19.65, 3.47, 28.09, 14.43, 33.33, 62.41, 15.31, 34.36, 65.26, 91.66, 25.15, 62.40, 5.76, 91.67, 31.00, 34.00, 7.00, 1527]
+        else
+            [25.58, 53.04, 4.93, 26.30, 15.00, 31.82, 60.83, 15.38, 36.48, 65.76, 90.37, 29.18, 29.75, 6.80, 93.03, 31.01, 61.34, 8.20, 1380]
+    else
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0]
+
+// ============================================================================
+// LINE & LABEL MANAGEMENT
+// ============================================================================
+
+var line delimLine = na
+var line prevOpenLine = na
+var line prevHighLine = na
+var line prevLowLine = na
+var line prev50Line = na
+var line highRev25 = na
+var line highRev50 = na
+var line highRev75 = na
+var line lowRev25 = na
+var line lowRev50 = na
+var line lowRev75 = na
+var line openTarget = na
+
+var label prevOpenLbl = na
+var label prevHighLbl = na
+var label prevLowLbl = na
+var label prev50Lbl = na
+var label highRev25Lbl = na
+var label highRev50Lbl = na
+var label highRev75Lbl = na
+var label lowRev25Lbl = na
+var label lowRev50Lbl = na
+var label lowRev75Lbl = na
+var label openTargetLbl = na
+
+if newHour
+    // Delete old lines
+    line.delete(delimLine)
+    line.delete(prevOpenLine)
+    line.delete(prevHighLine)
+    line.delete(prevLowLine)
+    line.delete(prev50Line)
+    line.delete(highRev25)
+    line.delete(highRev50)
+    line.delete(highRev75)
+    line.delete(lowRev25)
+    line.delete(lowRev50)
+    line.delete(lowRev75)
+    line.delete(openTarget)
+    
+    // Delete old labels
+    label.delete(prevOpenLbl)
+    label.delete(prevHighLbl)
+    label.delete(prevLowLbl)
+    label.delete(prev50Lbl)
+    label.delete(highRev25Lbl)
+    label.delete(highRev50Lbl)
+    label.delete(highRev75Lbl)
+    label.delete(lowRev25Lbl)
+    label.delete(lowRev50Lbl)
+    label.delete(lowRev75Lbl)
+    label.delete(openTargetLbl)
+    
+    // Get stats for current hour
+    int h = hour(time, "America/New_York")
+    [highSweep, lowSweep, bothSweep, noSweep, h25, h50, h75, l25, l50, l75, 
+     high_ret_swept, high_ret_50, high_ret_open, high_ret_opp,
+     low_ret_swept, low_ret_50, low_ret_open, low_ret_opp, totalSess] = getHourStats(h, stored_isAbove)
+    
+    // Draw delimiter
+    if show_delimiter
+        delimLine := line.new(time, low, time, high, xloc.bar_time, extend=extend.both, 
+             color=delim_color, width=delim_width, style=line.style_solid)
+    
+    // Get line styles
+    target_line_style = get_line_style(target_style)
+    target_lbl_size = get_size(target_label_size)
+    
+    // Draw target levels
+    if show_targets
+        if show_prev_open and not na(stored_prevOpen)
+            prevOpenLine := line.new(stored_hourStartTime, stored_prevOpen, stored_hourEndTime, stored_prevOpen,
+                 xloc.bar_time, color=target_color, width=target_width, style=target_line_style)
+            if show_target_labels
+                prevOpenLbl := label.new(stored_hourEndTime, stored_prevOpen, "Prev Open: " + str.tostring(stored_prevOpen, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(target_color, 100), textcolor=target_color,
+                     style=label.style_label_left, size=target_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_prev_high and not na(stored_prevHigh)
+            prevHighLine := line.new(stored_hourStartTime, stored_prevHigh, stored_hourEndTime, stored_prevHigh,
+                 xloc.bar_time, color=target_color, width=target_width, style=target_line_style)
+            if show_target_labels
+                prevHighLbl := label.new(stored_hourEndTime, stored_prevHigh, "Prev High: " + str.tostring(stored_prevHigh, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(target_color, 100), textcolor=target_color,
+                     style=label.style_label_left, size=target_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_prev_low and not na(stored_prevLow)
+            prevLowLine := line.new(stored_hourStartTime, stored_prevLow, stored_hourEndTime, stored_prevLow,
+                 xloc.bar_time, color=target_color, width=target_width, style=target_line_style)
+            if show_target_labels
+                prevLowLbl := label.new(stored_hourEndTime, stored_prevLow, "Prev Low: " + str.tostring(stored_prevLow, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(target_color, 100), textcolor=target_color,
+                     style=label.style_label_left, size=target_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_prev_50 and not na(stored_prev50)
+            prev50Line := line.new(stored_hourStartTime, stored_prev50, stored_hourEndTime, stored_prev50,
+                 xloc.bar_time, color=target_color, width=target_width, style=target_line_style)
+            if show_target_labels
+                prev50Lbl := label.new(stored_hourEndTime, stored_prev50, "Prev 50%: " + str.tostring(stored_prev50, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(target_color, 100), textcolor=target_color,
+                     style=label.style_label_left, size=target_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_open_target and not na(stored_currHourOpen)
+            openTarget := line.new(stored_hourStartTime, stored_currHourOpen, stored_hourEndTime, stored_currHourOpen,
+                 xloc.bar_time, color=target_color, width=target_width, style=target_line_style)
+            
+            if show_target_labels
+                openTargetLbl := label.new(stored_hourEndTime, stored_currHourOpen, 
+                     "Current Open: " + str.tostring(stored_currHourOpen, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(target_color, 100), textcolor=target_color,
+                     style=label.style_label_left, size=target_lbl_size, text_font_family=font.family_monospace)
+    
+    // Calculate and draw reversal levels
+    if show_reversal and not na(stored_prevRange) and stored_prevRange > 0
+        float highRev25Price = stored_prevHigh + (stored_prevRange * h25 / 100)
+        float highRev50Price = stored_prevHigh + (stored_prevRange * h50 / 100)
+        float highRev75Price = stored_prevHigh + (stored_prevRange * h75 / 100)
+        float lowRev25Price = stored_prevLow - (stored_prevRange * l25 / 100)
+        float lowRev50Price = stored_prevLow - (stored_prevRange * l50 / 100)
+        float lowRev75Price = stored_prevLow - (stored_prevRange * l75 / 100)
+        
+        rev_line_style = get_line_style(reversal_style)
+        rev_lbl_size = get_size(rev_label_size)
+        
+        // High reversal levels
+        if show_25th
+            highRev25 := line.new(stored_hourStartTime, highRev25Price, stored_hourEndTime, highRev25Price, 
+                 xloc.bar_time, color=reversal_color, width=reversal_width, style=rev_line_style)
+            if show_rev_labels
+                highRev25Lbl := label.new(stored_hourEndTime, highRev25Price, "H 25th: " + str.tostring(highRev25Price, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(reversal_color, 100), textcolor=reversal_color,
+                     style=label.style_label_left, size=rev_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_median
+            highRev50 := line.new(stored_hourStartTime, highRev50Price, stored_hourEndTime, highRev50Price,
+                 xloc.bar_time, color=reversal_color, width=reversal_width, style=rev_line_style)
+            if show_rev_labels
+                highRev50Lbl := label.new(stored_hourEndTime, highRev50Price, "H Median: " + str.tostring(highRev50Price, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(reversal_color, 100), textcolor=reversal_color,
+                     style=label.style_label_left, size=rev_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_75th
+            highRev75 := line.new(stored_hourStartTime, highRev75Price, stored_hourEndTime, highRev75Price,
+                 xloc.bar_time, color=reversal_color, width=reversal_width, style=rev_line_style)
+            if show_rev_labels
+                highRev75Lbl := label.new(stored_hourEndTime, highRev75Price, "H 75th: " + str.tostring(highRev75Price, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(reversal_color, 100), textcolor=reversal_color,
+                     style=label.style_label_left, size=rev_lbl_size, text_font_family=font.family_monospace)
+        
+        // Low reversal levels
+        if show_25th
+            lowRev25 := line.new(stored_hourStartTime, lowRev25Price, stored_hourEndTime, lowRev25Price,
+                 xloc.bar_time, color=reversal_color, width=reversal_width, style=rev_line_style)
+            if show_rev_labels
+                lowRev25Lbl := label.new(stored_hourEndTime, lowRev25Price, "L 25th: " + str.tostring(lowRev25Price, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(reversal_color, 100), textcolor=reversal_color,
+                     style=label.style_label_left, size=rev_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_median
+            lowRev50 := line.new(stored_hourStartTime, lowRev50Price, stored_hourEndTime, lowRev50Price,
+                 xloc.bar_time, color=reversal_color, width=reversal_width, style=rev_line_style)
+            if show_rev_labels
+                lowRev50Lbl := label.new(stored_hourEndTime, lowRev50Price, "L Median: " + str.tostring(lowRev50Price, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(reversal_color, 100), textcolor=reversal_color,
+                     style=label.style_label_left, size=rev_lbl_size, text_font_family=font.family_monospace)
+        
+        if show_75th
+            lowRev75 := line.new(stored_hourStartTime, lowRev75Price, stored_hourEndTime, lowRev75Price,
+                 xloc.bar_time, color=reversal_color, width=reversal_width, style=rev_line_style)
+            if show_rev_labels
+                lowRev75Lbl := label.new(stored_hourEndTime, lowRev75Price, "L 75th: " + str.tostring(lowRev75Price, format.mintick),
+                     xloc.bar_time, yloc.price, color=color.new(reversal_color, 100), textcolor=reversal_color,
+                     style=label.style_label_left, size=rev_lbl_size, text_font_family=font.family_monospace)
+
+// Update delimiter to match price range
+if show_delimiter and not na(delimLine)
+    line.set_y1(delimLine, low)
+    line.set_y2(delimLine, high)
+
+// ============================================================================
+// STATISTICS TABLE WITH COMPREHENSIVE RETRACEMENT DATA
+// ============================================================================
+
+var table stats_table = na
+
+if show_table and barstate.islast
+    stats_table := table.new(get_position(table_position), 2, 50, 
+         bgcolor=color.white, frame_color=color.black, frame_width=2, border_color=color.black, border_width=1)
+    
+    int h = hour(time, "America/New_York")
+    [highSweep, lowSweep, bothSweep, noSweep, h25, h50, h75, l25, l50, l75,
+     high_ret_swept, high_ret_50, high_ret_open, high_ret_opp,
+     low_ret_swept, low_ret_50, low_ret_open, low_ret_opp, totalSess] = getHourStats(h, stored_isAbove)
+    
+    text_size = get_size(table_size)
+    
+    int row = 0
+    
+    // ========================================
+    // HEADER
+    // ========================================
+    string ampm = h >= 12 ? "PM" : "AM"
+    int hour12 = h > 12 ? h - 12 : (h == 0 ? 12 : h)
+    string hourLabel = str.tostring(hour12) + ampm + " Stats"
+    table.cell(stats_table, 0, row, hourLabel, text_color=color.white, bgcolor=color.new(color.gray, 30), text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, stored_isAbove ? "Open > Prev" : "Open < Prev", text_color=color.white, bgcolor=stored_isAbove ? color.new(color.black, 50) : color.new(color.black, 50), text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    // ========================================
+    // SWEEP ALERT
+    // ========================================
+    string sweepAlert = ""
+    color sweepAlertBg = color.white
+    if not highSweptThisHour and not lowSweptThisHour
+        if highSweep > lowSweep
+            sweepAlert := "↑ Waiting High (" + str.tostring(highSweep, "#.#") + "%)"
+            sweepAlertBg := color.new(color.green, 80)
+        else if lowSweep > highSweep
+            sweepAlert := "↓ Waiting Low (" + str.tostring(lowSweep, "#.#") + "%)"
+            sweepAlertBg := color.new(color.red, 80)
+        else
+            sweepAlert := "Equal Probability"
+            sweepAlertBg := color.rgb(240, 240, 240)
+    else if highSweptThisHour and not lowSweptThisHour
+        sweepAlert := "✓ High Swept"
+        sweepAlertBg := color.new(color.green, 60)
+    else if lowSweptThisHour and not highSweptThisHour
+        sweepAlert := "✓ Low Swept"
+        sweepAlertBg := color.new(color.red, 60)
+    else
+        sweepAlert := "✓ Both Swept"
+        sweepAlertBg := color.new(color.orange, 60)
+    
+    table.cell(stats_table, 0, row, "Status", text_color=color.black, bgcolor=color.rgb(250, 250, 250), text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, sweepAlert, text_color=color.black, bgcolor=sweepAlertBg, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    // ========================================
+    // SWEEP PROBABILITIES
+    // ========================================
+    table.cell(stats_table, 0, row, "SWEEP PROBABILITIES", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, "", bgcolor=color.new(color.white, 30))
+    row += 1
+    
+    table.cell(stats_table, 0, row, "High Sweep", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, str.tostring(highSweep, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "Low Sweep", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, str.tostring(lowSweep, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "Both Sweeps", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, str.tostring(bothSweep, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    // ========================================
+    // RETRACEMENT AFTER HIGH SWEEP
+    // ========================================
+    table.cell(stats_table, 0, row, "AFTER HIGH SWEEP →", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, "", bgcolor=color.new(color.white, 30))
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ Prev High", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace, tooltip="Retraces to swept level")
+    table.cell(stats_table, 1, row, str.tostring(high_ret_swept, "#.#") + "%", text_color=color.black, bgcolor=high_ret_swept >= 90 ? color.new(color.black, 80) : color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ 50% Level", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace, tooltip="Retraces to middle of prev range")
+    table.cell(stats_table, 1, row, str.tostring(high_ret_50, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ Current Open", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, str.tostring(high_ret_open, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ Prev Low", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace, tooltip="Retraces to opposite level")
+    table.cell(stats_table, 1, row, str.tostring(high_ret_opp, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    // ========================================
+    // RETRACEMENT AFTER LOW SWEEP
+    // ========================================
+    table.cell(stats_table, 0, row, "AFTER LOW SWEEP →", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, "", bgcolor=color.new(color.white, 30))
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ Prev Low", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace, tooltip="Retraces to swept level")
+    table.cell(stats_table, 1, row, str.tostring(low_ret_swept, "#.#") + "%", text_color=color.black, bgcolor=low_ret_swept >= 90 ? color.new(color.black, 80) : color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ 50% Level", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace, tooltip="Retraces to middle of prev range")
+    table.cell(stats_table, 1, row, str.tostring(low_ret_50, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ Current Open", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, row, str.tostring(low_ret_open, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1
+    
+    table.cell(stats_table, 0, row, "→ Prev High", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace, tooltip="Retraces to opposite level")
+    table.cell(stats_table, 1, row, str.tostring(low_ret_opp, "#.#") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size, text_font_family=font.family_monospace)
+    row += 1

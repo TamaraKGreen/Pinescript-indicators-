@@ -1,0 +1,418 @@
+// © notprofessorgreen
+
+//@version=5
+indicator("MTF Swing Highs and Lows", shorttitle = 'MTF swing', overlay=true,max_bars_back = 5000)
+
+filterBW = input(false, title="filter Bill Williams Fractals:")
+LabelsOffset = input(50)
+
+isRegularFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[3] and high[3] < high[2] and high[2] > high[1] and high[1] > high[0] : mode == -1 ? low[4] > low[3] and low[3] > low[2] and low[2] < low[1] and low[1] < low[0] : false
+
+isBWFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[2] and high[3] <= high[2] and high[2] >= high[1] and high[2] > high[0] : mode == -1 ? low[4] > low[2] and low[3] >= low[2] and low[2] <= low[1] and low[2] < low[0] : false
+
+dt = time - time[1]
+
+GetLastPivots() =>
+    var float LastPh_v = na
+    var float LastPl_v = na
+    var int LastPh_t = na
+    var int LastPl_t = na
+    
+    filteredtopf = filterBW ? isRegularFractal(1) : isBWFractal(1)
+    filteredbotf = filterBW ? isRegularFractal(-1) : isBWFractal(-1)
+
+    if filteredtopf
+        LastPh_v := high[2]
+        LastPh_t := time[2]
+    if filteredbotf
+        LastPl_v := low[2]
+        LastPl_t := time[2]
+        
+    [LastPh_v,LastPh_t,LastPl_v,LastPl_t]
+
+
+Show2 = input.bool(true,title="Use Daily Levels", group = 'Daily levels')
+ColorH2 = input.color(color.black,inline='l2',title="High", group = 'Daily levels')
+ColorL2 = input.color(color.black,inline='l2',title="Low", group = 'Daily levels')
+Style2 = input.string("Dotted",options=["Solid","Dotted","Dashed"],inline='l2',title="", group = 'Daily levels')
+Width2 = input.int(1,title="",inline="l2", group = 'Daily levels')
+
+Show3 = input.bool(true,title="Show 4H Levels", group = '4h levels')
+ColorH3 = input.color(color.black,inline='l3',title="High",group = '4h levels')
+ColorL3 = input.color(color.black,inline='l3',title="Low", group = '4h levels')
+Style3 = input.string("Dotted",options=["Solid","Dotted","Dashed"],inline='l3',title="",group = '4h levels')
+Width3 = input.int(1,title="",inline="l3",group = '4h levels')
+
+Show4 = input.bool(true,title="Show 1H Levels", group = '1h levels')
+ColorH4 = input.color(color.black,inline='l4',title="High",group = '1h levels')
+ColorL4 = input.color(color.black,inline='l4',title="Low",group = '1h levels')
+Style4 = input.string("Dotted",options=["Solid","Dotted","Dashed"],inline='l4',title="",group = '1h levels')
+Width4 = input.int(1,title="",inline="l4",group = '1h levels')
+
+Show5 = input.bool(true,title="Show 30m Levels",group = '30m levels')
+ColorH5 = input.color(color.black,inline='l5',title="High",group = '30m levels')
+ColorL5 = input.color(color.black,inline='l5',title="Low",group = '30m levels')
+Style5 = input.string("Dotted",options=["Solid","Dotted","Dashed"],inline='l5',title="",group = '30m levels')
+Width5 = input.int(1,title="",inline="l5",group = '30m levels')
+
+Show6 = input.bool(true,title="Show 15m Levels",group = '15m levels')
+ColorH6 = input.color(color.black,inline='l6',title="High",group = '15m levels')
+ColorL6 = input.color(color.black,inline='l6',title="Low",group = '15m levels')
+Style6 = input.string("Dotted",options=["Solid","Dotted","Dashed"],inline='l6',title="",group = '15m levels')
+Width6 = input.int(1,title="",inline="l6",group = '15m levels')
+
+Show7 = input.bool(false,title="Show 5m Levels",group = '5m levels')
+ColorH7 = input.color(color.black,inline='l7',title="High",group = '5m levels')
+ColorL7 = input.color(color.black,inline='l7',title="Low",group = '5m levels')
+Style7 = input.string("Dotted",options=["Solid","Dotted","Dashed"],inline='l7',title="",group = '5m levels')
+Width7 = input.int(1,title="",inline="l7",group = '5m levels')
+
+LabelColor = input.color(color.purple)
+TextColor = input.color(color.black)
+
+StyleToEnum(s) =>
+    if s == 'Solid'
+        line.style_solid
+    else if s == 'Dotted'
+        line.style_dotted
+    else
+        line.style_dashed
+
+[LastPh_v2,LastPh_t2_,LastPl_v2,LastPl_t2_] = request.security(syminfo.tickerid,"D", GetLastPivots())
+[LastPh_v3,LastPh_t3_,LastPl_v3,LastPl_t3_] = request.security(syminfo.tickerid,"240", GetLastPivots())
+[LastPh_v4,LastPh_t4_,LastPl_v4,LastPl_t4_] = request.security(syminfo.tickerid,"60", GetLastPivots())
+[LastPh_v5,LastPh_t5_,LastPl_v5,LastPl_t5_] = request.security(syminfo.tickerid,"30", GetLastPivots())
+[LastPh_v6,LastPh_t6_,LastPl_v6,LastPl_t6_] = request.security(syminfo.tickerid,"15", GetLastPivots())
+[LastPh_v7,LastPh_t7_,LastPl_v7,LastPl_t7_] = request.security(syminfo.tickerid,"5", GetLastPivots())
+
+line lh2 = na, line ll2 = na
+line lh3 = na, line ll3 = na
+line lh4 = na, line ll4 = na
+line lh5 = na, line ll5 = na
+line lh6 = na, line ll6 = na
+line lh7 = na, line ll7 = na
+
+label lblh2 = na, label lbll2 = na
+label lblh3 = na, label lbll3 = na
+label lblh4 = na, label lbll4 = na
+label lblh5 = na, label lbll5 = na
+label lblh6 = na, label lbll6 = na
+label lblh7 = na, label lbll7 = na
+
+var Pl_2_trigger = false, var Pl_3_trigger = false, var Pl_4_trigger = false, var Pl_5_trigger = false, var Pl_6_trigger = false, var Pl_7_trigger = false
+var Ph_2_trigger = false, var Ph_3_trigger = false, var Ph_4_trigger = false, var Ph_5_trigger = false, var Ph_6_trigger = false, var Ph_7_trigger = false
+
+//Reset Trigger
+
+if ta.change(LastPh_v7)
+    Ph_7_trigger := false
+    
+if ta.change(LastPh_v6)
+    Ph_6_trigger := false
+
+if ta.change(LastPh_v5)
+    Ph_5_trigger := false
+
+if ta.change(LastPh_v4)
+    Ph_4_trigger := false
+
+if ta.change(LastPh_v3)
+    Ph_3_trigger := false
+
+if ta.change(LastPh_v2)
+    Ph_2_trigger := false
+
+if ta.change(LastPl_v4)
+    Pl_4_trigger := false
+
+if ta.change(LastPl_v3)
+    Pl_3_trigger := false
+    
+if ta.change(LastPl_v2)
+    Pl_2_trigger := false
+
+FindT(t,v) =>
+    int result = time
+    begin = (time - t) / dt
+    if begin < 5000
+        for i = begin to 0
+            if high[i] == v or low[i] == v
+                result := t + (begin-i) * dt
+                break
+        result
+    else
+        t
+
+LastPl_t2 = FindT(LastPl_t2_,LastPl_v2)
+LastPh_t2 = FindT(LastPh_t2_,LastPh_v2)
+
+LastPl_t3 = FindT(LastPl_t3_,LastPl_v3)
+LastPh_t3 = FindT(LastPh_t3_,LastPh_v3)
+
+LastPl_t4 = FindT(LastPl_t4_,LastPl_v4)
+LastPh_t4 = FindT(LastPh_t4_,LastPh_v4)
+
+LastPl_t5 = FindT(LastPl_t5_,LastPl_v5)
+LastPh_t5 = FindT(LastPh_t5_,LastPh_v5)
+
+LastPl_t6 = FindT(LastPl_t6_,LastPl_v6)
+LastPh_t6 = FindT(LastPh_t6_,LastPh_v6)
+
+LastPl_t7 = FindT(LastPl_t7_,LastPl_v7)
+LastPh_t7 = FindT(LastPh_t7_,LastPh_v7)
+
+if barstate.islast
+
+    if Show2
+        lh2 := line.new(LastPh_t2,LastPh_v2,time,LastPh_v2,xloc=xloc.bar_time,color=ColorH2,style=StyleToEnum(Style2),extend=extend.right,width=Width2)
+        line.delete(lh2[1])
+        
+        ll2 := line.new(LastPl_t2,LastPl_v2,time,LastPl_v2,xloc=xloc.bar_time,color=ColorL2,style=StyleToEnum(Style2),extend=extend.right,width=Width2)
+        line.delete(ll2[1])
+        
+        lblh2 := label.new(bar_index + LabelsOffset,LastPh_v2,"Daily MS High",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lblh2[1])
+        lbll2 := label.new(bar_index + LabelsOffset,LastPl_v2,"Daily MS Low",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lbll2[1])
+    
+    if Show3
+        lh3 := line.new(LastPh_t3,LastPh_v3,time,LastPh_v3,xloc=xloc.bar_time,color=ColorH3,style=StyleToEnum(Style3),extend=extend.right,width=Width3)
+        line.delete(lh3[1])
+        
+        ll3 := line.new(LastPl_t3,LastPl_v3,time,LastPl_v3,xloc=xloc.bar_time,color=ColorL3,style=StyleToEnum(Style3),extend=extend.right,width=Width3)
+        line.delete(ll3[1])
+        
+        lblh3 := label.new(bar_index + LabelsOffset,LastPh_v3,"4H MS High",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lblh3[1])
+        lbll3 := label.new(bar_index + LabelsOffset,LastPl_v3,"4H MS Low",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lbll3[1])
+    
+    if Show4
+        lh4 := line.new(LastPh_t4,LastPh_v4,time,LastPh_v4,xloc=xloc.bar_time,color=ColorH4,style=StyleToEnum(Style4),extend=extend.right,width=Width4)
+        line.delete(lh4[1])
+        
+        ll4 := line.new(LastPl_t4,LastPl_v4,time,LastPl_v4,xloc=xloc.bar_time,color=ColorL4,style=StyleToEnum(Style4),extend=extend.right,width=Width4)
+        line.delete(ll4[1])
+        
+        lblh4 := label.new(bar_index + LabelsOffset,LastPh_v4,"1H MS High",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lblh4[1])
+        lbll4 := label.new(bar_index + LabelsOffset,LastPl_v4,"1H MS Low",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lbll4[1])
+
+    if Show5
+        lh5 := line.new(LastPh_t5,LastPh_v5,time,LastPh_v5,xloc=xloc.bar_time,color=ColorH5,style=StyleToEnum(Style5),extend=extend.right,width=Width5)
+        line.delete(lh5[1])
+        
+        ll5 := line.new(LastPl_t5,LastPl_v5,time,LastPl_v5,xloc=xloc.bar_time,color=ColorL5,style=StyleToEnum(Style5),extend=extend.right,width=Width5)
+        line.delete(ll5[1])
+        
+        lblh5 := label.new(bar_index + LabelsOffset,LastPh_v5,"30m MS High",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lblh5[1])
+        lbll5 := label.new(bar_index + LabelsOffset,LastPl_v5,"30m MS Low",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lbll5[1])
+
+    if Show6
+        lh6 := line.new(LastPh_t6,LastPh_v6,time,LastPh_v6,xloc=xloc.bar_time,color=ColorH6,style=StyleToEnum(Style6),extend=extend.right,width=Width6)
+        line.delete(lh6[1])
+        
+        ll6 := line.new(LastPl_t6,LastPl_v6,time,LastPl_v6,xloc=xloc.bar_time,color=ColorL6,style=StyleToEnum(Style6),extend=extend.right,width=Width6)
+        line.delete(ll6[1])
+        
+        lblh6 := label.new(bar_index + LabelsOffset,LastPh_v6,"15m MS High",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lblh6[1])
+        lbll6 := label.new(bar_index + LabelsOffset,LastPl_v6,"15m MS Low",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lbll6[1])
+
+    if Show7
+        lh7 := line.new(LastPh_t7,LastPh_v7,time,LastPh_v7,xloc=xloc.bar_time,color=ColorH7,style=StyleToEnum(Style7),extend=extend.right,width=Width7)
+        line.delete(lh7[1])
+        
+        ll7 := line.new(LastPl_t7,LastPl_v7,time,LastPl_v7,xloc=xloc.bar_time,color=ColorL7,style=StyleToEnum(Style7),extend=extend.right,width=Width7)
+        line.delete(ll7[1])
+        
+        lblh7 := label.new(bar_index + LabelsOffset,LastPh_v7,"5m MS High",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lblh7[1])
+        lbll7 := label.new(bar_index + LabelsOffset,LastPl_v7,"5m MS Low",color=LabelColor,style=label.style_none,textcolor=TextColor,textalign=text.align_right,size=size.small)
+        label.delete(lbll7[1])
+
+// Add input to toggle Fibonacci levels display
+showFibLevels_4h = input.bool(true, title="Show 4h fib levels", group = 'Fibonacci Levels')
+showFibLevels_1h = input.bool(false, title="Show 1h fib levels", group = 'Fibonacci Levels')
+showFibLevels_30m = input.bool(false, title="Show 30m fib levels", group = 'Fibonacci Levels')
+showFibLevels_15m = input.bool(false, title="Show 15m fib levels", group = 'Fibonacci Levels')
+
+fibRet1 = input.float(0.3, title = 'Fib retracement level 1', group = 'Fibonacci Levels')
+fibRet2 = input.float(0.7, title = 'Fib retracement level 2', group = 'Fibonacci Levels')
+fibExt1 = input.float(1, title = 'Fib extension level 1', group = 'Fibonacci Levels')
+fibExt2 = input.float(1.5, title = 'Fib extension level 2', group = 'Fibonacci Levels')
+
+// Add inputs for Fibonacci level colors
+colorFibRet1 = input.color(color.rgb(9, 161, 161), title="Fib retracement 1 colour", group = 'Fibonacci Levels')
+colorFibRet2 = input.color(color.rgb(9, 161, 161), title="Fib retracement 2 colour", group = 'Fibonacci Levels')
+colorFib50 = input.color(color.red, title="Fib 0.5 colour", group = 'Fibonacci Levels')
+colorFib0_1 = input.color(color.rgb(255, 255, 255), title="Fib 0 & 1 colour", group = 'Fibonacci Levels')
+colorFibExt1 = input.color(color.rgb(68, 64, 64), title="Fib extension 1 colour, group = 'Fibonacci Levels'") 
+colorFibExt2 = input.color(color.rgb(68, 64, 64), title="Fib extension 2 colour", group = 'Fibonacci Levels') 
+
+// Define Fibonacci retracement levels only if the user opts to show them
+var line[] fibLines = na // Create an array to hold Fibonacci lines
+
+if (showFibLevels_4h)
+    // Delete existing Fibonacci lines
+    if na(fibLines)
+        fibLines := array.new_line(0) // Initialize the array if it doesn't exist
+    else
+        for i = 0 to array.size(fibLines) - 1
+            line.delete(array.get(fibLines, i)) // Delete each existing line
+        array.clear(fibLines) // Clear the array after deletion
+
+    fibonacciLevels = array.new_float(11)
+    colors = array.new_color(11)
+    
+    // Set Fibonacci levels
+    array.set(fibonacciLevels, 0, LastPl_v3 + (LastPh_v3 - LastPl_v3) * fibRet1)
+    array.set(fibonacciLevels, 1, LastPl_v3 + (LastPh_v3 - LastPl_v3) * fibRet2)
+    array.set(fibonacciLevels, 2, LastPl_v3 + (LastPh_v3 - LastPl_v3) * 0.5)
+    array.set(fibonacciLevels, 5, LastPh_v3) // 100% (High)
+    array.set(fibonacciLevels, 6, LastPl_v3 + (LastPh_v3 - LastPl_v3) * fibExt1) 
+    array.set(fibonacciLevels, 7, LastPl_v3 + (LastPh_v3 - LastPl_v3) * fibExt2) 
+    array.set(fibonacciLevels, 10, LastPl_v3)
+    
+    // Set corresponding colors
+    array.set(colors, 0, colorFibRet1)
+    array.set(colors, 1, colorFibRet2)
+    array.set(colors, 2, colorFib50)
+    array.set(colors, 5, colorFib0_1)
+    array.set(colors, 6, colorFibExt1) 
+    array.set(colors, 7, colorFibExt2) 
+    array.set(colors, 10, colorFib0_1) 
+    
+    // Loop to draw the Fibonacci levels with user-defined colors
+    for i = 0 to array.size(fibonacciLevels) - 1
+        fibLevel = array.get(fibonacciLevels, i)
+        fibColor = array.get(colors, i)
+        line newLine = line.new(LastPl_t3, fibLevel, time, fibLevel, xloc=xloc.bar_time, color=fibColor, style=line.style_dashed)
+        array.push(fibLines, newLine) // Store the line reference in the array
+
+
+// Define Fibonacci retracement levels only if the user opts to show them for 1H
+var line[] fibLines_1h = na // Create an array to hold 1H Fibonacci lines
+
+if (showFibLevels_1h)
+    // Delete existing Fibonacci lines for 1H
+    if na(fibLines_1h)
+        fibLines_1h := array.new_line(0) // Initialize the array if it doesn't exist
+    else
+        for i = 0 to array.size(fibLines_1h) - 1
+            line.delete(array.get(fibLines_1h, i)) // Delete each existing line
+        array.clear(fibLines_1h) // Clear the array after deletion
+
+    fibonacciLevels_1h = array.new_float(11)
+    colors_1h = array.new_color(11)
+    
+    // Set Fibonacci levels for 1H
+    array.set(fibonacciLevels_1h, 0, LastPl_v4 + (LastPh_v4 - LastPl_v4) * fibRet1)
+    array.set(fibonacciLevels_1h, 1, LastPl_v4 + (LastPh_v4 - LastPl_v4) * fibRet2)
+    array.set(fibonacciLevels_1h, 2, LastPl_v4 + (LastPh_v4 - LastPl_v4) * 0.5)
+    array.set(fibonacciLevels_1h, 5, LastPh_v4) // 100% (High)
+    array.set(fibonacciLevels_1h, 6, LastPl_v4 + (LastPh_v4 - LastPl_v4) * fibExt1) 
+    array.set(fibonacciLevels_1h, 7, LastPl_v4 + (LastPh_v4 - LastPl_v4) * fibExt2) 
+    array.set(fibonacciLevels_1h, 10, LastPl_v4)
+
+    
+    // Set corresponding colors for 1H
+    array.set(colors_1h, 0, colorFibRet1)
+    array.set(colors_1h, 1, colorFibRet2)
+    array.set(colors_1h, 2, colorFib50)
+    array.set(colors_1h, 5, colorFib0_1)
+    array.set(colors_1h, 6, colorFibExt1) 
+    array.set(colors_1h, 7, colorFibExt2) 
+    array.set(colors_1h, 10, colorFib0_1) 
+    
+    // Loop to draw the Fibonacci levels for 1H with user-defined colors
+    for i = 0 to array.size(fibonacciLevels_1h) - 1
+        fibLevel_1h = array.get(fibonacciLevels_1h, i)
+        fibColor_1h = array.get(colors_1h, i)
+        line newLine_1h = line.new(LastPl_t4, fibLevel_1h, time, fibLevel_1h, xloc=xloc.bar_time, color=fibColor_1h, style=line.style_dashed)
+        array.push(fibLines_1h, newLine_1h) // Store the line reference in the array
+
+
+// Fibonacci levels for 30m
+if (showFibLevels_30m)
+    // Delete existing Fibonacci lines
+    if na(fibLines)
+        fibLines := array.new_line(0) // Initialize the array if it doesn't exist
+    else
+        for i = 0 to array.size(fibLines) - 1
+            line.delete(array.get(fibLines, i)) // Delete each existing line
+        array.clear(fibLines) // Clear the array after deletion
+
+    fibonacciLevels_30m = array.new_float(11)
+    colors_30m = array.new_color(11)
+
+    // Set Fibonacci levels for 30m
+    array.set(fibonacciLevels_30m, 0, LastPl_v5 + (LastPh_v5 - LastPl_v5) * fibRet1)
+    array.set(fibonacciLevels_30m, 1, LastPl_v5 + (LastPh_v5 - LastPl_v5) * fibRet2)
+    array.set(fibonacciLevels_30m, 2, LastPl_v5 + (LastPh_v5 - LastPl_v5) * 0.5)
+    array.set(fibonacciLevels_30m, 5, LastPh_v5) // 100% (High)
+    array.set(fibonacciLevels_30m, 6, LastPl_v5 + (LastPh_v5 - LastPl_v5) * fibExt1) 
+    array.set(fibonacciLevels_30m, 7, LastPl_v5 + (LastPh_v5 - LastPl_v5) * fibExt2) 
+    array.set(fibonacciLevels_30m, 10, LastPl_v5)
+    
+    // Set corresponding colors for 30m
+    array.set(colors_30m, 0, colorFibRet1)
+    array.set(colors_30m, 1, colorFibRet2)
+    array.set(colors_30m, 2, colorFib50)
+    array.set(colors_30m, 5, colorFib0_1)
+    array.set(colors_30m, 6, colorFibExt1) 
+    array.set(colors_30m, 7, colorFibExt2) 
+    array.set(colors_30m, 10, colorFib0_1) 
+    
+    // Loop to draw the Fibonacci levels for 30m with user-defined colors
+    for i = 0 to array.size(fibonacciLevels_30m) - 1
+        fibLevel = array.get(fibonacciLevels_30m, i)
+        fibColor = array.get(colors_30m, i)
+        line newLine = line.new(LastPl_t5, fibLevel, time, fibLevel, xloc=xloc.bar_time, color=fibColor, style=line.style_dashed)
+        array.push(fibLines, newLine) // Store the line reference in the array
+
+// Fibonacci levels for 15m
+
+if (showFibLevels_15m)
+    // Delete existing Fibonacci lines
+    if na(fibLines)
+        fibLines := array.new_line(0) // Initialize the array if it doesn't exist
+    else
+        for i = 0 to array.size(fibLines) - 1
+            line.delete(array.get(fibLines, i)) // Delete each existing line
+        array.clear(fibLines) // Clear the array after deletion
+
+    fibonacciLevels_15m = array.new_float(11)
+    colors_15m = array.new_color(11)
+
+    // Set Fibonacci levels for 15m
+    array.set(fibonacciLevels_15m, 0, LastPl_v6 + (LastPh_v6 - LastPl_v6) * fibRet1)
+    array.set(fibonacciLevels_15m, 1, LastPl_v6 + (LastPh_v6 - LastPl_v6) * fibRet2)
+    array.set(fibonacciLevels_15m, 2, LastPl_v6 + (LastPh_v6 - LastPl_v6) * 0.5)
+    array.set(fibonacciLevels_15m, 5, LastPh_v6) // 100% (High)
+    array.set(fibonacciLevels_15m, 6, LastPl_v6 + (LastPh_v6 - LastPl_v6) * fibExt1) 
+    array.set(fibonacciLevels_15m, 7, LastPl_v6 + (LastPh_v6 - LastPl_v6) * fibExt2) 
+    array.set(fibonacciLevels_15m, 10, LastPl_v6)
+    
+    // Set corresponding colors for 15m
+    array.set(colors_15m, 0, colorFibRet1)
+    array.set(colors_15m, 1, colorFibRet2)
+    array.set(colors_15m, 2, colorFib50)
+    array.set(colors_15m, 5, colorFib0_1)
+    array.set(colors_15m, 6, colorFibExt1) 
+    array.set(colors_15m, 7, colorFibExt2) 
+    array.set(colors_15m, 10, colorFib0_1) 
+    
+    // Loop to draw the Fibonacci levels for 15m with user-defined colors
+    for i = 0 to array.size(fibonacciLevels_15m) - 1
+        fibLevel = array.get(fibonacciLevels_15m, i)
+        fibColor = array.get(colors_15m, i)
+        line newLine = line.new(LastPl_t6, fibLevel, time, fibLevel, xloc=xloc.bar_time, color=fibColor, style=line.style_dashed)
+        array.push(fibLines, newLine) // Store the line reference in the array
+

@@ -1,0 +1,483 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen 
+
+//@version=5
+indicator("Statistcal Daily Profile & Ranges", shorttitle = 'DP', overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// Error catching
+if (timeframe.in_seconds() >= timeframe.in_seconds('D'))
+    runtime.error('Timeframe cannot be greater than Daily')
+
+// Inputs
+adr_days    = input.int(10, title = 'ADR Days', maxval=250, minval = 1)
+session_days = input.int(50, title = 'Session Lookback Days', maxval=250, minval = 1, tooltip = "Number of days to look back for session statistics. Higher values give more samples per weekday.")
+width       = input.int(1, "Line Width")
+
+// ADR line inputs
+adr_color   = input.color(color.gray, "ADR Color")
+adr_style   = input.string("solid", "ADR Style", options=["solid", "dashed", "dotted"])
+show_median = input.bool(true, "Show Median Line")
+median_color = input.color(color.teal, "Median Color")
+median_style = input.string("dashed", "Median Style", options=["solid", "dashed", "dotted"])
+
+// Label inputs
+var g_LABELS = "Labels"
+show_adr_labels = input.bool(true, "Show ADR Labels", inline="ADR_LBL", group=g_LABELS)
+adr_label_size = input.string("Small", "", options=["Tiny", "Small", "Normal", "Large", "Huge"], inline="ADR_LBL", group=g_LABELS)
+adr_label_color = input.color(color.gray, "ADR Label Color", group=g_LABELS)
+
+show_median_label = input.bool(true, "Show Median Label", inline="MED_LBL", group=g_LABELS)
+median_label_size = input.string("Small", "", options=["Tiny", "Small", "Normal", "Large", "Huge"], inline="MED_LBL", group=g_LABELS)
+median_label_color = input.color(color.teal, "Median Label Color", group=g_LABELS)
+
+show_session_labels = input.bool(true, "Show Session Labels", inline="SES_LBL", group=g_LABELS)
+session_label_size = input.string("Small", "", options=["Tiny", "Small", "Normal", "Large", "Huge"], inline="SES_LBL", group=g_LABELS)
+
+// Session inputs
+s1 = input.session("2000-0200", "Asia (8pm-2am)", inline="S1")
+s2 = input.session("0200-0800", "London (2-8am)", inline="S2")
+s3 = input.session("0800-0900", "NY Open (8-9am)", inline="S3")
+s4 = input.session("0930-1030", "NY IB (9:30-10:30am)", inline="S4")
+
+c1 = input.color(color.new(color.blue,  70), "", inline = "S1")
+c2 = input.color(color.new(color.purple,   70), "", inline = "S2")
+c3 = input.color(color.new(color.teal,  70), "", inline = "S3")
+c4 = input.color(color.new(color.red, 70), "", inline = "S4")
+
+// Session box inputs
+show_session_boxes = input.bool(true, "Show Session Boxes")
+expected_range_color = input.color(color.gray, "Session Range Label Color")
+
+// Stats table inputs
+show_stats  = input.bool(true, "Show Session Stats Table")
+sample_size = input.bool(true, "Show Sample Sizes")
+tbl_loc     = input.string('Bottom Right', "Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'])
+tbl_size    = input.string('Small', "Table Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'])
+
+// Probabilities table inputs
+show_prob_table = input.bool(true, "Show Probabilities Table")
+prob_tbl_loc = input.string('Top Right', "Probabilities Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'])
+prob_tbl_size = input.string('Tiny', "Probabilities Table Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'])
+
+// Function to convert style string to line style
+get_line_style(string style) =>
+    switch style
+        "solid" => line.style_solid
+        "dashed" => line.style_dashed
+        "dotted" => line.style_dotted
+
+// Function to get label size
+get_label_size(string size) =>
+    switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+
+// Variables
+reset = session.islastbar_regular[1]
+var float track_highs = 0.00
+var float track_lows  = 0.00
+var float today_adr   = 0.00
+var adrs = array.new_float(adr_days, 0.00)
+
+var line adr_pos = na
+var line adr_neg = na
+var line adr_median = na
+
+var label adr_pos_lbl = na
+var label adr_neg_lbl = na
+var label adr_median_lbl = na
+
+// Variables to track completed session ranges
+var float asia_high = na
+var float asia_low = na
+var float london_high = na
+var float london_low = na
+var string current_condition = "None"
+
+// Session statistics type
+type ses_stats
+    float[] ranges
+    float[] open_to_high
+    float[] open_to_low
+    int[] day
+    int count = 0
+    float cur_hi = na
+    float cur_lo = na
+    float cur_op = na
+    box cur_box = na
+    label cur_label = na
+    string session_name
+    string session_time
+    color session_color
+
+var s1_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_int(), session_name="Asia", session_time="8pm-2am", session_color=c1)
+var s2_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_int(), session_name="London", session_time="2-8am", session_color=c2)
+var s3_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_int(), session_name="NY Open", session_time="8-9am", session_color=c3)
+var s4_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_int(), session_name="NY IB", session_time="9:30-10:30am", session_color=c4)
+
+// Session time checks
+t1 = not na(time("", s1, "America/New_York"))
+t2 = not na(time("", s2, "America/New_York"))
+t3 = not na(time("", s3, "America/New_York"))
+t4 = not na(time("", s4, "America/New_York"))
+
+// ADR calculation
+track_highs := reset ? high : math.max(high, track_highs[1])
+track_lows  := reset ? low : math.min(low, track_lows[1])
+
+if reset
+    array.unshift(adrs, math.round_to_mintick(track_highs[1] - track_lows[1]))
+    if array.size(adrs) > adr_days
+        array.pop(adrs)
+    today_adr := math.round_to_mintick(array.avg(adrs))
+    
+    // Delete previous lines and labels
+    line.delete(adr_pos[1])
+    line.delete(adr_neg[1])
+    line.delete(adr_median[1])
+    label.delete(adr_pos_lbl[1])
+    label.delete(adr_neg_lbl[1])
+    label.delete(adr_median_lbl[1])
+    
+    // Draw ADR lines
+    adr_pos := line.new(bar_index, open + today_adr, bar_index+50, open + today_adr,
+         width=width, color=adr_color, style=get_line_style(adr_style))
+    adr_neg := line.new(bar_index, open - today_adr, bar_index+50, open - today_adr,
+         width=width, color=adr_color, style=get_line_style(adr_style))
+    
+    // Draw median line
+    if show_median
+        adr_median := line.new(bar_index, open, bar_index+50, open,
+             width=width, color=median_color, style=get_line_style(median_style))
+    
+    // Draw ADR labels
+    if show_adr_labels
+        adr_pos_lbl := label.new(bar_index+50, open + today_adr, "ADR High (" + str.tostring(adr_days) + "D)",
+             xloc=xloc.bar_index, textalign=text.align_left, textcolor=adr_label_color, color=color.new(color.blue, 100), style=label.style_none, text_font_family=font.family_monospace, size=get_label_size(adr_label_size))
+        adr_neg_lbl := label.new(bar_index+50, open - today_adr, "ADR Low (" + str.tostring(adr_days) + "D)",
+             xloc=xloc.bar_index, textalign=text.align_left, textcolor=adr_label_color, color=color.new(color.red, 100), style=label.style_none, text_font_family=font.family_monospace, size=get_label_size(adr_label_size))
+    if show_median and show_median_label
+        adr_median_lbl := label.new(bar_index+50, open, "ADR Median",
+             xloc=xloc.bar_index, textalign=text.align_left, textcolor=median_label_color, color=color.new(color.yellow, 100), style=label.style_none, text_font_family=font.family_monospace, size=get_label_size(median_label_size))
+else
+    today_adr := today_adr[1]
+    line.set_x2(adr_pos, bar_index+50)
+    line.set_x2(adr_neg, bar_index+50)
+    if show_median
+        line.set_x2(adr_median, bar_index+50)
+    if show_adr_labels
+        label.set_x(adr_pos_lbl, bar_index+50)
+        label.set_x(adr_neg_lbl, bar_index+50)
+    if show_median and show_median_label
+        label.set_x(adr_median_lbl, bar_index+50)
+
+// Get average open-to-high/low for day of week
+get_dow_high_low(ses_stats S, int dow, bool is_high) =>
+    dow_values = array.new_float(0)
+    for [i, d] in S.day
+        if d == dow
+            dow_values.push(is_high ? S.open_to_high.get(i) : S.open_to_low.get(i))
+    result = dow_values.size() > 0 ? dow_values.avg() : 0
+    result
+
+// Session statistics update method
+method update_ses_stats(ses_stats S, bool t, int max_days) =>
+    if t and not t[1]
+        S.count += 1
+        S.cur_hi := high
+        S.cur_lo := low
+        S.cur_op := open
+        S.day.unshift(dayofweek)
+        S.ranges.unshift(0)
+        S.open_to_high.unshift(0)
+        S.open_to_low.unshift(0)
+        
+        // Limit arrays to match session days setting
+        if S.ranges.size() > max_days
+            S.ranges.pop()
+            S.day.pop()
+            S.open_to_high.pop()
+            S.open_to_low.pop()
+        
+        // Create session box
+        if show_session_boxes
+            S.cur_box := box.new(bar_index, high, bar_index, low, 
+                 bgcolor = color.new(S.session_color, 80), 
+                 border_color = S.session_color)
+        
+        // Create session label (using expected_range_color)
+        if show_session_labels
+            label_text = S.session_name + " (" + S.session_time + ")"
+            S.cur_label := label.new(bar_index, high, label_text,
+                 style = label.style_none,
+                 color = color.new(color.white, 100),
+                 textcolor = expected_range_color,
+                 text_font_family = font.family_monospace,
+                 size = get_label_size(session_label_size))
+                
+    else if t
+        S.cur_hi := math.max(S.cur_hi, high)
+        S.cur_lo := math.min(S.cur_lo, low)
+        
+        // Update box
+        if show_session_boxes and not na(S.cur_box)
+            box.set_top(S.cur_box, S.cur_hi)
+            box.set_bottom(S.cur_box, S.cur_lo)
+            box.set_right(S.cur_box, bar_index)
+        
+        // Update label position to center of box
+        if show_session_labels and not na(S.cur_label)
+            box_left = box.get_left(S.cur_box)
+            box_right = bar_index
+            center_x = math.floor((box_left + box_right) / 2)
+            label.set_y(S.cur_label, S.cur_hi)
+            label.set_x(S.cur_label, center_x)
+                
+    if not t and t[1]
+        S.ranges.set(0, S.cur_hi - S.cur_lo)
+        S.open_to_high.set(0, S.cur_hi - S.cur_op)
+        S.open_to_low.set(0, S.cur_lo - S.cur_op)
+
+// Update session statistics
+s1_stats.update_ses_stats(t1, session_days)
+s2_stats.update_ses_stats(t2, session_days)
+s3_stats.update_ses_stats(t3, session_days)
+s4_stats.update_ses_stats(t4, session_days)
+
+// Track completed Asia session
+if not t1 and t1[1]
+    asia_high := s1_stats.cur_hi
+    asia_low := s1_stats.cur_lo
+
+// Track completed London session and determine condition
+if not t2 and t2[1]
+    london_high := s2_stats.cur_hi
+    london_low := s2_stats.cur_lo
+    
+    // Determine engulfment condition
+    if not na(asia_high) and not na(asia_low) and not na(london_high) and not na(london_low)
+        // London fully engulfs Asia
+        if london_high > asia_high and london_low < asia_low
+            current_condition := "London Engulfs Asia"
+        // Asia fully engulfs London
+        else if asia_high > london_high and asia_low < london_low
+            current_condition := "Asia Engulfs London"
+        // London partially engulfs upwards
+        else if london_high > asia_high and london_low > asia_low
+            current_condition := "London Partially Engulfs Upwards"
+        // London partially engulfs downwards
+        else if london_low < asia_low and london_high < asia_high
+            current_condition := "London Partially Engulfs Downwards"
+        else
+            current_condition := "No Engulfment"
+
+// Preserve condition throughout the day
+current_condition := current_condition[0]
+
+// Reset condition on new day
+if reset
+    current_condition := "None"
+
+// Table functions
+get_table_pos(pos) =>
+    switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+var _loc = get_table_pos(tbl_loc)
+var _prob_loc = get_table_pos(prob_tbl_loc)
+
+get_table_size(size) =>
+    switch size
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+        'Auto' => size.auto
+var _size = get_table_size(tbl_size)
+var _prob_size = get_table_size(prob_tbl_size)
+
+// Get average range for specific day of week
+get_dow_stats(ses_stats S, int dow) =>
+    sum = 0.0
+    count = 0
+    for [i, s] in S.day
+        if s == dow
+            sum += S.ranges.get(i)
+            count += 1
+    result = count > 0 ? str.tostring(math.round(sum / count, 2)) : "N/A"
+    result += sample_size and count > 0 ? (" ["+str.tostring(count)+"]") : ""
+
+// Get total average
+get_total_stats(ses_stats S) =>
+    avg = S.ranges.size() > 0 ? S.ranges.avg() : 0.0
+    result = str.tostring(math.round(avg, 2))
+    result += sample_size ? (" ["+str.tostring(S.ranges.size())+"]") : ""
+
+// Draw tables
+if barstate.islast
+    // Session stats table
+    if show_stats
+        var tbl = table.new(_loc, 8, 6, chart.bg_color, chart.fg_color, 2, chart.fg_color, 1)
+        
+        // Headers
+        table.cell(tbl, 0, 0, "Session", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        table.cell(tbl, 1, 0, "Mon", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        table.cell(tbl, 2, 0, "Tue", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        table.cell(tbl, 3, 0, "Wed", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        table.cell(tbl, 4, 0, "Thu", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        table.cell(tbl, 5, 0, "Fri", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        table.cell(tbl, 6, 0, "Total", text_size = _size, bgcolor = color.new(color.gray, 80), text_font_family = font.family_monospace)
+        
+        // Session 1 - Asia
+        table.cell(tbl, 0, 1, "Asia", text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        table.cell(tbl, 1, 1, get_dow_stats(s1_stats, dayofweek.monday), text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        table.cell(tbl, 2, 1, get_dow_stats(s1_stats, dayofweek.tuesday), text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        table.cell(tbl, 3, 1, get_dow_stats(s1_stats, dayofweek.wednesday), text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        table.cell(tbl, 4, 1, get_dow_stats(s1_stats, dayofweek.thursday), text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        table.cell(tbl, 5, 1, get_dow_stats(s1_stats, dayofweek.friday), text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        table.cell(tbl, 6, 1, get_total_stats(s1_stats), text_size = _size, bgcolor = c1, text_font_family = font.family_monospace)
+        
+        // Session 2 - London
+        table.cell(tbl, 0, 2, "London", text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        table.cell(tbl, 1, 2, get_dow_stats(s2_stats, dayofweek.monday), text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        table.cell(tbl, 2, 2, get_dow_stats(s2_stats, dayofweek.tuesday), text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        table.cell(tbl, 3, 2, get_dow_stats(s2_stats, dayofweek.wednesday), text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        table.cell(tbl, 4, 2, get_dow_stats(s2_stats, dayofweek.thursday), text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        table.cell(tbl, 5, 2, get_dow_stats(s2_stats, dayofweek.friday), text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        table.cell(tbl, 6, 2, get_total_stats(s2_stats), text_size = _size, bgcolor = c2, text_font_family = font.family_monospace)
+        
+        // Session 3 - NY Open
+        table.cell(tbl, 0, 3, "NY Open", text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        table.cell(tbl, 1, 3, get_dow_stats(s3_stats, dayofweek.monday), text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        table.cell(tbl, 2, 3, get_dow_stats(s3_stats, dayofweek.tuesday), text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        table.cell(tbl, 3, 3, get_dow_stats(s3_stats, dayofweek.wednesday), text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        table.cell(tbl, 4, 3, get_dow_stats(s3_stats, dayofweek.thursday), text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        table.cell(tbl, 5, 3, get_dow_stats(s3_stats, dayofweek.friday), text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        table.cell(tbl, 6, 3, get_total_stats(s3_stats), text_size = _size, bgcolor = c3, text_font_family = font.family_monospace)
+        
+        // Session 4 - NY IB
+        table.cell(tbl, 0, 4, "NY IB", text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+        table.cell(tbl, 1, 4, get_dow_stats(s4_stats, dayofweek.monday), text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+        table.cell(tbl, 2, 4, get_dow_stats(s4_stats, dayofweek.tuesday), text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+        table.cell(tbl, 3, 4, get_dow_stats(s4_stats, dayofweek.wednesday), text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+        table.cell(tbl, 4, 4, get_dow_stats(s4_stats, dayofweek.thursday), text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+        table.cell(tbl, 5, 4, get_dow_stats(s4_stats, dayofweek.friday), text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+        table.cell(tbl, 6, 4, get_total_stats(s4_stats), text_size = _size, bgcolor = c4, text_font_family = font.family_monospace)
+    
+    // Dynamic Probabilities table
+    if show_prob_table
+        var prob_tbl = table.new(_prob_loc, 2, 10, chart.bg_color, chart.fg_color, 2, chart.fg_color, 1)
+        
+        row = 0
+        
+        // Display current condition header
+        table.cell(prob_tbl, 0, row, current_condition, text_size = _prob_size, bgcolor = color.new(color.gray, 70), text_font_family = font.family_monospace)
+        table.cell(prob_tbl, 1, row, "", text_size = _prob_size, bgcolor = color.new(color.gray, 70))
+        row += 1
+        
+        // Display stats based on condition
+        if current_condition == "London Engulfs Asia"
+            table.cell(prob_tbl, 0, row, "NY high takes London high", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "72.33%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY low takes London low", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "71.12%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY engulfs overnight session", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "44.13%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bullish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "54.80%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bearish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "45.20%", text_size = _prob_size, text_font_family = font.family_monospace)
+            
+        else if current_condition == "Asia Engulfs London"
+            table.cell(prob_tbl, 0, row, "Occurrence rate", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "5.36%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY high takes Asia high", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "75.86%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY low takes Asia low", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "65.52%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY engulfs overnight session", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "44.83%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bullish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "58.42%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bearish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "41.58%", text_size = _prob_size, text_font_family = font.family_monospace)
+            
+        else if current_condition == "London Partially Engulfs Upwards"
+            table.cell(prob_tbl, 0, row, "NY high takes London high", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "81.51%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY low takes London low", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "64.45%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY low takes Asian low", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "53.16%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY engulfs overnight session", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "37.07%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bullish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "55.52%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bearish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "44.48%", text_size = _prob_size, text_font_family = font.family_monospace)
+            
+        else if current_condition == "London Partially Engulfs Downwards"
+            table.cell(prob_tbl, 0, row, "NY low takes London low", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "75.29%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY high takes London high", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "68.80%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY high takes Asian high", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "56.44%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY engulfs overnight session", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "34.40%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bullish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "52.99%", text_size = _prob_size, text_font_family = font.family_monospace)
+            row += 1
+            
+            table.cell(prob_tbl, 0, row, "NY Cash (9:30-4:00) Bearish", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "47.01%", text_size = _prob_size, text_font_family = font.family_monospace)
+        else
+            table.cell(prob_tbl, 0, row, "Waiting for condition...", text_size = _prob_size, text_font_family = font.family_monospace)
+            table.cell(prob_tbl, 1, row, "", text_size = _prob_size)

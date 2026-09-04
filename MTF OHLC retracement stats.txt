@@ -1,0 +1,347 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("MTF OHLC stats", "OHLC MTF", true)
+
+// Input groups
+group1 = "General Settings"
+string tf = input.timeframe("60", "Time Frame", group=group1)
+int offset = input.int(1, "Offset", group=group1)
+
+group2 = "Display Settings"
+bool showLast = input.bool(false, "Show last OHLC levels only", group=group2)
+bool extendLines = input.bool(false, "Extend OHLC levels", group=group2)
+color bgcolor = input.color(color.new(color.silver, 80), "Background fill color", group=group2)
+bool showLabels = input.bool(false, "Show previous level labels", group=group2)  // New input for labels
+
+// Existing style inputs (groups 3-6)
+group3 = "Previous Open Level"
+string openStyle = input.string(line.style_solid, "Style", options=[line.style_solid, line.style_dashed, line.style_dotted], group=group3)
+color openColor = input.color(color.black, "Color", group=group3)
+int openWidth = input.int(1, "Thickness", group=group3)
+
+group4 = "Previous High Level"
+string highStyle = input.string(line.style_dashed, "Style", options=[line.style_solid, line.style_dashed, line.style_dotted], group=group4)
+color highColor = input.color(color.green, "Color", group=group4)
+int highWidth = input.int(1, "Thickness", group=group4)
+
+group5 = "Previous Low Level"
+string lowStyle = input.string(line.style_dashed, "Style", options=[line.style_solid, line.style_dashed, line.style_dotted], group=group5)
+color lowColor = input.color(color.red, "Color", group=group5)
+int lowWidth = input.int(1, "Thickness", group=group5)
+
+group6 = "Previous Close Level"
+string closeStyle = input.string(line.style_dashed, "Style", options=[line.style_solid, line.style_dashed, line.style_dotted], group=group6)
+color closeColor = input.color(color.purple, "Color", group=group6)
+int closeWidth = input.int(1, "Thickness", group=group6)
+
+group7 = "Deviation Levels"
+color devColor = input.color(color.gray, "Deviation Levels Color", group=group7)
+int devWidth = input.int(1, "Deviation Thickness", group=group7)
+
+// Table settings
+var g_TABLE = "Table"
+show_table = input.bool(true, "Show Stats Table", group = g_TABLE)
+table_position = input.string('Top Right', "Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group = g_TABLE)
+table_size = input.string('Tiny', "Text Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group = g_TABLE)
+table_text = input.color(color.black, "Text", group = g_TABLE)
+table_bg = input.color(color.white, "Table Background", group = g_TABLE)
+table_frame = input.color(color.black, "Table Frame", group = g_TABLE)
+table_border = input.color(color.black, "Table Border", group = g_TABLE)
+table_border_width = input.int(1, "Table Border Width", group = g_TABLE)
+table_frame_width = input.int(2, "Table Frame Width", group = g_TABLE)
+
+// Get OHLC data
+bool newSession = ta.change(time(tf))
+op = request.security(syminfo.tickerid, tf, open[offset - 1])
+hi = request.security(syminfo.tickerid, tf, high[offset - 1])
+lo = request.security(syminfo.tickerid, tf, low[offset - 1])
+cl = request.security(syminfo.tickerid, tf, close[offset - 1])
+x = request.security(syminfo.tickerid, tf, time)
+
+// Capture current session open on first bar of new session
+var float currSessionOpen = na
+if newSession
+    currSessionOpen := open
+
+// Calculate deviation levels
+c_range = hi - lo
+dev02 = lo + (c_range * 0.2)
+dev05 = lo + (c_range * 0.5)
+dev08 = lo + (c_range * 0.8)
+
+// Line variables
+var line openLine = na
+var line highLine = na
+var line lowLine = na
+var line closeLine = na
+var line dev02Line = na
+var line dev05Line = na
+var line dev08Line = na
+var linefill ohlc = na
+
+// Hit tracking flags and counters (split by currSessionOpen > op)
+var int totalSessionsAbove = 0
+var int totalSessionsBelow = 0
+var int highHitsAbove = 0
+var int highHitsBelow = 0
+var int lowHitsAbove = 0
+var int lowHitsBelow = 0
+var int closeHitsAbove = 0
+var int closeHitsBelow = 0
+var int openHitsAbove = 0
+var int openHitsBelow = 0
+var int dev02HitsAbove = 0
+var int dev02HitsBelow = 0
+var int dev05HitsAbove = 0
+var int dev05HitsBelow = 0
+var int dev08HitsAbove = 0
+var int dev08HitsBelow = 0
+var int highThenOpenHitsAbove = 0
+var int highThenOpenHitsBelow = 0
+var int lowTo05HitsAbove = 0
+var int lowTo05HitsBelow = 0
+var int highTo05HitsAbove = 0
+var int highTo05HitsBelow = 0
+
+var bool highHitThisSession = false
+var bool lowHitThisSession = false
+var bool closeHitThisSession = false
+var bool openHitThisSession = false
+var bool dev02HitThisSession = false
+var bool dev05HitThisSession = false
+var bool dev08HitThisSession = false
+var bool highThenOpenHitThisSession = false
+var bool highBrokenThisSession = false
+var bool lowBrokenThisSession = false
+var bool lowTo05HitThisSession = false
+var bool highTo05HitThisSession = false
+
+// Helper function for table position
+get_table_position(pos) =>
+    switch pos
+        'Bottom Center' => position.bottom_center
+        'Bottom Left' => position.bottom_left
+        'Bottom Right' => position.bottom_right
+        'Middle Center' => position.middle_center
+        'Middle Left' => position.middle_left
+        'Middle Right' => position.middle_right
+        'Top Center' => position.top_center
+        'Top Left' => position.top_left
+        => position.top_right
+
+// Helper function for table text size
+get_table_text_size(size) =>
+    switch size
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+        => size.auto
+
+// Reset hit flags and increment session counter
+if newSession
+    if currSessionOpen > op
+        totalSessionsAbove := totalSessionsAbove + 1
+    else
+        totalSessionsBelow := totalSessionsBelow + 1
+    highHitThisSession := false
+    lowHitThisSession := false
+    closeHitThisSession := false
+    openHitThisSession := false
+    dev02HitThisSession := false
+    dev05HitThisSession := false
+    dev08HitThisSession := false
+    highThenOpenHitThisSession := false
+    highBrokenThisSession := false
+    lowBrokenThisSession := false
+    lowTo05HitThisSession := false
+    highTo05HitThisSession := false
+
+// Check hits
+bool isAbove = currSessionOpen > op
+if not highHitThisSession and (ta.cross(high, hi[1]) or ta.cross(low, hi[1]))
+    if isAbove
+        highHitsAbove := highHitsAbove + 1
+    else
+        highHitsBelow := highHitsBelow + 1
+    highHitThisSession := true
+    highBrokenThisSession := true
+
+if not lowHitThisSession and (ta.cross(high, lo[1]) or ta.cross(low, lo[1]))
+    if isAbove
+        lowHitsAbove := lowHitsAbove + 1
+    else
+        lowHitsBelow := lowHitsBelow + 1
+    lowHitThisSession := true
+    lowBrokenThisSession := true
+
+if not closeHitThisSession and (ta.cross(high, cl[1]) or ta.cross(low, cl[1]))
+    if isAbove
+        closeHitsAbove := closeHitsAbove + 1
+    else
+        closeHitsBelow := closeHitsBelow + 1
+    closeHitThisSession := true
+
+if not openHitThisSession and (ta.cross(high, op[1]) or ta.cross(low, op[1]))
+    if isAbove
+        openHitsAbove := openHitsAbove + 1
+    else
+        openHitsBelow := openHitsBelow + 1
+    openHitThisSession := true
+
+if not dev02HitThisSession and (ta.cross(high, dev02[1]) or ta.cross(low, dev02[1]))
+    if isAbove
+        dev02HitsAbove := dev02HitsAbove + 1
+    else
+        dev02HitsBelow := dev02HitsBelow + 1
+    dev02HitThisSession := true
+
+if not dev05HitThisSession and (ta.cross(high, dev05[1]) or ta.cross(low, dev05[1]))
+    if isAbove
+        dev05HitsAbove := dev05HitsAbove + 1
+    else
+        dev05HitsBelow := dev05HitsBelow + 1
+    dev05HitThisSession := true
+
+if not dev08HitThisSession and (ta.cross(high, dev08[1]) or ta.cross(low, dev08[1]))
+    if isAbove
+        dev08HitsAbove := dev08HitsAbove + 1
+    else
+        dev08HitsBelow := dev08HitsBelow + 1
+    dev08HitThisSession := true
+
+if highBrokenThisSession and not highThenOpenHitThisSession and (ta.cross(high, currSessionOpen) or ta.cross(low, currSessionOpen))
+    if isAbove
+        highThenOpenHitsAbove := highThenOpenHitsAbove + 1
+    else
+        highThenOpenHitsBelow := highThenOpenHitsBelow + 1
+    highThenOpenHitThisSession := true
+
+// New movement tracking
+if lowBrokenThisSession and not lowTo05HitThisSession and (ta.cross(high, dev05[1]) or ta.cross(low, dev05[1]))
+    if isAbove
+        lowTo05HitsAbove := lowTo05HitsAbove + 1
+    else
+        lowTo05HitsBelow := lowTo05HitsBelow + 1
+    lowTo05HitThisSession := true
+
+if highBrokenThisSession and not highTo05HitThisSession and (ta.cross(high, dev05[1]) or ta.cross(low, dev05[1]))
+    if isAbove
+        highTo05HitsAbove := highTo05HitsAbove + 1
+    else
+        highTo05HitsBelow := highTo05HitsBelow + 1
+    highTo05HitThisSession := true
+
+// Display functions
+displayLines(x1, x2) =>
+    opLine = line.new(x1, op[1], x2, op[1], xloc.bar_time, color=openColor, style=openStyle, width=openWidth)
+    hiLine = line.new(x1, hi[1], x2, hi[1], xloc.bar_time, color=highColor, style=highStyle, width=highWidth)
+    loLine = line.new(x1, lo[1], x2, lo[1], xloc.bar_time, color=lowColor, style=lowStyle, width=lowWidth)
+    clLine = line.new(x1, cl[1], x2, cl[1], xloc.bar_time, color=closeColor, style=closeStyle, width=closeWidth)
+    d02Line = line.new(x1, dev02[1], x2, dev02[1], xloc.bar_time, color=devColor, style=line.style_dotted, width=devWidth)
+    d05Line = line.new(x1, dev05[1], x2, dev05[1], xloc.bar_time, color=devColor, style=line.style_dotted, width=devWidth)
+    d08Line = line.new(x1, dev08[1], x2, dev08[1], xloc.bar_time, color=devColor, style=line.style_dotted, width=devWidth)
+    
+    line.delete(opLine[1])
+    line.delete(hiLine[1])
+    line.delete(loLine[1])
+    line.delete(clLine[1])
+    line.delete(d02Line[1])
+    line.delete(d05Line[1])
+    line.delete(d08Line[1])
+    
+    [opLine, hiLine, loLine, clLine, d02Line, d05Line, d08Line]
+
+displayLabels(x1, x2, x3, x4, x5, x6, x7) =>
+    if showLabels  // Only display labels if showLabels is true
+        label.new(line.get_x2(x1), line.get_y2(x1), "Prev. Open", xloc.bar_time, color=openColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+        label.new(line.get_x2(x2), line.get_y2(x2), "Prev. High", xloc.bar_time, color=highColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+        label.new(line.get_x2(x3), line.get_y2(x3), "Prev. Low", xloc.bar_time, color=lowColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+        label.new(line.get_x2(x4), line.get_y2(x4), "Prev. Close", xloc.bar_time, color=closeColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+        label.new(line.get_x2(x5), line.get_y2(x5), "Dev 0.2", xloc.bar_time, color=devColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+        label.new(line.get_x2(x6), line.get_y2(x6), "Dev 0.5", xloc.bar_time, color=devColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+        label.new(line.get_x2(x7), line.get_y2(x7), "Dev 0.8", xloc.bar_time, color=devColor, style=label.style_label_left, textcolor=color.white, size=size.tiny)
+
+// Plot lines
+if newSession and not showLast
+    openLine := line.new(x[1], op, time, op, xloc.bar_time, color=openColor, style=openStyle, width=openWidth)
+    highLine := line.new(x[1], hi, time, hi, xloc.bar_time, color=highColor, style=highStyle, width=highWidth)
+    lowLine := line.new(x[1], lo, time, lo, xloc.bar_time, color=lowColor, style=lowStyle, width=lowWidth)
+    closeLine := line.new(x[1], cl, time, cl, xloc.bar_time, color=closeColor, style=closeStyle, width=closeWidth)
+    dev02Line := line.new(x[1], dev02, time, dev02, xloc.bar_time, color=devColor, style=line.style_dotted, width=devWidth)
+    dev05Line := line.new(x[1], dev05, time, dev05, xloc.bar_time, color=devColor, style=line.style_dotted, width=devWidth)
+    dev08Line := line.new(x[1], dev08, time, dev08, xloc.bar_time, color=devColor, style=line.style_dotted, width=devWidth)
+    
+    ohlc := linefill.new(highLine, lowLine, bgcolor)
+    
+    if not extendLines
+        displayLabels(openLine, highLine, lowLine, closeLine, dev02Line, dev05Line, dev08Line)
+
+if showLast
+    [openLine2, highLine2, lowLine2, closeLine2, dev02Line2, dev05Line2, dev08Line2] = displayLines(x[1], x)
+    if not extendLines 
+        displayLabels(openLine2, highLine2, lowLine2, closeLine2, dev02Line2, dev05Line2, dev08Line2)
+    linefill.new(highLine2, lowLine2, bgcolor)
+
+if extendLines
+    [openLine3, highLine3, lowLine3, closeLine3, dev03Line3, dev05Line3, dev08Line3] = displayLines(x, time)
+    displayLabels(openLine3, highLine3, lowLine3, closeLine3, dev03Line3, dev05Line3, dev08Line3)
+    linefill.new(highLine3, lowLine3, bgcolor)
+
+// Display stats table
+var table combined_table = na
+if bar_index == 0
+    combined_table := table.new(get_table_position(table_position), 3, 12, bgcolor = table_bg, frame_color = table_frame, frame_width = table_frame_width, border_color = table_border, border_width = table_border_width)
+
+if show_table and barstate.islast
+    table_text_size = get_table_text_size(table_size)
+    table.cell(combined_table, 0, 0, "Previous candle level crossed", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 0, "Current open > Previous open", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 0, "Current open < Previous open", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 1, "High", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 1, totalSessionsAbove > 0 ? str.tostring(math.round(highHitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 1, totalSessionsBelow > 0 ? str.tostring(math.round(highHitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 2, "Low", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 2, totalSessionsAbove > 0 ? str.tostring(math.round(lowHitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 2, totalSessionsBelow > 0 ? str.tostring(math.round(lowHitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 3, "Close", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 3, totalSessionsAbove > 0 ? str.tostring(math.round(closeHitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 3, totalSessionsBelow > 0 ? str.tostring(math.round(closeHitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 4, "Open", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 4, totalSessionsAbove > 0 ? str.tostring(math.round(openHitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 4, totalSessionsBelow > 0 ? str.tostring(math.round(openHitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 5, "Dev 0.2", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 5, totalSessionsAbove > 0 ? str.tostring(math.round(dev02HitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 5, totalSessionsBelow > 0 ? str.tostring(math.round(dev02HitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 6, "Dev 0.5", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 6, totalSessionsAbove > 0 ? str.tostring(math.round(dev05HitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 6, totalSessionsBelow > 0 ? str.tostring(math.round(dev05HitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 7, "Dev 0.8", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 7, totalSessionsAbove > 0 ? str.tostring(math.round(dev08HitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 7, totalSessionsBelow > 0 ? str.tostring(math.round(dev08HitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 8, "Prev high sweep & \n retrace to current open", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 8, totalSessionsAbove > 0 ? str.tostring(math.round(highThenOpenHitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 8, totalSessionsBelow > 0 ? str.tostring(math.round(highThenOpenHitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 9, "Cross prev low \n and retrace to 0.5", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 9, totalSessionsAbove > 0 ? str.tostring(math.round(lowTo05HitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 9, totalSessionsBelow > 0 ? str.tostring(math.round(lowTo05HitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 10, "Cross prev high \n and retrace to 0.5", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 10, totalSessionsAbove > 0 ? str.tostring(math.round(highTo05HitsAbove/totalSessionsAbove*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 10, totalSessionsBelow > 0 ? str.tostring(math.round(highTo05HitsBelow/totalSessionsBelow*100, 2)) + "%" : "N/A", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    
+    table.cell(combined_table, 0, 11, "Total Sessions", text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 1, 11, str.tostring(totalSessionsAbove), text_color=table_text, bgcolor=table_bg, text_size=table_text_size)
+    table.cell(combined_table, 2, 11, str.tostring(totalSessionsBelow), text_color=table_text, bgcolor=table_bg, text_size=table_text_size)

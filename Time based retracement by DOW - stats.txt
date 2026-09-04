@@ -1,0 +1,319 @@
+//@version=5
+indicator("Time based retracement by DOW - stats", "DOW retracement", true, max_lines_count = 500)
+
+// Function to get line style
+get_line_type(string style) =>
+    switch style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+
+// Level 1 Inputs
+open_time_1 = input.session("0000-0001", "Open time Level 1", group="Level 1")
+open_lbl_lv_1 = input.bool(true, "Show target time level - Level 1", group='Level 1')
+ret_time_1 = input.session("0800-1600", "Retracement during - Level 1", group="Level 1")
+ret_pct_1 = input.int(50, "Retracement % Level 1", group="Level 1")
+ret_lbl_pc_1 = input.bool(true, "Show Level 1 % retracement target label", group='Level 2')
+ret_lbl_lv_1 = input.bool(true, "Show opening price label - Level 1", group='Level 1')
+ret_pc_col_1 = input.color(color.lime, 'Retracement % color Level 1', group="Level 1")
+open_col_1 = input.color(color.teal, 'Open time color Level 1', group="Level 1")
+show_1 = input.bool(true, 'Show level 1 plots on the chart', group = 'Level 1')
+style_1 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 1'))
+label_1   = input.bool    (true, "Show Label for session opening time - Level 1", group='Level 1')
+
+// Level 2 Inputs
+open_time_2 = input.session("0800-0801", "Open time Level 2", group="Level 2")
+open_lbl_lv_2 = input.bool(true, "Show target time level - Level 2", group='Level 2')
+ret_time_2 = input.session("0930-1600", "Retracement during - Level 2", group="Level 2")
+ret_pct_2 = input.int(50, "Retracement % Level 2", group="Level 2")
+ret_lbl_pc_2 = input.bool(true, "Show Level 2 % retracement target label", group='Level 2')
+ret_lbl_lv_2 = input.bool(true, "Show opening price label - Level 2", group='Level 2')
+ret_pc_col_2 = input.color(color.fuchsia, 'Retracement % color Level 2', group="Level 2")
+open_col_2 = input.color(color.purple, "Open time color Level 2", group="Level 2")
+show_2 = input.bool(true, 'Show level 2 plots on the chart', group = 'Level 2')
+style_2 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 2'))
+label_2   = input.bool    (true, "Show Label for session opening time - Level 2", group='Level 2')
+
+// Time checks
+t1 = not na(time("", open_time_1, "America/New_York"))
+t2 = not na(time("", open_time_2, "America/New_York"))
+ret_t_1 = not na(time("", ret_time_1, "America/New_York"))
+ret_t_2 = not na(time("", ret_time_2, "America/New_York"))
+
+// Struct for tracking retracement stats - Added above/below occurrences
+type tracking
+    float[] ret_distance
+    line open_line
+    line ret_open_line
+    line ret_line
+    float open_price
+    float ret_price
+    bool returned
+    int count_returned
+    int count_sessions
+    int[] count_by_day
+    int[] day_occurrences
+    int[] count_by_day_above
+    int[] count_by_day_below
+    int[] above_occurrences  // Total days where target was above open
+    int[] below_occurrences  // Total days where target was below open
+    label open_label_1
+    label open_label_2
+    label ret_label_1
+    label ret_label_2
+
+// Initialize tracking instances for both levels - Added above/below occurrences
+var track_1 = tracking.new(
+     ret_distance=array.new_float(),
+     open_line=line.new(na, na, na, na),
+     ret_open_line=line.new(na, na, na, na),
+     ret_line=line.new(na, na, na, na),
+     open_price=0.0,
+     ret_price=0.0,
+     returned=false,
+     count_returned=0,
+     count_sessions=0,
+     count_by_day=array.new_int(5, 0),
+     day_occurrences=array.new_int(5, 0),
+     count_by_day_above=array.new_int(5, 0),
+     count_by_day_below=array.new_int(5, 0),
+     above_occurrences=array.new_int(5, 0),
+     below_occurrences=array.new_int(5, 0)
+     )
+
+var track_2 = tracking.new(
+     ret_distance=array.new_float(),
+     open_line=line.new(na, na, na, na),
+     ret_open_line=line.new(na, na, na, na),
+     ret_line=line.new(na, na, na, na),
+     open_price=0.0,
+     ret_price=0.0,
+     returned=false,
+     count_returned=0,
+     count_sessions=0,
+     count_by_day=array.new_int(5, 0),
+     day_occurrences=array.new_int(5, 0),
+     count_by_day_above=array.new_int(5, 0),
+     count_by_day_below=array.new_int(5, 0),
+     above_occurrences=array.new_int(5, 0),
+     below_occurrences=array.new_int(5, 0)
+     )
+
+// Get day of the week (0 = Monday, 4 = Friday)
+day_index = dayofweek >= 2 and dayofweek <= 6 ? dayofweek - 2 : na
+
+// Get today's date components
+today_day   = dayofmonth(timenow)  
+today_month = month(timenow)
+today_year  = year(timenow)
+
+// Format the date as "dd-mm-yyyy"
+today_date_str = str.tostring(today_day, "00") + "-" + str.tostring(today_month, "00") + "-" + str.tostring(today_year)
+
+// Open price logic for each level
+if t1 and not t1[1]
+    track_1.open_price := open
+    track_1.returned := false
+    track_1.ret_price := na
+    track_1.count_sessions += 1
+    if not na(day_index)
+        array.set(track_1.day_occurrences, day_index, array.get(track_1.day_occurrences, day_index) + 1)
+    if show_1
+        track_1.open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_1, style=style_1, width=2)
+        if open_lbl_lv_1
+            track_1.open_label_1 := label.new(
+                 time + timeframe.in_seconds("D") * 1000, open, 
+                 text="Target time level to retrace to: " + open_time_1 + " " + today_date_str, 
+                 xloc=xloc.bar_time, 
+                 yloc=yloc.price, 
+                 color=color.white, 
+                 textcolor=color.black, 
+                 size=size.small
+             )
+        label.delete(track_1.open_label_1[1])
+
+if t2 and not t2[1]
+    track_2.open_price := open
+    track_2.returned := false
+    track_2.ret_price := na
+    track_2.count_sessions += 1
+    if not na(day_index)
+        array.set(track_2.day_occurrences, day_index, array.get(track_2.day_occurrences, day_index) + 1)
+    if show_2
+        track_2.open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_2, style=style_2, width=2)
+        if open_lbl_lv_2
+            track_2.open_label_2 := label.new(
+                 time + timeframe.in_seconds("D") * 1000, open,  
+                 text="Target time level to retrace to: " + open_time_2 + " " + today_date_str, 
+                 xloc=xloc.bar_time, 
+                 yloc=yloc.price, 
+                 color=color.white, 
+                 textcolor=color.black, 
+                 size=size.small
+             )
+        label.delete(track_2.open_label_2[1])
+
+// Retracement logic for each level - Modified to track above/below occurrences
+if ret_t_1
+    if not ret_t_1[1]
+        offset1 = math.abs(open - track_1.open_price) * ret_pct_1 / 100
+        above1 = open > track_1.open_price
+        track_1.ret_price := above1 ? (open - offset1) : (open + offset1)
+        track_1.ret_distance.unshift(offset1)
+        if not na(day_index)
+            if track_1.ret_price > track_1.open_price
+                array.set(track_1.above_occurrences, day_index, array.get(track_1.above_occurrences, day_index) + 1)
+            else
+                array.set(track_1.below_occurrences, day_index, array.get(track_1.below_occurrences, day_index) + 1)
+        if show_1
+            track_1.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_1, width=2)
+            track_1.ret_line := line.new(time, track_1.ret_price, time + timeframe.in_seconds("D") * 1000, track_1.ret_price, xloc=xloc.bar_time, color=ret_pc_col_1, width=2, style=style_1)        
+            if ret_lbl_lv_1
+                track_1.ret_label_1 := label.new(
+                     time + timeframe.in_seconds("D") * 1000, open, 
+                     text= "Session open time for retracement to occur: " + str.tostring(ret_time_1) + " " + today_date_str, 
+                     xloc=xloc.bar_time, 
+                     yloc=yloc.price, 
+                     color=color.white, 
+                     textcolor=color.black, 
+                     size=size.small
+                 )
+        label.delete(track_1.ret_label_1[1])
+    
+    if not track_1.returned and high >= track_1.ret_price and low <= track_1.ret_price
+        track_1.returned := true
+        track_1.count_returned += 1
+        if not na(day_index)
+            array.set(track_1.count_by_day, day_index, array.get(track_1.count_by_day, day_index) + 1)
+            if track_1.ret_price > track_1.open_price
+                array.set(track_1.count_by_day_above, day_index, array.get(track_1.count_by_day_above, day_index) + 1)
+            else
+                array.set(track_1.count_by_day_below, day_index, array.get(track_1.count_by_day_below, day_index) + 1)
+
+if ret_t_2
+    if not ret_t_2[1]
+        offset2 = math.abs(open - track_2.open_price) * ret_pct_2 / 100
+        above2 = open > track_2.open_price
+        track_2.ret_price := above2 ? (open - offset2) : (open + offset2)
+        track_2.ret_distance.unshift(offset2)
+        if not na(day_index)
+            if track_2.ret_price > track_2.open_price
+                array.set(track_2.above_occurrences, day_index, array.get(track_2.above_occurrences, day_index) + 1)
+            else
+                array.set(track_2.below_occurrences, day_index, array.get(track_2.below_occurrences, day_index) + 1)
+        if show_2
+            track_2.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_2, width=2)
+            track_2.ret_line := line.new(time, track_2.ret_price, time + timeframe.in_seconds("D") * 1000, track_2.ret_price, xloc=xloc.bar_time, color=ret_pc_col_2, width=2, style=style_2)
+            if ret_lbl_lv_2
+                track_2.ret_label_2 := label.new(
+                     time + timeframe.in_seconds("D") * 1000, open, 
+                     text= "Session open time for retracement to occur: " + str.tostring(ret_time_2) + " " + today_date_str, 
+                     xloc=xloc.bar_time, 
+                     yloc=yloc.price, 
+                     color=color.white, 
+                     textcolor=color.black, 
+                     size=size.small
+                 )
+        label.delete(track_2.ret_label_2[1])
+
+    if not track_2.returned and high >= track_2.ret_price and low <= track_2.ret_price
+        track_2.returned := true
+        track_2.count_returned += 1
+        if not na(day_index)
+            array.set(track_2.count_by_day, day_index, array.get(track_2.count_by_day, day_index) + 1)
+            if track_2.ret_price > track_2.open_price
+                array.set(track_2.count_by_day_above, day_index, array.get(track_2.count_by_day_above, day_index) + 1)
+            else
+                array.set(track_2.count_by_day_below, day_index, array.get(track_2.count_by_day_below, day_index) + 1)
+
+// Table setup for both levels
+show_tbl = input.bool(true, 'Show stats table', group = 'Stats table')
+tablePosition = input.string("top_right", title="Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group = 'Stats table')
+tableTextSize = input.string("small", title="Text Size", options=["tiny", "small", "normal", "large"],group = 'Stats table')
+text_color = input.color(color.white, title="Text color",group = 'Stats table')
+bd_color = input.color(color.teal, title="Border color",group = 'Stats table')
+bg_color = input.color(color.rgb(40, 40, 40), title="Background color",group = 'Stats table')
+fr_color = input.color(color.teal, title="Frame color",group = 'Stats table')
+
+getTablePosition(positionStr) =>
+    switch positionStr
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+
+getTableTextSize(sizeStr) =>
+    switch sizeStr
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+
+tablePositionValue = getTablePosition(tablePosition)
+tableTextSizeValue = getTableTextSize(tableTextSize)
+
+level1_label = str.tostring(open_time_1)
+level2_label = str.tostring(open_time_2)
+retracement_time_1 = str.tostring(ret_time_1)
+retracement_time_2 = str.tostring(ret_time_2)
+
+if show_tbl and barstate.islast
+    var tbl = table.new(tablePositionValue, 20, 20, bgcolor=bg_color, frame_color=fr_color, frame_width=2, border_color=bd_color, border_width=1, force_overlay=true)
+
+    // Level Headers
+    table.cell(tbl, 0, 0, "", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 0, "Level 1 (" + level1_label + ")", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 0, "Level 2 (" + level2_label + ")", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+
+    // Main Statistics Section
+    table.cell(tbl, 0, 1, "Session Time", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 1, retracement_time_1, text_color=text_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 1, retracement_time_2, text_color=text_color, text_size=tableTextSizeValue)
+
+    table.cell(tbl, 0, 2, "Sample Size", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 2, str.format("{0,number,#}", track_1.count_sessions), text_color=text_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 2, str.format("{0,number,#}", track_2.count_sessions), text_color=text_color, text_size=tableTextSizeValue)
+
+    table.cell(tbl, 0, 3, "Target Retracement", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 3, str.format("{0,number,percent}", ret_pct_1 / 100), text_color=text_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 3, str.format("{0,number,percent}", ret_pct_2 / 100), text_color=text_color, text_size=tableTextSizeValue)
+
+    table.cell(tbl, 0, 4, "Avg Distance to Target", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 4, str.format("{0,number,#.#}", track_1.ret_distance.avg()), text_color=text_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 4, str.format("{0,number,#.#}", track_2.ret_distance.avg()), text_color=text_color, text_size=tableTextSizeValue)
+
+    table.cell(tbl, 0, 5, "Total Success Rate", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 5, str.format("{0,number,percent}", track_1.count_returned / track_1.count_sessions), text_color=text_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 5, str.format("{0,number,percent}", track_2.count_returned / track_2.count_sessions), text_color=text_color, text_size=tableTextSizeValue)
+
+    // Daily Statistics Header
+    table.cell(tbl, 0, 6, "Daily Statistics", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 1, 6, "Above / Below", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+    table.cell(tbl, 2, 6, "Above / Below", text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+
+    // Daily Statistics - Modified to use above/below occurrences
+    days = array.from("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+    
+    for i = 0 to 4
+        l1_hits_above = array.get(track_1.count_by_day_above, i)
+        l1_hits_below = array.get(track_1.count_by_day_below, i)
+        l1_above_total = array.get(track_1.above_occurrences, i)
+        l1_below_total = array.get(track_1.below_occurrences, i)
+        l1_above_percent = l1_above_total > 0 ? (l1_hits_above / l1_above_total) : 0.0
+        l1_below_percent = l1_below_total > 0 ? (l1_hits_below / l1_below_total) : 0.0
+
+        l2_hits_above = array.get(track_2.count_by_day_above, i)
+        l2_hits_below = array.get(track_2.count_by_day_below, i)
+        l2_above_total = array.get(track_2.above_occurrences, i)
+        l2_below_total = array.get(track_2.below_occurrences, i)
+        l2_above_percent = l2_above_total > 0 ? (l2_hits_above / l2_above_total) : 0.0
+        l2_below_percent = l2_below_total > 0 ? (l2_hits_below / l2_below_total) : 0.0
+        
+        table.cell(tbl, 0, i + 7, days.get(i), text_color=text_color, bgcolor=bg_color, text_size=tableTextSizeValue)
+        table.cell(tbl, 1, i + 7, str.format("{0} / {1,number,percent} | {2} / {3,number,percent}", l1_hits_above, l1_above_percent, l1_hits_below, l1_below_percent), text_color=text_color, text_size=tableTextSizeValue)
+        table.cell(tbl, 2, i + 7, str.format("{0} / {1,number,percent} | {2} / {3,number,percent}", l2_hits_above, l2_above_percent, l2_hits_below, l2_below_percent), text_color=text_color, text_size=tableTextSizeValue)

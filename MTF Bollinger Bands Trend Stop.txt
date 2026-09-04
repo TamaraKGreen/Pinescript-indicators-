@@ -1,0 +1,86 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("MTF Bollinger Bands Trend Stop", overlay=true)
+
+// --- Input settings
+tf_input = input.timeframe("", "Resolution", group="Timeframe Settings")
+Length = input.int(20, 'Period', group = 'Settings')
+Deviation = input.int(2, 'Standard Deviation', group = 'Settings')
+MoneyRisk = input.float(1.00, 'Money Risk', group = 'Settings')
+
+// --- Security function calls for MTF
+htf_close = request.security(syminfo.tickerid, tf_input, close)
+htf_high = request.security(syminfo.tickerid, tf_input, high)
+htf_low = request.security(syminfo.tickerid, tf_input, low)
+
+// --- Calculations on higher timeframe
+htf_avg = request.security(syminfo.tickerid, tf_input, ta.sma(close, Length))
+htf_dev = request.security(syminfo.tickerid, tf_input, ta.stdev(close, Length)) * Deviation
+htf_smax = htf_avg + htf_dev
+htf_smin = htf_avg - htf_dev
+
+var trend = 0
+
+if (htf_close > htf_smax[1])
+    trend := 1
+else if (htf_close < htf_smin[1])
+    trend := -1
+
+// Ensure bands don't retrace against trend
+if (trend > 0 and htf_smin < htf_smin[1])
+    htf_smin := htf_smin[1]
+if (trend < 0 and htf_smax > htf_smax[1])
+    htf_smax := htf_smax[1]
+
+// Calculate buffer bands with money risk
+htf_bsmax = htf_smax + 0.5 * (MoneyRisk - 1) * (htf_smax - htf_smin)
+htf_bsmin = htf_smin - 0.5 * (MoneyRisk - 1) * (htf_smax - htf_smin)
+
+if (trend > 0 and htf_bsmin < htf_bsmin[1])
+    htf_bsmin := htf_bsmin[1]
+if (trend < 0 and htf_bsmax > htf_bsmax[1])
+    htf_bsmax := htf_bsmax[1]
+
+var float TrendLine = na
+var color r = na
+
+if (trend > 0)
+    TrendLine := htf_bsmin
+    r := color.rgb(7, 124, 235)
+
+if (trend < 0)
+    TrendLine := htf_bsmax
+    r := color.rgb(172, 12, 221)
+
+// Trend calculations
+var bool down = bool(na)
+var bool up = bool(na)
+stop_line = float(na)
+line_color = color(na)
+
+crossover_1 = ta.crossover(htf_high, htf_bsmax)
+crossunder_1 = ta.crossunder(htf_low, htf_bsmin)
+
+if crossover_1
+    up := true
+    down := false
+    down
+    
+if crossunder_1
+    up := false
+    down := true
+    down
+
+change_up = down[1] and up
+change_down = up[1] and down
+stop_line := up ? htf_bsmin : down ? htf_bsmax : na
+
+// Plots
+line_color := stop_line == htf_bsmax ? color.rgb(172, 12, 221) : color.rgb(7, 124, 235)
+p1 = plot(stop_line, style=plot.style_cross, linewidth=1, color=line_color)
+
+plotshape(change_down ? htf_bsmax : na, style=shape.circle, location=location.absolute, size=size.tiny, color=color.rgb(172, 12, 221), transp=20)
+plotshape(change_up ? htf_bsmin : na, style=shape.circle, location=location.absolute, size=size.tiny, color=color.rgb(7, 124, 235), transp=20)
+

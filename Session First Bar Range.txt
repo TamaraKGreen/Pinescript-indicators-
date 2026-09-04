@@ -1,0 +1,237 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator(title='Session First Bar Range', shorttitle='FBR', overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count = 500, max_bars_back = 5000)
+
+//-------------------------------------------------------------------------------------------------
+// Inputs
+//-------------------------------------------------------------------------------------------------
+resolution  = input.timeframe("240", "Resolution", tooltip="Select any timeframe for the range calculation")
+timeframe   = input.timeframe("15", "Timeframe")
+midLine     = input.bool(true, "Show Midline")
+hist        = input.bool(true, "Show Historical Ranges")
+showL       = input.bool(true, "Show High/Low/Mid Labels", inline="Labels", group="Opening bar format")
+showP       = input.bool(false, "Show Prices", inline="Labels", group="Opening bar format")
+pos         = input.string("Left", "Position", options=["Left", "Right"], group="Opening bar format")
+boxStyle    = input.string("──────", "Range : ", options=["──────", "─ ─ ─ ─", "· · · · · ·"], inline="Box", group="Opening bar format")
+lineStyle   = input.string("─ ─ ─ ─", "MidLine : ", options=["──────", "─ ─ ─ ─", "· · · · · ·"], inline="Line", group="Opening bar format")
+borderWidth = input.int(1, ' / ', 1, 10, inline="Box", group="Opening bar format")
+lineWidth   = input.int(1, ' / ', 1, 10, inline="Line", group="Opening bar format")
+_color      = input.color(color.rgb(4, 54, 146), "Color : ", inline="Color", group="Opening bar format")
+_fillcolor  = input.color(color.rgb(9, 136, 209, 85), " / ", inline="Color", group="Opening bar format")
+
+// Inputs for statistical levels
+lookback        = input.int(60, "Lookback Periods for Stats", minval=1, group="Statistical Levels")
+show_stats      = input.bool(true, "Show Statistical Levels", group="Statistical Levels")
+show_stats_labels = input.bool(true, "Show Statistical Labels", group="Statistical Levels")
+std_mult1       = input.float(1.0, "Std Dev Multiplier 1", minval=0, step=0.5, group="Statistical Levels")
+std_mult2       = input.float(2.0, "Std Dev Multiplier 2", minval=0, step=0.5, group="Statistical Levels")
+stats_line_color = input.color(color.purple, "Stats Line Color", group="Statistical Levels")
+stats_line_width = input.int(1, "Stats Line Width", minval=1, maxval=10, group="Statistical Levels")
+stats_label_color = input.color(color.purple, "Stats Label Color", group="Statistical Levels")
+stats_label_size = input.string("Normal", "Stats Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Statistical Levels")
+
+// Inputs for Fibonacci Extensions
+show_mm         = input.bool(false, title="Show Fib Extensions", group="Fibonacci Extensions")
+show_mm_labels  = input.bool(false, title="Show Fib Labels", group="Fibonacci Extensions")
+mm_line_color   = input.color(color.teal, "Fib Line Color", group="Fibonacci Extensions")
+mm_line_width   = input.int(1, "Fib Line Width", minval=1, maxval=10, group="Fibonacci Extensions")
+mm_label_color  = input.color(color.teal, "Fib Label Color", group="Fibonacci Extensions")
+mm_label_size   = input.string("Normal", "Fib Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Fibonacci Extensions")
+
+// Add input for maximum history to display
+max_history = input.int(20, "Maximum Historical Ranges", minval=1, maxval=100, group="Performance")
+
+//-------------------------------------------------------------------------------------------------
+// Functions / Calculations
+//-------------------------------------------------------------------------------------------------
+get_style(style) =>
+    switch style
+        "──────"        => line.style_solid
+        "─ ─ ─ ─"       => line.style_dashed
+        "· · · · · ·"   => line.style_dotted
+
+get_label_size(size) =>
+    switch size
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        "Huge"   => size.huge
+
+[newBar, end] = request.security(syminfo.tickerid, resolution, [time, time_close], lookahead=barmerge.lookahead_on)
+[H, L, M]     = request.security(ticker.standard(syminfo.tickerid), timeframe, [high, low, hl2], lookahead=barmerge.lookahead_on)
+
+start       = time(resolution)
+isNewPeriod = ta.change(newBar) != 0
+
+_style = pos == "Left" ? label.style_label_right : label.style_label_left
+x      = pos == "Left" ? start : end
+
+// Arrays to store drawing objects for better management
+var line_array = array.new<line>()
+var label_array = array.new<label>()
+var linefill_array = array.new<linefill>()
+
+// Calculate statistical levels based on past ranges
+var float[] range_array = array.new_float(0)
+if isNewPeriod
+    array.push(range_array, H - L)
+    if array.size(range_array) > lookback
+        array.shift(range_array)
+
+avg_range = array.avg(range_array)
+std_dev = array.stdev(range_array)
+stat_level1_up = H + avg_range + std_dev * std_mult1
+stat_level1_dn = L - (avg_range + std_dev * std_mult1)
+stat_level2_up = H + avg_range + std_dev * std_mult2
+stat_level2_dn = L - (avg_range + std_dev * std_mult2)
+
+// Range and Percentage Calculations
+mm_1 = input.float(1.618, 'Measured move extension 1', group='Fibonacci Extensions')
+mm_2 = input.float(2.618, 'Measured move extension 2', group='Fibonacci Extensions')
+mm_3 = input.float(3.618, 'Measured move extension 3', group='Fibonacci Extensions')
+mm_4 = input.float(4.618, 'Measured move extension 4', group='Fibonacci Extensions')
+mm_5 = input.float(5.618, 'Measured move extension 5', group='Fibonacci Extensions')
+
+_range = H - L
+range_50 = L + _range * 0.50
+range_100 = H 
+range_200 = H + _range 
+range_300 = H + _range * mm_1
+range_400 = H + _range * mm_2
+range_500 = H + _range * mm_3
+range_600 = H + _range * mm_4
+range_700 = H + _range * mm_5
+neg_range_200 = L - _range
+neg_range_300 = L - _range * mm_1
+neg_range_400 = L - _range * mm_2
+neg_range_500 = L - _range * mm_3
+neg_range_600 = L - _range * mm_4
+neg_range_700 = L - _range * mm_5
+
+// Function to manage array size
+manage_array_size(arr, max_size) =>
+    while array.size(arr) > max_size
+        old_element = array.shift(arr)
+        line.delete(old_element)
+
+manage_label_array_size(arr, max_size) =>
+    while array.size(arr) > max_size
+        old_element = array.shift(arr)
+        label.delete(old_element)
+
+manage_linefill_array_size(arr, max_size) =>
+    while array.size(arr) > max_size
+        old_element = array.shift(arr)
+        linefill.delete(old_element)
+
+//-------------------------------------------------------------------------------------------------
+// Outputs
+//-------------------------------------------------------------------------------------------------
+// Draw elements
+if isNewPeriod
+    // Calculate how many objects we'll create per session
+    objects_per_session = 2 + (midLine ? 1 : 0) + (show_stats ? 4 : 0) + (show_mm ? 8 : 0)
+    labels_per_session = (showL ? (2 + (midLine ? 1 : 0)) : 0) + (show_stats_labels ? 4 : 0) + (show_mm_labels ? 8 : 0)
+    
+    // Adjust max_history based on object count to stay within limits
+    adjusted_max_history = math.min(max_history, math.floor(450 / objects_per_session))
+    adjusted_max_labels = math.min(max_history, math.floor(450 / math.max(labels_per_session, 1)))
+    
+    // Draw high, low, and midline
+    _top = line.new(start, H, end, H, color=_color, style=get_style(boxStyle), width=lineWidth, xloc=xloc.bar_time)
+    _bot = line.new(start, L, end, L, color=_color, style=get_style(boxStyle), width=lineWidth, xloc=xloc.bar_time)
+    _fill = linefill.new(_top, _bot, _fillcolor)
+    
+    array.push(line_array, _top)
+    array.push(line_array, _bot)
+    array.push(linefill_array, _fill)
+    
+    if midLine
+        _mid = line.new(start, M, end, M, color=_color, style=get_style(lineStyle), width=lineWidth, xloc=xloc.bar_time)
+        array.push(line_array, _mid)
+    
+    if showL
+        _label_high = label.new(x, H, "High" + (showP ? " (" + str.tostring(H, format.mintick) + ")" : ""), style=label.style_none, color=#000000cb, textcolor=_color, xloc=xloc.bar_time, size=get_label_size("Normal"))
+        _label_low = label.new(x, L, "Low" + (showP ? " (" + str.tostring(L, format.mintick) + ")" : ""), style=label.style_none, color=#000000cb, textcolor=_color, xloc=xloc.bar_time, size=get_label_size("Normal"))
+        array.push(label_array, _label_high)
+        array.push(label_array, _label_low)
+        if midLine
+            _label_mid = label.new(x, M, "Mid" + (showP ? " (" + str.tostring(M, format.mintick) + ")" : ""), style=label.style_none, color=#000000cb, textcolor=_color, xloc=xloc.bar_time, size=get_label_size("Normal"))
+            array.push(label_array, _label_mid)
+    
+    // Draw Fibonacci extensions
+    if show_mm
+        mm_line_200 = line.new(start, range_200, end, range_200, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_300 = line.new(start, range_300, end, range_300, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_400 = line.new(start, range_400, end, range_400, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_500 = line.new(start, range_500, end, range_500, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_neg_200 = line.new(start, neg_range_200, end, neg_range_200, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_neg_300 = line.new(start, neg_range_300, end, neg_range_300, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_neg_400 = line.new(start, neg_range_400, end, neg_range_400, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        mm_line_neg_500 = line.new(start, neg_range_500, end, neg_range_500, color=mm_line_color, width=mm_line_width, xloc=xloc.bar_time)
+        
+        array.push(line_array, mm_line_200)
+        array.push(line_array, mm_line_300)
+        array.push(line_array, mm_line_400)
+        array.push(line_array, mm_line_500)
+        array.push(line_array, mm_line_neg_200)
+        array.push(line_array, mm_line_neg_300)
+        array.push(line_array, mm_line_neg_400)
+        array.push(line_array, mm_line_neg_500)
+        
+        if show_mm_labels
+            mm_label_200 = label.new(x, range_200, "100%", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_300 = label.new(x, range_300, str.tostring(mm_1, "#.###") + "x", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_400 = label.new(x, range_400, str.tostring(mm_2, "#.###") + "x", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_500 = label.new(x, range_500, str.tostring(mm_3, "#.###") + "x", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_neg_200 = label.new(x, neg_range_200, "-100%", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_neg_300 = label.new(x, neg_range_300, "-" + str.tostring(mm_1, "#.###") + "x", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_neg_400 = label.new(x, neg_range_400, "-" + str.tostring(mm_2, "#.###") + "x", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            mm_label_neg_500 = label.new(x, neg_range_500, "-" + str.tostring(mm_3, "#.###") + "x", style=label.style_none, color=#000000cb, textcolor=mm_label_color, xloc=xloc.bar_time, size=get_label_size(mm_label_size))
+            
+            array.push(label_array, mm_label_200)
+            array.push(label_array, mm_label_300)
+            array.push(label_array, mm_label_400)
+            array.push(label_array, mm_label_500)
+            array.push(label_array, mm_label_neg_200)
+            array.push(label_array, mm_label_neg_300)
+            array.push(label_array, mm_label_neg_400)
+            array.push(label_array, mm_label_neg_500)
+    
+    // Draw statistical levels
+    if show_stats
+        stat_line1_up = line.new(start, stat_level1_up, end, stat_level1_up, color=stats_line_color, style=line.style_dashed, width=stats_line_width, xloc=xloc.bar_time)
+        stat_line1_dn = line.new(start, stat_level1_dn, end, stat_level1_dn, color=stats_line_color, style=line.style_dashed, width=stats_line_width, xloc=xloc.bar_time)
+        stat_line2_up = line.new(start, stat_level2_up, end, stat_level2_up, color=stats_line_color, style=line.style_dotted, width=stats_line_width, xloc=xloc.bar_time)
+        stat_line2_dn = line.new(start, stat_level2_dn, end, stat_level2_dn, color=stats_line_color, style=line.style_dotted, width=stats_line_width, xloc=xloc.bar_time)
+        
+        array.push(line_array, stat_line1_up)
+        array.push(line_array, stat_line1_dn)
+        array.push(line_array, stat_line2_up)
+        array.push(line_array, stat_line2_dn)
+        
+        if show_stats_labels
+            stat_label1_up = label.new(x, stat_level1_up, "+" + str.tostring(std_mult1) + "σ", style=label.style_none, color=#000000cb, textcolor=stats_label_color, xloc=xloc.bar_time, size=get_label_size(stats_label_size))
+            stat_label1_dn = label.new(x, stat_level1_dn, "-" + str.tostring(std_mult1) + "σ", style=label.style_none, color=#000000cb, textcolor=stats_label_color, xloc=xloc.bar_time, size=get_label_size(stats_label_size))
+            stat_label2_up = label.new(x, stat_level2_up, "+" + str.tostring(std_mult2) + "σ", style=label.style_none, color=#000000cb, textcolor=stats_label_color, xloc=xloc.bar_time, size=get_label_size(stats_label_size))
+            stat_label2_dn = label.new(x, stat_level2_dn, "-" + str.tostring(std_mult2) + "σ", style=label.style_none, color=#000000cb, textcolor=stats_label_color, xloc=xloc.bar_time, size=get_label_size(stats_label_size))
+            
+            array.push(label_array, stat_label1_up)
+            array.push(label_array, stat_label1_dn)
+            array.push(label_array, stat_label2_up)
+            array.push(label_array, stat_label2_dn)
+    
+    // Manage array sizes to prevent hitting limits
+    if not hist
+        // If not showing history, keep only current period's objects
+        manage_array_size(line_array, objects_per_session)
+        manage_label_array_size(label_array, labels_per_session)
+        manage_linefill_array_size(linefill_array, 1)
+    else if array.size(line_array) > adjusted_max_history * objects_per_session
+        // If showing history, manage when exceeding limits
+        manage_array_size(line_array, adjusted_max_history * objects_per_session)
+        manage_label_array_size(label_array, adjusted_max_labels * labels_per_session)
+        manage_linefill_array_size(linefill_array, adjusted_max_history)

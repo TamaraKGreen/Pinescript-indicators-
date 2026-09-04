@@ -1,0 +1,521 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Time-based Range Retracement - Stats", "Range Retracement", true, max_lines_count=500, max_boxes_count=500)
+
+get_line_type(string style) =>
+    result = switch style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+    result
+
+// Inputs for Level 1
+range_time_1 = input.session("0200-0230", "Range Time (Box)", group="Level 1")
+hl_check_time_1 = input.session("0230-0800", "High/Low Check Time", group="Level 1")
+ret_time_1 = input.session("0800-1500", "Retracement Check Time", group="Level 1")
+ret_pct_1 = input.float(50.0, "Retracement %", minval=0, maxval=100, group="Level 1")
+range_col_1 = input.color(color.rgb(98, 1, 255, 75), "Range Box Color", group="Level 1")
+ret_line_col_1 = input.color(color.rgb(98, 1, 255, 0), "Retracement Line Color", group="Level 1")
+show_box_1 = input.bool(true, "Show Range Box", group="Level 1")
+show_line_1 = input.bool(true, "Show Retracement Line", group="Level 1")
+style_1 = get_line_type(input.string("Dotted", "Retracement Line Style", options=["Solid", "Dashed", "Dotted"], group="Level 1"))
+line_width_1 = input.int(1, "Retracement Line Width", minval=1, maxval=10, group="Level 1")
+
+// Inputs for Level 2
+range_time_2 = input.session("0900-0930", "Range Time (Box)", group="Level 2")
+hl_check_time_2 = input.session("0930-1300", "High/Low Check Time", group="Level 2")
+ret_time_2 = input.session("1300-1500", "Retracement Check Time", group="Level 2")
+ret_pct_2 = input.float(50.0, "Retracement %", minval=0, maxval=100, group="Level 2")
+range_col_2 = input.color(color.rgb(255, 0, 0, 75), "Range Box Color", group="Level 2")
+ret_line_col_2 = input.color(color.rgb(255, 0, 0, 0), "Retracement Line Color", group="Level 2")
+show_box_2 = input.bool(true, "Show Range Box", group="Level 2")
+show_line_2 = input.bool(true, "Show Retracement Line", group="Level 2")
+style_2 = get_line_type(input.string("Dotted", "Retracement Line Style", options=["Solid", "Dashed", "Dotted"], group="Level 2"))
+line_width_2 = input.int(1, "Retracement Line Width", minval=1, maxval=10, group="Level 2")
+
+// Inputs for Level 3
+range_time_3 = input.session("0000-0030", "Range Time (Box)", group="Level 3")
+hl_check_time_3 = input.session("0030-0200", "High/Low Check Time", group="Level 3")
+ret_time_3 = input.session("0200-0800", "Retracement Check Time", group="Level 3")
+ret_pct_3 = input.float(50.0, "Retracement %", minval=0, maxval=100, group="Level 3")
+range_col_3 = input.color(color.rgb(0, 4, 255, 75), "Range Box Color", group="Level 3")
+ret_line_col_3 = input.color(color.rgb(0, 4, 255, 0), "Retracement Line Color", group="Level 3")
+show_box_3 = input.bool(true, "Show Range Box", group="Level 3")
+show_line_3 = input.bool(true, "Show Retracement Line", group="Level 3")
+style_3 = get_line_type(input.string("Dotted", "Retracement Line Style", options=["Solid", "Dashed", "Dotted"], group="Level 3"))
+line_width_3 = input.int(1, "Retracement Line Width", minval=1, maxval=10, group="Level 3")
+
+// Inputs for Level 4
+range_time_4 = input.session("1100-1130", "Range Time (Box)", group="Level 4")
+hl_check_time_4 = input.session("1130-1200", "High/Low Check Time", group="Level 4")
+ret_time_4 = input.session("1200-1500", "Retracement Check Time", group="Level 4")
+ret_pct_4 = input.float(50.0, "Retracement %", minval=0, maxval=100, group="Level 4")
+range_col_4 = input.color(color.rgb(255, 255, 0, 50), "Range Box Color", group="Level 4")
+ret_line_col_4 = input.color(color.rgb(255, 255, 0, 0), "Retracement Line Color", group="Level 4")
+show_box_4 = input.bool(true, "Show Range Box", group="Level 4")
+show_line_4 = input.bool(true, "Show Retracement Line", group="Level 4")
+style_4 = get_line_type(input.string("Dotted", "Retracement Line Style", options=["Solid", "Dashed", "Dotted"], group="Level 4"))
+line_width_4 = input.int(1, "Retracement Line Width", minval=1, maxval=10, group="Level 4")
+
+// Inputs for Level 5
+range_time_5 = input.session("1400-1430", "Range Time (Box)", group="Level 5")
+hl_check_time_5 = input.session("1430-1500", "High/Low Check Time", group="Level 5")
+ret_time_5 = input.session("1500-1600", "Retracement Check Time", group="Level 5")
+ret_pct_5 = input.float(50.0, "Retracement %", minval=0, maxval=100, group="Level 5")
+range_col_5 = input.color(color.rgb(5, 153, 109, 75), "Range Box Color", group="Level 5")
+ret_line_col_5 = input.color(color.rgb(5, 153, 109, 0), "Retracement Line Color", group="Level 5")
+show_box_5 = input.bool(true, "Show Range Box", group="Level 5")
+show_line_5 = input.bool(true, "Show Retracement Line", group="Level 5")
+style_5 = get_line_type(input.string("Dotted", "Retracement Line Style", options=["Solid", "Dashed", "Dotted"], group="Level 5"))
+line_width_5 = input.int(1, "Retracement Line Width", minval=1, maxval=10, group="Level 5")
+
+// Time checks
+in_range_time_1 = not na(time("", range_time_1, "America/New_York"))
+in_hl_check_time_1 = not na(time("", hl_check_time_1, "America/New_York"))
+in_ret_time_1 = not na(time("", ret_time_1, "America/New_York"))
+in_range_time_2 = not na(time("", range_time_2, "America/New_York"))
+in_hl_check_time_2 = not na(time("", hl_check_time_2, "America/New_York"))
+in_ret_time_2 = not na(time("", ret_time_2, "America/New_York"))
+in_range_time_3 = not na(time("", range_time_3, "America/New_York"))
+in_hl_check_time_3 = not na(time("", hl_check_time_3, "America/New_York"))
+in_ret_time_3 = not na(time("", ret_time_3, "America/New_York"))
+in_range_time_4 = not na(time("", range_time_4, "America/New_York"))
+in_hl_check_time_4 = not na(time("", hl_check_time_4, "America/New_York"))
+in_ret_time_4 = not na(time("", ret_time_4, "America/New_York"))
+in_range_time_5 = not na(time("", range_time_5, "America/New_York"))
+in_hl_check_time_5 = not na(time("", hl_check_time_5, "America/New_York"))
+in_ret_time_5 = not na(time("", ret_time_5, "America/New_York"))
+
+// Struct for tracking
+type tracking
+    float[] ret_distance
+    box range_box
+    line ret_line
+    float high_price
+    float low_price
+    float ret_price
+    bool returned = false
+    bool high_taken = false
+    bool low_taken = false
+    int count_returned = 0
+    int count_sessions = 0
+    int count_high_taken = 0
+    int count_low_taken = 0
+    int count_returned_high_taken = 0
+    int count_returned_high_not_taken = 0
+    int count_returned_low_taken = 0
+    int count_returned_low_not_taken = 0
+
+var track_1 = tracking.new(array.new_float())
+var track_2 = tracking.new(array.new_float())
+var track_3 = tracking.new(array.new_float())
+var track_4 = tracking.new(array.new_float())
+var track_5 = tracking.new(array.new_float())
+
+// Variables for each level
+var float session_high_1 = na
+var float session_low_1 = na
+var int range_start_time_1 = na
+var int range_end_time_1 = na
+var bool new_session_1 = false
+
+var float session_high_2 = na
+var float session_low_2 = na
+var int range_start_time_2 = na
+var int range_end_time_2 = na
+var bool new_session_2 = false
+
+var float session_high_3 = na
+var float session_low_3 = na
+var int range_start_time_3 = na
+var int range_end_time_3 = na
+var bool new_session_3 = false
+
+var float session_high_4 = na
+var float session_low_4 = na
+var int range_start_time_4 = na
+var int range_end_time_4 = na
+var bool new_session_4 = false
+
+var float session_high_5 = na
+var float session_low_5 = na
+var int range_start_time_5 = na
+var int range_end_time_5 = na
+var bool new_session_5 = false
+
+// Logic for Level 1
+if in_range_time_1 and not in_range_time_1[1]
+    session_high_1 := high
+    session_low_1 := low
+    range_start_time_1 := time
+    new_session_1 := true
+    track_1.count_sessions += 1
+    track_1.high_taken := false
+    track_1.low_taken := false
+
+if in_range_time_1
+    session_high_1 := math.max(session_high_1, high)
+    session_low_1 := math.min(session_low_1, low)
+    range_end_time_1 := time
+
+if in_hl_check_time_1
+    if not track_1.high_taken and high >= session_high_1
+        track_1.high_taken := true
+        track_1.count_high_taken += 1
+    if not track_1.low_taken and low <= session_low_1
+        track_1.low_taken := true
+        track_1.count_low_taken += 1
+
+if not in_range_time_1 and in_range_time_1[1] and new_session_1
+    if show_box_1
+        track_1.range_box := box.new(range_start_time_1, session_high_1, range_end_time_1, session_low_1, border_color=range_col_1, bgcolor=range_col_1, xloc=xloc.bar_time)
+    float range_size = session_high_1 - session_low_1
+    track_1.ret_price := session_low_1 + range_size * (ret_pct_1 / 100)
+    if show_line_1
+        track_1.ret_line := line.new(range_start_time_1, track_1.ret_price, range_end_time_1 + timeframe.in_seconds("D") * 1000, track_1.ret_price, xloc=xloc.bar_time, color=ret_line_col_1, style=style_1, width=line_width_1)
+    track_1.ret_distance.unshift(range_size * (ret_pct_1 / 100))
+    new_session_1 := false
+
+if in_ret_time_1 and not track_1.returned
+    if high >= track_1.ret_price and low <= track_1.ret_price
+        track_1.returned := true
+        track_1.count_returned += 1
+        if track_1.high_taken
+            track_1.count_returned_high_taken += 1
+        else
+            track_1.count_returned_high_not_taken += 1
+        if track_1.low_taken
+            track_1.count_returned_low_taken += 1
+        else
+            track_1.count_returned_low_not_taken += 1
+
+// Logic for Level 2
+if in_range_time_2 and not in_range_time_2[1]
+    session_high_2 := high
+    session_low_2 := low
+    range_start_time_2 := time
+    new_session_2 := true
+    track_2.count_sessions += 1
+    track_2.high_taken := false
+    track_2.low_taken := false
+
+if in_range_time_2
+    session_high_2 := math.max(session_high_2, high)
+    session_low_2 := math.min(session_low_2, low)
+    range_end_time_2 := time
+
+if in_hl_check_time_2
+    if not track_2.high_taken and high >= session_high_2
+        track_2.high_taken := true
+        track_2.count_high_taken += 1
+    if not track_2.low_taken and low <= session_low_2
+        track_2.low_taken := true
+        track_2.count_low_taken += 1
+
+if not in_range_time_2 and in_range_time_2[1] and new_session_2
+    if show_box_2
+        track_2.range_box := box.new(range_start_time_2, session_high_2, range_end_time_2, session_low_2, border_color=range_col_2, bgcolor=range_col_2, xloc=xloc.bar_time)
+    float range_size = session_high_2 - session_low_2
+    track_2.ret_price := session_low_2 + range_size * (ret_pct_2 / 100)
+    if show_line_2
+        track_2.ret_line := line.new(range_start_time_2, track_2.ret_price, range_end_time_2 + timeframe.in_seconds("D") * 1000, track_2.ret_price, xloc=xloc.bar_time, color=ret_line_col_2, style=style_2, width=line_width_2)
+    track_2.ret_distance.unshift(range_size * (ret_pct_2 / 100))
+    new_session_2 := false
+
+if in_ret_time_2 and not track_2.returned
+    if high >= track_2.ret_price and low <= track_2.ret_price
+        track_2.returned := true
+        track_2.count_returned += 1
+        if track_2.high_taken
+            track_2.count_returned_high_taken += 1
+        else
+            track_2.count_returned_high_not_taken += 1
+        if track_2.low_taken
+            track_2.count_returned_low_taken += 1
+        else
+            track_2.count_returned_low_not_taken += 1
+
+// Logic for Level 3
+if in_range_time_3 and not in_range_time_3[1]
+    session_high_3 := high
+    session_low_3 := low
+    range_start_time_3 := time
+    new_session_3 := true
+    track_3.count_sessions += 1
+    track_3.high_taken := false
+    track_3.low_taken := false
+
+if in_range_time_3
+    session_high_3 := math.max(session_high_3, high)
+    session_low_3 := math.min(session_low_3, low)
+    range_end_time_3 := time
+
+if in_hl_check_time_3
+    if not track_3.high_taken and high >= session_high_3
+        track_3.high_taken := true
+        track_3.count_high_taken += 1
+    if not track_3.low_taken and low <= session_low_3
+        track_3.low_taken := true
+        track_3.count_low_taken += 1
+
+if not in_range_time_3 and in_range_time_3[1] and new_session_3
+    if show_box_3
+        track_3.range_box := box.new(range_start_time_3, session_high_3, range_end_time_3, session_low_3, border_color=range_col_3, bgcolor=range_col_3, xloc=xloc.bar_time)
+    float range_size = session_high_3 - session_low_3
+    track_3.ret_price := session_low_3 + range_size * (ret_pct_3 / 100)
+    if show_line_3
+        track_3.ret_line := line.new(range_start_time_3, track_3.ret_price, range_end_time_3 + timeframe.in_seconds("D") * 1000, track_3.ret_price, xloc=xloc.bar_time, color=ret_line_col_3, style=style_3, width=line_width_3)
+    track_3.ret_distance.unshift(range_size * (ret_pct_3 / 100))
+    new_session_3 := false
+
+if in_ret_time_3 and not track_3.returned
+    if high >= track_3.ret_price and low <= track_3.ret_price
+        track_3.returned := true
+        track_3.count_returned += 1
+        if track_3.high_taken
+            track_3.count_returned_high_taken += 1
+        else
+            track_3.count_returned_high_not_taken += 1
+        if track_3.low_taken
+            track_3.count_returned_low_taken += 1
+        else
+            track_3.count_returned_low_not_taken += 1
+
+// Logic for Level 4
+if in_range_time_4 and not in_range_time_4[1]
+    session_high_4 := high
+    session_low_4 := low
+    range_start_time_4 := time
+    new_session_4 := true
+    track_4.count_sessions += 1
+    track_4.high_taken := false
+    track_4.low_taken := false
+
+if in_range_time_4
+    session_high_4 := math.max(session_high_4, high)
+    session_low_4 := math.min(session_low_4, low)
+    range_end_time_4 := time
+
+if in_hl_check_time_4
+    if not track_4.high_taken and high >= session_high_4
+        track_4.high_taken := true
+        track_4.count_high_taken += 1
+    if not track_4.low_taken and low <= session_low_4
+        track_4.low_taken := true
+        track_4.count_low_taken += 1
+
+if not in_range_time_4 and in_range_time_4[1] and new_session_4
+    if show_box_4
+        track_4.range_box := box.new(range_start_time_4, session_high_4, range_end_time_4, session_low_4, border_color=range_col_4, bgcolor=range_col_4, xloc=xloc.bar_time)
+    float range_size = session_high_4 - session_low_4
+    track_4.ret_price := session_low_4 + range_size * (ret_pct_4 / 100)
+    if show_line_4
+        track_4.ret_line := line.new(range_start_time_4, track_4.ret_price, range_end_time_4 + timeframe.in_seconds("D") * 1000, track_4.ret_price, xloc=xloc.bar_time, color=ret_line_col_4, style=style_4, width=line_width_4)
+    track_4.ret_distance.unshift(range_size * (ret_pct_4 / 100))
+    new_session_4 := false
+
+if in_ret_time_4 and not track_4.returned
+    if high >= track_4.ret_price and low <= track_4.ret_price
+        track_4.returned := true
+        track_4.count_returned += 1
+        if track_4.high_taken
+            track_4.count_returned_high_taken += 1
+        else
+            track_4.count_returned_high_not_taken += 1
+        if track_4.low_taken
+            track_4.count_returned_low_taken += 1
+        else
+            track_4.count_returned_low_not_taken += 1
+
+// Logic for Level 5
+if in_range_time_5 and not in_range_time_5[1]
+    session_high_5 := high
+    session_low_5 := low
+    range_start_time_5 := time
+    new_session_5 := true
+    track_5.count_sessions += 1
+    track_5.high_taken := false
+    track_5.low_taken := false
+
+if in_range_time_5
+    session_high_5 := math.max(session_high_5, high)
+    session_low_5 := math.min(session_low_5, low)
+    range_end_time_5 := time
+
+if in_hl_check_time_5
+    if not track_5.high_taken and high >= session_high_5
+        track_5.high_taken := true
+        track_5.count_high_taken += 1
+    if not track_5.low_taken and low <= session_low_5
+        track_5.low_taken := true
+        track_5.count_low_taken += 1
+
+if not in_range_time_5 and in_range_time_5[1] and new_session_5
+    if show_box_5
+        track_5.range_box := box.new(range_start_time_5, session_high_5, range_end_time_5, session_low_5, border_color=range_col_5, bgcolor=range_col_5, xloc=xloc.bar_time)
+    float range_size = session_high_5 - session_low_5
+    track_5.ret_price := session_low_5 + range_size * (ret_pct_5 / 100)
+    if show_line_5
+        track_5.ret_line := line.new(range_start_time_5, track_5.ret_price, range_end_time_5 + timeframe.in_seconds("D") * 1000, track_5.ret_price, xloc=xloc.bar_time, color=ret_line_col_5, style=style_5, width=line_width_5)
+    track_5.ret_distance.unshift(range_size * (ret_pct_5 / 100))
+    new_session_5 := false
+
+if in_ret_time_5 and not track_5.returned
+    if high >= track_5.ret_price and low <= track_5.ret_price
+        track_5.returned := true
+        track_5.count_returned += 1
+        if track_5.high_taken
+            track_5.count_returned_high_taken += 1
+        else
+            track_5.count_returned_high_not_taken += 1
+        if track_5.low_taken
+            track_5.count_returned_low_taken += 1
+        else
+            track_5.count_returned_low_not_taken += 1
+
+// Reset variables at start of new day
+if timeframe.change("D")
+    track_1.returned := false
+    track_1.high_taken := false
+    track_1.low_taken := false
+    session_high_1 := na
+    session_low_1 := na
+    range_start_time_1 := na
+    range_end_time_1 := na
+    track_2.returned := false
+    track_2.high_taken := false
+    track_2.low_taken := false
+    session_high_2 := na
+    session_low_2 := na
+    range_start_time_2 := na
+    range_end_time_2 := na
+    track_3.returned := false
+    track_3.high_taken := false
+    track_3.low_taken := false
+    session_high_3 := na
+    session_low_3 := na
+    range_start_time_3 := na
+    range_end_time_3 := na
+    track_4.returned := false
+    track_4.high_taken := false
+    track_4.low_taken := false
+    session_high_4 := na
+    session_low_4 := na
+    range_start_time_4 := na
+    range_end_time_4 := na
+    track_5.returned := false
+    track_5.high_taken := false
+    track_5.low_taken := false
+    session_high_5 := na
+    session_low_5 := na
+    range_start_time_5 := na
+    range_end_time_5 := na
+
+// Table setup
+tablePosition = input.string("top_center", "Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"])
+tableTextSize = input.string("small", "Text Size", options=["tiny", "small", "normal", "large"])
+bd_color = input.color(color.black, "Border Color")
+bg_color = input.color(color.black, "Header Background Color")
+row_bg_color = input.color(color.white, "Row Background Color")
+header_text_color = input.color(color.white, "Header Text Color")
+row_text_color = input.color(color.black, "Row Text Color")
+fr_color = input.color(color.black, "Frame Color")
+
+getTablePosition(positionStr) =>
+    switch positionStr
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+
+getTableTextSize(sizeStr) =>
+    switch sizeStr
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+
+tablePositionValue = getTablePosition(tablePosition)
+tableTextSizeValue = getTableTextSize(tableTextSize)
+
+if barstate.islast
+    var tbl = table.new(tablePositionValue, 12, 6, bgcolor=bg_color, frame_color=fr_color, frame_width=2, border_color=bd_color, border_width=1, force_overlay=true)
+    // Headers
+    table.cell(tbl, 0, 0, "Range Time", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 0, "HL Time", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 0, "Ret Time", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 3, 0, "Avg Dist", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 4, 0, "Sample", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 5, 0, "Target %", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 6, 0, "Success", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 7, 0, "High Taken %", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 8, 0, "High Not Taken %", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 9, 0, "Low Taken %", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 10, 0, "Low Not Taken %", text_color=header_text_color, bgcolor=bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    // Level 1
+    table.cell(tbl, 0, 1, str.tostring(range_time_1), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 1, str.tostring(hl_check_time_1), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 1, str.tostring(ret_time_1), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 3, 1, str.format("{0,number,#.#}", track_1.ret_distance.avg()), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 4, 1, str.format("{0,number,#}", track_1.count_sessions), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 5, 1, str.format("{0,number,percent}", ret_pct_1 / 100), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 6, 1, str.format("{0,number,percent}", track_1.count_returned / math.max(track_1.count_sessions, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 7, 1, str.format("{0,number,percent}", track_1.count_returned_high_taken / math.max(track_1.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 8, 1, str.format("{0,number,percent}", track_1.count_returned_high_not_taken / math.max(track_1.count_sessions - track_1.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 9, 1, str.format("{0,number,percent}", track_1.count_returned_low_taken / math.max(track_1.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 10, 1, str.format("{0,number,percent}", track_1.count_returned_low_not_taken / math.max(track_1.count_sessions - track_1.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    // Level 2
+    table.cell(tbl, 0, 2, str.tostring(range_time_2), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 2, str.tostring(hl_check_time_2), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 2, str.tostring(ret_time_2), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 3, 2, str.format("{0,number,#.#}", track_2.ret_distance.avg()), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 4, 2, str.format("{0,number,#}", track_2.count_sessions), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 5, 2, str.format("{0,number,percent}", ret_pct_2 / 100), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 6, 2, str.format("{0,number,percent}", track_2.count_returned / math.max(track_2.count_sessions, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 7, 2, str.format("{0,number,percent}", track_2.count_returned_high_taken / math.max(track_2.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 8, 2, str.format("{0,number,percent}", track_2.count_returned_high_not_taken / math.max(track_2.count_sessions - track_2.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 9, 2, str.format("{0,number,percent}", track_2.count_returned_low_taken / math.max(track_2.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 10, 2, str.format("{0,number,percent}", track_2.count_returned_low_not_taken / math.max(track_2.count_sessions - track_2.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    // Level 3
+    table.cell(tbl, 0, 3, str.tostring(range_time_3), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 3, str.tostring(hl_check_time_3), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 3, str.tostring(ret_time_3), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 3, 3, str.format("{0,number,#.#}", track_3.ret_distance.avg()), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 4, 3, str.format("{0,number,#}", track_3.count_sessions), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 5, 3, str.format("{0,number,percent}", ret_pct_3 / 100), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 6, 3, str.format("{0,number,percent}", track_3.count_returned / math.max(track_3.count_sessions, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 7, 3, str.format("{0,number,percent}", track_3.count_returned_high_taken / math.max(track_3.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 8, 3, str.format("{0,number,percent}", track_3.count_returned_high_not_taken / math.max(track_3.count_sessions - track_3.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 9, 3, str.format("{0,number,percent}", track_3.count_returned_low_taken / math.max(track_3.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 10, 3, str.format("{0,number,percent}", track_3.count_returned_low_not_taken / math.max(track_3.count_sessions - track_3.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    // Level 4
+    table.cell(tbl, 0, 4, str.tostring(range_time_4), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 4, str.tostring(hl_check_time_4), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 4, str.tostring(ret_time_4), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 3, 4, str.format("{0,number,#.#}", track_4.ret_distance.avg()), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 4, 4, str.format("{0,number,#}", track_4.count_sessions), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 5, 4, str.format("{0,number,percent}", ret_pct_4 / 100), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 6, 4, str.format("{0,number,percent}", track_4.count_returned / math.max(track_4.count_sessions, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 7, 4, str.format("{0,number,percent}", track_4.count_returned_high_taken / math.max(track_4.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 8, 4, str.format("{0,number,percent}", track_4.count_returned_high_not_taken / math.max(track_4.count_sessions - track_4.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 9, 4, str.format("{0,number,percent}", track_4.count_returned_low_taken / math.max(track_4.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 10, 4, str.format("{0,number,percent}", track_4.count_returned_low_not_taken / math.max(track_4.count_sessions - track_4.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    // Level 5
+    table.cell(tbl, 0, 5, str.tostring(range_time_5), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 1, 5, str.tostring(hl_check_time_5), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 2, 5, str.tostring(ret_time_5), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 3, 5, str.format("{0,number,#.#}", track_5.ret_distance.avg()), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 4, 5, str.format("{0,number,#}", track_5.count_sessions), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 5, 5, str.format("{0,number,percent}", ret_pct_5 / 100), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 6, 5, str.format("{0,number,percent}", track_5.count_returned / math.max(track_5.count_sessions, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 7, 5, str.format("{0,number,percent}", track_5.count_returned_high_taken / math.max(track_5.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 8, 5, str.format("{0,number,percent}", track_5.count_returned_high_not_taken / math.max(track_5.count_sessions - track_5.count_high_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 9, 5, str.format("{0,number,percent}", track_5.count_returned_low_taken / math.max(track_5.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)
+    table.cell(tbl, 10, 5, str.format("{0,number,percent}", track_5.count_returned_low_not_taken / math.max(track_5.count_sessions - track_5.count_low_taken, 1)), text_color=row_text_color, bgcolor=row_bg_color, text_size=tableTextSizeValue, text_font_family=font.family_monospace)

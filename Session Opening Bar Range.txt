@@ -1,0 +1,513 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator(title='Session Opening Bar Range', shorttitle='OBR', overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count = 500, max_bars_back = 5000)
+
+//-------------------------------------------------------------------------------------------------
+// Inputs
+//-------------------------------------------------------------------------------------------------
+// Session Selection
+var g_SESSION = "Session Settings"
+session_choice = input.string("New York RTH (9.30am - 4pm)", "Session", 
+     options=["New York RTH (9.30am - 4pm)", "New York Futures (8am - 5pm)", 
+              "London (2am - 8am)", "Asia (7pm - 2am)", "Midnight to 5pm", 
+              "ZB/Gold/Silver OR (8.20am - 4pm)", "CL (9am - 4pm)", "Custom"], 
+     group=g_SESSION, tooltip="Select the trading session")
+
+// Custom Session Settings
+var g_CUSTOM_SESSION = "Custom Session Settings"
+custom_session_start = input.string("0900", "Custom Session Start (HHMM)", 
+     group=g_CUSTOM_SESSION, tooltip="Start time for custom session in HHMM format (e.g., 0900 for 9:00 AM)")
+custom_session_end = input.string("1200", "Custom Session End (HHMM)", 
+     group=g_CUSTOM_SESSION, tooltip="End time for custom session in HHMM format (e.g., 1200 for 12:00 PM)")
+time_zone = input.string("America/New_York", "Timezone", 
+     group=g_CUSTOM_SESSION, tooltip="Timezone for the session")
+
+timeframe   = input.timeframe("5", "Timeframe", tooltip="Chart timeframe for first bar high/low calculation", group="Opening bar format")
+midLine     = input.bool(true, "Show Midline", group="Opening bar format")
+hist        = input.bool(true, "Show Historical Ranges", group="Opening bar format")
+max_history = input.int(20, "Maximum Historical Ranges", minval=1, maxval=500, group="Opening bar format")
+projection_offset = input.int(50, "Projection Offset (Bars)", minval=0, group="Opening bar format", tooltip="Number of bars to extend lines into the future")
+showL       = input.bool(true, "Show High/Low/Mid Labels", inline="Labels", group="Opening bar format")
+showP       = input.bool(false, "Show Prices", inline="Labels", group="Opening bar format")
+pos         = input.string("Left", "Position", options=["Left", "Right"], group="Opening bar format")
+boxStyle    = input.string("Solid", "Range Style", options=["Solid", "Dashed", "Dotted"], inline="Box", group="Opening bar format")
+borderWidth = input.int(1, ' / Width ', 1, 10, inline="Box", group="Opening bar format")
+lineStyle   = input.string("Dashed", "MidLine Style", options=["Solid", "Dashed", "Dotted"], inline="Line", group="Opening bar format")
+lineWidth   = input.int(1, ' / Width ', 1, 10, inline="Line", group="Opening bar format")
+
+// MODIFICATION 2: Bullish/Bearish Colors
+bullish_color = input.color(color.rgb(0, 255, 149), "Bullish Color : ", inline="Color", group="Opening bar format")
+bearish_color = input.color(color.rgb(195, 0, 255), "Bearish Color : ", inline="Color2", group="Opening bar format")
+bullish_fill = input.color(color.rgb(0, 255, 149, 85), "Bullish Fill : ", inline="Fill", group="Opening bar format")
+bearish_fill = input.color(color.rgb(195, 0, 255, 85), "Bearish Fill : ", inline="Fill2", group="Opening bar format")
+
+// Inputs for statistical levels
+lookback        = input.int(60, "Lookback Periods for Stats", minval=1, group="Statistical Levels")
+show_stats      = input.bool(false, "Show Statistical Levels", group="Statistical Levels")
+show_stats_labels = input.bool(false, "Show Statistical Labels", group="Statistical Levels")
+std_mult1       = input.float(1.0, "Std Dev Multiplier 1", minval=0, step=0.5, group="Statistical Levels")
+std_mult2       = input.float(2.0, "Std Dev Multiplier 2", minval=0, step=0.5, group="Statistical Levels")
+stats_line_color = input.color(color.purple, "Stats Line Color", group="Statistical Levels")
+stats_line_width = input.int(1, "Stats Line Width", minval=1, maxval=10, group="Statistical Levels")
+stats_label_color = input.color(color.purple, "Stats Label Color", group="Statistical Levels")
+stats_label_size = input.string("Normal", "Stats Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Statistical Levels")
+
+// MODIFICATION 3: Range Extensions (replacing Fibonacci)
+show_range_ext      = input.bool(false, title="Show Range Extensions", group="Range Extensions")
+range_multiplier    = input.float(1.0, title="Range Multiplier", minval=0.1, step=0.1, group="Range Extensions", tooltip="Multiplier for range extensions (e.g., 1.0 = full range, 0.5 = half range)")
+num_levels          = input.int(5, title="Number of Levels", minval=1, maxval=20, group="Range Extensions", tooltip="Number of extension levels above and below the range")
+show_range_labels   = input.bool(false, title="Show Range Extension Labels", group="Range Extensions")
+range_line_color    = input.color(color.teal, "Range Line Color", group="Range Extensions")
+range_line_width    = input.int(1, "Range Line Width", minval=1, maxval=10, group="Range Extensions")
+range_label_color   = input.color(color.teal, "Range Label Color", group="Range Extensions")
+range_label_size    = input.string("Normal", "Range Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Range Extensions")
+
+// Inputs for OR Rotations
+show_rotations      = input.bool(true, title="Show OR Rotations", group="OR Rotations")
+rotation_increment  = input.float(65.0, title="Rotation Increment (Points)", minval=0.01, step=0.25, group="OR Rotations", tooltip="Point increment for each rotation level (e.g., 65 for NQ, 15 for ES)")
+show_rotation_labels = input.bool(true, title="Show Rotation Labels", group="OR Rotations")
+rotation_line_color = input.color(color.gray, "Rotation Line Color", group="OR Rotations")
+rotation_line_style = input.string("Dotted", "Line Style", options=["Solid", "Dashed", "Dotted"], group="OR Rotations")
+rotation_line_width = input.int(1, "Rotation Line Width", minval=1, maxval=10, group="OR Rotations")
+rotation_label_color = input.color(color.gray, "Rotation Label Color", group="OR Rotations")
+rotation_label_size = input.string("Small", "Rotation Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="OR Rotations")
+
+//-------------------------------------------------------------------------------------------------
+// Functions / Calculations
+//-------------------------------------------------------------------------------------------------
+get_style(style) =>
+    switch style
+        "──────"        => line.style_solid
+        "─ ─ ─ ─"       => line.style_dashed
+        "· · · · · ·"   => line.style_dotted
+        "Solid"         => line.style_solid
+        "Dashed"        => line.style_dashed
+        "Dotted"        => line.style_dotted
+
+get_label_size(size) =>
+    switch size
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        "Huge"   => size.huge
+
+// Determine session time based on selection
+var string session_time = ""
+switch session_choice
+    "New York RTH (9.30am - 4pm)" =>
+        session_time := "0930-1600"
+    "New York Futures (8am - 5pm)" =>
+        session_time := "0800-1700"
+    "London (2am - 8am)" =>
+        session_time := "0200-0800"
+    "Asia (7pm - 2am)" =>
+        session_time := "1900-0200"
+    "Midnight to 5pm" =>
+        session_time := "0000-1700"
+    "ZB/Gold/Silver OR (8.20am - 4pm)" =>
+        session_time := "0820-1600"
+    "CL OR (9am - 4pm)" =>
+        session_time := "0900-1600"
+    "Custom" =>
+        session_time := custom_session_start + "-" + custom_session_end
+
+// Session Detection
+is_in_session = not na(time(timeframe.period, session_time, time_zone))
+is_session_start = is_in_session and not is_in_session[1]
+
+// Get high, low, mid from the selected timeframe  
+[H, L, M] = request.security(ticker.standard(syminfo.tickerid), timeframe, [high, low, hl2], lookahead=barmerge.lookahead_on)
+
+// MODIFICATION 2: Get open and close for bullish/bearish determination
+[O, C] = request.security(ticker.standard(syminfo.tickerid), timeframe, [open, close], lookahead=barmerge.lookahead_on)
+
+_style = pos == "Left" ? label.style_label_right : label.style_label_left
+
+// Arrays to store drawing objects for better management
+var line_array = array.new<line>()
+var label_array = array.new<label>()
+var linefill_array = array.new<linefill>()
+
+// Store current session's drawing objects
+var line current_top_line = na
+var line current_bot_line = na
+var line current_mid_line = na
+var linefill current_fill = na
+var label current_high_label = na
+var label current_low_label = na
+var label current_mid_label = na
+
+// Store opening range values for current session
+var float session_or_high = na
+var float session_or_low = na
+var float session_or_mid = na
+var float session_or_open = na
+var float session_or_close = na
+var int session_start_bar = na
+var bool or_captured = false
+
+// Store current session's stat lines
+var line current_stat1_up = na
+var line current_stat1_dn = na
+var line current_stat2_up = na
+var line current_stat2_dn = na
+var label current_stat1_up_label = na
+var label current_stat1_dn_label = na
+var label current_stat2_up_label = na
+var label current_stat2_dn_label = na
+
+// MODIFICATION 3: Store range extension lines dynamically
+var array<line> current_range_lines_up = array.new<line>()
+var array<line> current_range_lines_dn = array.new<line>()
+var array<label> current_range_labels_up = array.new<label>()
+var array<label> current_range_labels_dn = array.new<label>()
+
+// Store current session's rotation lines
+var line current_rot1_up = na
+var line current_rot2_up = na
+var line current_rot3_up = na
+var line current_rot4_up = na
+var line current_rot5_up = na
+var line current_rot1_dn = na
+var line current_rot2_dn = na
+var line current_rot3_dn = na
+var line current_rot4_dn = na
+var line current_rot5_dn = na
+var label current_rot1_up_label = na
+var label current_rot2_up_label = na
+var label current_rot3_up_label = na
+var label current_rot4_up_label = na
+var label current_rot5_up_label = na
+var label current_rot1_dn_label = na
+var label current_rot2_dn_label = na
+var label current_rot3_dn_label = na
+var label current_rot4_dn_label = na
+var label current_rot5_dn_label = na
+
+// Calculate statistical levels based on past ranges
+var float[] range_array = array.new_float(0)
+
+// Function to manage array size
+manage_array_size(arr, max_size) =>
+    while array.size(arr) > max_size
+        old_element = array.shift(arr)
+        line.delete(old_element)
+
+manage_label_array_size(arr, max_size) =>
+    while array.size(arr) > max_size
+        old_element = array.shift(arr)
+        label.delete(old_element)
+
+manage_linefill_array_size(arr, max_size) =>
+    while array.size(arr) > max_size
+        old_element = array.shift(arr)
+        linefill.delete(old_element)
+
+//-------------------------------------------------------------------------------------------------
+// Outputs
+//-------------------------------------------------------------------------------------------------
+// Mark session start and capture OR values immediately
+if is_session_start and not na(H) and not na(L)
+    session_start_bar := bar_index
+    or_captured := false
+    session_or_high := H
+    session_or_low := L
+    session_or_mid := M
+    session_or_open := O
+    session_or_close := C
+    or_captured := true
+    // Reset drawing objects for new session
+    current_top_line := na
+    current_bot_line := na
+    current_mid_line := na
+    current_fill := na
+    current_high_label := na
+    current_low_label := na
+    current_mid_label := na
+
+// Draw elements once opening range is captured
+if or_captured and not na(session_or_high) and not na(session_or_low) and na(current_top_line)
+    // MODIFICATION 2: Determine if bullish or bearish
+    is_bullish = session_or_close >= session_or_open
+    _color = is_bullish ? bullish_color : bearish_color
+    _fillcolor = is_bullish ? bullish_fill : bearish_fill
+    
+    // Store the range from first bar for statistics
+    array.push(range_array, session_or_high - session_or_low)
+    if array.size(range_array) > lookback
+        array.shift(range_array)
+    
+    // Calculate statistical levels
+    avg_range = array.avg(range_array)
+    std_dev = array.stdev(range_array)
+    stat_level1_up = session_or_high + avg_range + std_dev * std_mult1
+    stat_level1_dn = session_or_low - (avg_range + std_dev * std_mult1)
+    stat_level2_up = session_or_high + avg_range + std_dev * std_mult2
+    stat_level2_dn = session_or_low - (avg_range + std_dev * std_mult2)
+    
+    // MODIFICATION 3: Calculate Range Extension levels
+    _range = session_or_high - session_or_low
+    range_increment = _range * range_multiplier
+    
+    // Calculate rotation levels (fixed point increments)
+    rot1_up = session_or_high + rotation_increment
+    rot2_up = session_or_high + (rotation_increment * 2)
+    rot3_up = session_or_high + (rotation_increment * 3)
+    rot4_up = session_or_high + (rotation_increment * 4)
+    rot5_up = session_or_high + (rotation_increment * 5)
+    rot1_dn = session_or_low - rotation_increment
+    rot2_dn = session_or_low - (rotation_increment * 2)
+    rot3_dn = session_or_low - (rotation_increment * 3)
+    rot4_dn = session_or_low - (rotation_increment * 4)
+    rot5_dn = session_or_low - (rotation_increment * 5)
+    
+    // Calculate how many objects we'll create per session
+    rotation_count = show_rotations ? 10 : 0
+    rotation_label_count = (show_rotations and show_rotation_labels) ? 10 : 0
+    range_ext_count = show_range_ext ? (num_levels * 2) : 0
+    range_ext_label_count = (show_range_ext and show_range_labels) ? (num_levels * 2) : 0
+    
+    objects_per_session = 2 + (midLine ? 1 : 0) + (show_stats ? 4 : 0) + range_ext_count + rotation_count
+    labels_per_session = (showL ? (2 + (midLine ? 1 : 0)) : 0) + (show_stats_labels ? 4 : 0) + range_ext_label_count + rotation_label_count
+    
+    // Adjust max_history based on object count to stay within limits
+    adjusted_max_history = math.max(1, math.min(max_history, math.floor(450 / math.max(objects_per_session, 1))))
+    adjusted_max_labels = math.max(1, math.min(max_history, math.floor(450 / math.max(labels_per_session, 1))))
+    
+    // Draw high, low, and midline - start at session start
+    current_top_line := line.new(session_start_bar, session_or_high, session_start_bar + projection_offset, session_or_high, color=_color, style=get_style(boxStyle), width=borderWidth)
+    current_bot_line := line.new(session_start_bar, session_or_low, session_start_bar + projection_offset, session_or_low, color=_color, style=get_style(boxStyle), width=borderWidth)
+    current_fill := linefill.new(current_top_line, current_bot_line, _fillcolor)
+    
+    array.push(line_array, current_top_line)
+    array.push(line_array, current_bot_line)
+    array.push(linefill_array, current_fill)
+    
+    if midLine
+        current_mid_line := line.new(session_start_bar, session_or_mid, session_start_bar + projection_offset, session_or_mid, color=_color, style=get_style(lineStyle), width=lineWidth)
+        array.push(line_array, current_mid_line)
+    
+    x = pos == "Left" ? session_start_bar : session_start_bar + projection_offset
+    
+    if showL
+        current_high_label := label.new(x, session_or_high, "High" + (showP ? " (" + str.tostring(session_or_high, format.mintick) + ")" : ""), style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+        current_low_label := label.new(x, session_or_low, "Low" + (showP ? " (" + str.tostring(session_or_low, format.mintick) + ")" : ""), style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+        array.push(label_array, current_high_label)
+        array.push(label_array, current_low_label)
+        if midLine
+            current_mid_label := label.new(x, session_or_mid, "Mid" + (showP ? " (" + str.tostring(session_or_mid, format.mintick) + ")" : ""), style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+            array.push(label_array, current_mid_label)
+    
+    // MODIFICATION 3: Draw Range Extensions dynamically
+    if show_range_ext and range_increment > 0
+        // Clear previous session's range extension arrays
+        array.clear(current_range_lines_up)
+        array.clear(current_range_lines_dn)
+        array.clear(current_range_labels_up)
+        array.clear(current_range_labels_dn)
+        
+        // Create range extension lines above
+        for i = 1 to num_levels
+            level_price = session_or_high + (range_increment * i)
+            new_line = line.new(session_start_bar, level_price, session_start_bar + projection_offset, level_price, color=range_line_color, width=range_line_width)
+            array.push(current_range_lines_up, new_line)
+            array.push(line_array, new_line)
+            
+            if show_range_labels
+                label_text = "R+" + str.tostring(i) + " (" + str.tostring(range_increment * i, format.mintick) + ")"
+                new_label = label.new(x, level_price, label_text, style=_style, color=color.new(range_label_color, 100), textcolor=range_label_color, size=get_label_size(range_label_size))
+                array.push(current_range_labels_up, new_label)
+                array.push(label_array, new_label)
+        
+        // Create range extension lines below
+        for i = 1 to num_levels
+            level_price = session_or_low - (range_increment * i)
+            new_line = line.new(session_start_bar, level_price, session_start_bar + projection_offset, level_price, color=range_line_color, width=range_line_width)
+            array.push(current_range_lines_dn, new_line)
+            array.push(line_array, new_line)
+            
+            if show_range_labels
+                label_text = "R-" + str.tostring(i) + " (" + str.tostring(range_increment * i, format.mintick) + ")"
+                new_label = label.new(x, level_price, label_text, style=_style, color=color.new(range_label_color, 100), textcolor=range_label_color, size=get_label_size(range_label_size))
+                array.push(current_range_labels_dn, new_label)
+                array.push(label_array, new_label)
+    
+    // Draw statistical levels
+    if show_stats and not na(avg_range) and not na(std_dev)
+        current_stat1_up := line.new(session_start_bar, stat_level1_up, session_start_bar + projection_offset, stat_level1_up, color=stats_line_color, style=line.style_dashed, width=stats_line_width)
+        current_stat1_dn := line.new(session_start_bar, stat_level1_dn, session_start_bar + projection_offset, stat_level1_dn, color=stats_line_color, style=line.style_dashed, width=stats_line_width)
+        current_stat2_up := line.new(session_start_bar, stat_level2_up, session_start_bar + projection_offset, stat_level2_up, color=stats_line_color, style=line.style_dotted, width=stats_line_width)
+        current_stat2_dn := line.new(session_start_bar, stat_level2_dn, session_start_bar + projection_offset, stat_level2_dn, color=stats_line_color, style=line.style_dotted, width=stats_line_width)
+        
+        array.push(line_array, current_stat1_up)
+        array.push(line_array, current_stat1_dn)
+        array.push(line_array, current_stat2_up)
+        array.push(line_array, current_stat2_dn)
+        
+        if show_stats_labels
+            current_stat1_up_label := label.new(x, stat_level1_up, "+" + str.tostring(std_mult1) + "σ", style=_style, color=color.new(stats_label_color, 100), textcolor=stats_label_color, size=get_label_size(stats_label_size))
+            current_stat1_dn_label := label.new(x, stat_level1_dn, "-" + str.tostring(std_mult1) + "σ", style=_style, color=color.new(stats_label_color, 100), textcolor=stats_label_color, size=get_label_size(stats_label_size))
+            current_stat2_up_label := label.new(x, stat_level2_up, "+" + str.tostring(std_mult2) + "σ", style=_style, color=color.new(stats_label_color, 100), textcolor=stats_label_color, size=get_label_size(stats_label_size))
+            current_stat2_dn_label := label.new(x, stat_level2_dn, "-" + str.tostring(std_mult2) + "σ", style=_style, color=color.new(stats_label_color, 100), textcolor=stats_label_color, size=get_label_size(stats_label_size))
+            
+            array.push(label_array, current_stat1_up_label)
+            array.push(label_array, current_stat1_dn_label)
+            array.push(label_array, current_stat2_up_label)
+            array.push(label_array, current_stat2_dn_label)
+    
+    // Draw OR Rotation levels
+    if show_rotations and rotation_increment > 0
+        current_rot1_up := line.new(session_start_bar, rot1_up, session_start_bar + projection_offset, rot1_up, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot2_up := line.new(session_start_bar, rot2_up, session_start_bar + projection_offset, rot2_up, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot3_up := line.new(session_start_bar, rot3_up, session_start_bar + projection_offset, rot3_up, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot4_up := line.new(session_start_bar, rot4_up, session_start_bar + projection_offset, rot4_up, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot5_up := line.new(session_start_bar, rot5_up, session_start_bar + projection_offset, rot5_up, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot1_dn := line.new(session_start_bar, rot1_dn, session_start_bar + projection_offset, rot1_dn, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot2_dn := line.new(session_start_bar, rot2_dn, session_start_bar + projection_offset, rot2_dn, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot3_dn := line.new(session_start_bar, rot3_dn, session_start_bar + projection_offset, rot3_dn, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot4_dn := line.new(session_start_bar, rot4_dn, session_start_bar + projection_offset, rot4_dn, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        current_rot5_dn := line.new(session_start_bar, rot5_dn, session_start_bar + projection_offset, rot5_dn, color=rotation_line_color, style=get_style(rotation_line_style), width=rotation_line_width)
+        
+        array.push(line_array, current_rot1_up)
+        array.push(line_array, current_rot2_up)
+        array.push(line_array, current_rot3_up)
+        array.push(line_array, current_rot4_up)
+        array.push(line_array, current_rot5_up)
+        array.push(line_array, current_rot1_dn)
+        array.push(line_array, current_rot2_dn)
+        array.push(line_array, current_rot3_dn)
+        array.push(line_array, current_rot4_dn)
+        array.push(line_array, current_rot5_dn)
+        
+        if show_rotation_labels
+            current_rot1_up_label := label.new(x, rot1_up, "R+1 (" + str.tostring(rotation_increment, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot2_up_label := label.new(x, rot2_up, "R+2 (" + str.tostring(rotation_increment * 2, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot3_up_label := label.new(x, rot3_up, "R+3 (" + str.tostring(rotation_increment * 3, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot4_up_label := label.new(x, rot4_up, "R+4 (" + str.tostring(rotation_increment * 4, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot5_up_label := label.new(x, rot5_up, "R+5 (" + str.tostring(rotation_increment * 5, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot1_dn_label := label.new(x, rot1_dn, "R-1 (" + str.tostring(rotation_increment, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot2_dn_label := label.new(x, rot2_dn, "R-2 (" + str.tostring(rotation_increment * 2, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot3_dn_label := label.new(x, rot3_dn, "R-3 (" + str.tostring(rotation_increment * 3, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot4_dn_label := label.new(x, rot4_dn, "R-4 (" + str.tostring(rotation_increment * 4, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            current_rot5_dn_label := label.new(x, rot5_dn, "R-5 (" + str.tostring(rotation_increment * 5, "#.##") + ")", style=_style, color=color.new(rotation_label_color, 100), textcolor=rotation_label_color, size=get_label_size(rotation_label_size))
+            
+            array.push(label_array, current_rot1_up_label)
+            array.push(label_array, current_rot2_up_label)
+            array.push(label_array, current_rot3_up_label)
+            array.push(label_array, current_rot4_up_label)
+            array.push(label_array, current_rot5_up_label)
+            array.push(label_array, current_rot1_dn_label)
+            array.push(label_array, current_rot2_dn_label)
+            array.push(label_array, current_rot3_dn_label)
+            array.push(label_array, current_rot4_dn_label)
+            array.push(label_array, current_rot5_dn_label)
+    
+    // Manage array sizes to prevent hitting limits
+    if not hist or array.size(line_array) > adjusted_max_history * objects_per_session
+        manage_array_size(line_array, adjusted_max_history * objects_per_session)
+    
+    if not hist or array.size(label_array) > adjusted_max_labels * labels_per_session
+        manage_label_array_size(label_array, adjusted_max_labels * labels_per_session)
+    
+    if not hist or array.size(linefill_array) > adjusted_max_history
+        manage_linefill_array_size(linefill_array, adjusted_max_history)
+
+// Extend lines as new bars form (only after OR is captured)
+if is_in_session and or_captured and not na(current_top_line)
+    if not na(current_top_line)
+        line.set_x2(current_top_line, bar_index + projection_offset)
+    if not na(current_bot_line)
+        line.set_x2(current_bot_line, bar_index + projection_offset)
+    if not na(current_mid_line) and midLine
+        line.set_x2(current_mid_line, bar_index + projection_offset)
+    
+    // Update label position if set to "Right"
+    if showL and pos == "Right"
+        if not na(current_high_label)
+            label.set_x(current_high_label, bar_index + projection_offset)
+        if not na(current_low_label)
+            label.set_x(current_low_label, bar_index + projection_offset)
+        if not na(current_mid_label) and midLine
+            label.set_x(current_mid_label, bar_index + projection_offset)
+    
+    // Extend Range extension lines
+    if show_range_ext
+        for i = 0 to array.size(current_range_lines_up) - 1
+            line.set_x2(array.get(current_range_lines_up, i), bar_index + projection_offset)
+        for i = 0 to array.size(current_range_lines_dn) - 1
+            line.set_x2(array.get(current_range_lines_dn, i), bar_index + projection_offset)
+        
+        if show_range_labels and pos == "Right"
+            for i = 0 to array.size(current_range_labels_up) - 1
+                label.set_x(array.get(current_range_labels_up, i), bar_index + projection_offset)
+            for i = 0 to array.size(current_range_labels_dn) - 1
+                label.set_x(array.get(current_range_labels_dn, i), bar_index + projection_offset)
+    
+    // Extend statistical lines
+    if show_stats
+        if not na(current_stat1_up)
+            line.set_x2(current_stat1_up, bar_index + projection_offset)
+        if not na(current_stat1_dn)
+            line.set_x2(current_stat1_dn, bar_index + projection_offset)
+        if not na(current_stat2_up)
+            line.set_x2(current_stat2_up, bar_index + projection_offset)
+        if not na(current_stat2_dn)
+            line.set_x2(current_stat2_dn, bar_index + projection_offset)
+        
+        if show_stats_labels and pos == "Right"
+            if not na(current_stat1_up_label)
+                label.set_x(current_stat1_up_label, bar_index + projection_offset)
+            if not na(current_stat1_dn_label)
+                label.set_x(current_stat1_dn_label, bar_index + projection_offset)
+            if not na(current_stat2_up_label)
+                label.set_x(current_stat2_up_label, bar_index + projection_offset)
+            if not na(current_stat2_dn_label)
+                label.set_x(current_stat2_dn_label, bar_index + projection_offset)
+    
+    // Extend rotation lines
+    if show_rotations and rotation_increment > 0
+        if not na(current_rot1_up)
+            line.set_x2(current_rot1_up, bar_index + projection_offset)
+        if not na(current_rot2_up)
+            line.set_x2(current_rot2_up, bar_index + projection_offset)
+        if not na(current_rot3_up)
+            line.set_x2(current_rot3_up, bar_index + projection_offset)
+        if not na(current_rot4_up)
+            line.set_x2(current_rot4_up, bar_index + projection_offset)
+        if not na(current_rot5_up)
+            line.set_x2(current_rot5_up, bar_index + projection_offset)
+        if not na(current_rot1_dn)
+            line.set_x2(current_rot1_dn, bar_index + projection_offset)
+        if not na(current_rot2_dn)
+            line.set_x2(current_rot2_dn, bar_index + projection_offset)
+        if not na(current_rot3_dn)
+            line.set_x2(current_rot3_dn, bar_index + projection_offset)
+        if not na(current_rot4_dn)
+            line.set_x2(current_rot4_dn, bar_index + projection_offset)
+        if not na(current_rot5_dn)
+            line.set_x2(current_rot5_dn, bar_index + projection_offset)
+        
+        if show_rotation_labels and pos == "Right"
+            if not na(current_rot1_up_label)
+                label.set_x(current_rot1_up_label, bar_index + projection_offset)
+            if not na(current_rot2_up_label)
+                label.set_x(current_rot2_up_label, bar_index + projection_offset)
+            if not na(current_rot3_up_label)
+                label.set_x(current_rot3_up_label, bar_index + projection_offset)
+            if not na(current_rot4_up_label)
+                label.set_x(current_rot4_up_label, bar_index + projection_offset)
+            if not na(current_rot5_up_label)
+                label.set_x(current_rot5_up_label, bar_index + projection_offset)
+            if not na(current_rot1_dn_label)
+                label.set_x(current_rot1_dn_label, bar_index + projection_offset)
+            if not na(current_rot2_dn_label)
+                label.set_x(current_rot2_dn_label, bar_index + projection_offset)
+            if not na(current_rot3_dn_label)
+                label.set_x(current_rot3_dn_label, bar_index + projection_offset)
+            if not na(current_rot4_dn_label)
+                label.set_x(current_rot4_dn_label, bar_index + projection_offset)
+            if not na(current_rot5_dn_label)
+                label.set_x(current_rot5_dn_label, bar_index + projection_offset)

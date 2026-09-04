@@ -1,0 +1,409 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=6
+indicator("IB/ORB Statistical Mapper (hardcoded)", "IB/ORB", overlay=true,
+     max_boxes_count=20, max_lines_count=50, max_labels_count=20, max_bars_back=5000)
+
+// ============================================================
+// HARDCODED STATISTICS  ── single source of truth, edit here ──
+// Each entry: [predicted direction, probability %, sample size]
+// All calibrated to 09:30 NY open, IB 09:30-10:30, ORB 5/15 min.
+// If you change the session windows below, these no longer apply.
+// ============================================================
+
+// ── ORB-5 close-half  →  which IB extreme forms FIRST (known 09:35)
+//    Upper close → Low forms first ;  Lower close → High forms first
+ORB5_U_DIR = "Low",  ORB5_U_PCT = 58.5, ORB5_U_N = 1294
+ORB5_L_DIR = "High", ORB5_L_PCT = 61.2, ORB5_L_N = 1185
+
+// ── ORB-15 close-half  →  which IB extreme forms FIRST (known 09:45)
+ORB15_U_DIR = "Low",  ORB15_U_PCT = 65.8, ORB15_U_N = 1306
+ORB15_L_DIR = "High", ORB15_L_PCT = 69.5, ORB15_L_N = 1173
+
+// ── Both ORBs combined  →  which IB extreme forms FIRST (known 09:45)
+BOTH_UU_DIR = "Low",  BOTH_UU_PCT = 69.7, BOTH_UU_N = 857   // 5↑ 15↑
+BOTH_LL_DIR = "High", BOTH_LL_PCT = 73.1, BOTH_LL_N = 736   // 5↓ 15↓
+BOTH_UL_DIR = "High", BOTH_UL_PCT = 63.4, BOTH_UL_N = 437   // 5↑ 15↓
+BOTH_LU_DIR = "Low",  BOTH_LU_PCT = 58.4, BOTH_LU_N = 449   // 5↓ 15↑
+
+// ── Trade type  →  which IB level BREAKS first after 10:30 (known 10:30)
+EXTL_DIR = "High", EXTL_PCT = 81.8, EXTL_N = 1293   // Extension Long
+EXTS_DIR = "Low",  EXTS_PCT = 79.1, EXTS_N = 1094   // Extension Short
+FADL_DIR = "High", FADL_PCT = 69.0, FADL_N = 365    // Fade Long
+FADS_DIR = "Low",  FADS_PCT = 65.8, FADS_N = 234    // Fade Short
+
+// ============================================================
+// INPUTS
+// ============================================================
+
+var g_S = "═══ Sessions ═══"
+orb5_session  = input.session("0930-0935", "ORB-5 (ET)",  group=g_S)
+orb15_session = input.session("0930-0945", "ORB-15 (ET)", group=g_S)
+ib_session    = input.session("0930-1030", "IB (ET)",     group=g_S)
+ny_session    = input.session("0930-1600", "NY / RTH (ET)", group=g_S,
+     tooltip="Hardcoded probabilities are calibrated to the default windows. Changing these invalidates them.")
+ltf_res = input.timeframe("1", "Intrabar resolution", group=g_S,
+     tooltip="For first-touch detection. Must be <= chart TF. Run on a 1-min (best) or 5-min chart.")
+string tz = "America/New_York"
+
+var g_V = "═══ Display ═══"
+show_ib    = input.bool(true,  "Show IB box",     group=g_V)
+show_orb5  = input.bool(true,  "Show ORB-5 box",  group=g_V)
+show_orb15 = input.bool(true,  "Show ORB-15 box", group=g_V)
+show_mids  = input.bool(true,  "Show midpoints",  group=g_V)
+show_ny    = input.bool(true,  "Show NY Open line", group=g_V)
+box_transp = input.int(85, "Box Transparency", minval=50, maxval=95, group=g_V)
+col_ib    = input.color(color.rgb( 33,150,243), "IB",      group=g_V)
+col_orb5  = input.color(color.rgb(  0,200,100), "ORB-5",   group=g_V)
+col_orb15 = input.color(color.rgb(195,  0,255), "ORB-15",  group=g_V)
+col_ny    = input.color(color.rgb(255,255,255), "NY Line", group=g_V)
+
+var g_T = "═══ Table ═══"
+show_table = input.bool(true, "Show Prediction Table", group=g_T)
+show_valid = input.bool(true, "Show ✓/✗ Validation",   group=g_T)
+tbl_pos    = input.string("Top Right", "Position",
+     options=["Bottom Center","Bottom Left","Bottom Right","Middle Center","Middle Left",
+              "Middle Right","Top Center","Top Left","Top Right"], group=g_T)
+tbl_size   = input.string("Small", "Text Size",
+     options=["Tiny","Small","Normal","Large"], group=g_T)
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+f_tbl_pos(p) =>
+    switch p
+        "Bottom Center" => position.bottom_center
+        "Bottom Left"   => position.bottom_left
+        "Bottom Right"  => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left"   => position.middle_left
+        "Middle Right"  => position.middle_right
+        "Top Center"    => position.top_center
+        "Top Left"      => position.top_left
+        => position.top_right
+
+f_tbl_sz(s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Normal" => size.normal
+        "Large"  => size.large
+        => size.small
+
+f_session_box(is_sess, css, show_box) =>
+    var float s_high  = na
+    var float s_low   = na
+    var float s_open  = na
+    var box   s_box   = na
+    var int   s_start = na
+    if is_sess and not is_sess[1]
+        s_high  := high
+        s_low   := low
+        s_open  := open
+        s_start := bar_index
+        box.delete(s_box)
+        s_box := show_box ? box.new(bar_index, high, bar_index + 1, low,
+             bgcolor=color.new(css, box_transp), border_color=css, border_width=1) : na
+    if is_sess and is_sess[1]
+        s_high := math.max(high, s_high)
+        s_low  := math.min(low,  s_low)
+        if show_box and not na(s_box)
+            box.set_top(s_box, s_high)
+            box.set_rightbottom(s_box, bar_index, s_low)
+    ch = not is_sess and is_sess[1] ? s_high : float(na)
+    cl = not is_sess and is_sess[1] ? s_low  : float(na)
+    co = not is_sess and is_sess[1] ? s_open : float(na)
+    [ch, cl, co, s_start]
+
+// ============================================================
+// SESSION DETECTION + BOXES
+// ============================================================
+
+is_orb5  = not na(time(timeframe.period, orb5_session,  tz))
+is_orb15 = not na(time(timeframe.period, orb15_session, tz))
+is_ib    = not na(time(timeframe.period, ib_session,    tz))
+is_ny    = not na(time(timeframe.period, ny_session,    tz))
+
+// intrabar (lower-timeframe) high/low for first-touch detection
+[h1m, l1m] = request.security_lower_tf(ticker.standard(syminfo.tickerid), ltf_res, [high, low])
+
+[orb5_h,  orb5_l,  orb5_o,  orb5_start]  = f_session_box(is_orb5,  col_orb5,  show_orb5)
+[orb15_h, orb15_l, orb15_o, orb15_start] = f_session_box(is_orb15, col_orb15, show_orb15)
+[ib_h,    ib_l,    ib_o,    ib_start]    = f_session_box(is_ib,    col_ib,    show_ib)
+
+// midpoints (frozen at session close, like the live indicator)
+var line ib_mid    = na
+var line orb5_mid  = na
+var line orb15_mid = na
+if show_mids and not na(ib_h)
+    line.delete(ib_mid)
+    ib_mid := line.new(ib_start, (ib_h+ib_l)/2, bar_index, (ib_h+ib_l)/2, color=color.new(col_ib,40), style=line.style_dashed)
+if show_mids and not na(orb5_h)
+    line.delete(orb5_mid)
+    orb5_mid := line.new(orb5_start, (orb5_h+orb5_l)/2, bar_index, (orb5_h+orb5_l)/2, color=color.new(col_orb5,40), style=line.style_dashed)
+if show_mids and not na(orb15_h)
+    line.delete(orb15_mid)
+    orb15_mid := line.new(orb15_start, (orb15_h+orb15_l)/2, bar_index, (orb15_h+orb15_l)/2, color=color.new(col_orb15,40), style=line.style_dashed)
+
+var line ny_line = na
+if show_ny and is_ny and not is_ny[1]
+    line.delete(ny_line)
+    ny_line := line.new(bar_index, low, bar_index, high, color=color.new(col_ny,40), style=line.style_solid, extend=extend.both)
+
+// ============================================================
+// LATCHED DAILY STATE
+// ============================================================
+
+var float f_orb5_h=na, var float f_orb5_l=na, var float f_orb5_close=na
+var float f_orb15_h=na, var float f_orb15_l=na, var float f_orb15_close=na
+var float f_ib_h=na, var float f_ib_l=na, var float f_ib_open=na, var float f_ib_close=na
+
+if is_ny and not is_ny[1]
+    f_orb5_h := na, f_orb5_l := na, f_orb5_close := na
+    f_orb15_h := na, f_orb15_l := na, f_orb15_close := na
+    f_ib_h := na, f_ib_l := na, f_ib_open := na, f_ib_close := na
+
+if not na(orb5_h)
+    f_orb5_h := orb5_h, f_orb5_l := orb5_l, f_orb5_close := close
+if not na(orb15_h)
+    f_orb15_h := orb15_h, f_orb15_l := orb15_l, f_orb15_close := close
+if not na(ib_h)
+    f_ib_h := ib_h, f_ib_l := ib_l, f_ib_open := ib_o, f_ib_close := close
+
+// ── IB extreme-first  (intrabar first-touch; matches the IB/ORB Live indicator)
+//    Collect LTF (1-min) highs/lows through the IB window, then at the IB close
+//    decide which *final* IB extreme was reached first chronologically. The old
+//    bar-by-bar version seeded the running extreme with the opening bar and could
+//    report the wrong side when an extreme printed inside the first chart bar.
+var array<float> ib_ltfH = array.new<float>()
+var array<float> ib_ltfL = array.new<float>()
+var string ib_extreme = "–"
+
+if is_ib and not is_ib[1]
+    array.clear(ib_ltfH)
+    array.clear(ib_ltfL)
+    ib_extreme := "–"
+
+if is_ib and not na(h1m) and array.size(h1m) > 0
+    for i = 0 to array.size(h1m) - 1
+        array.push(ib_ltfH, array.get(h1m, i))
+        array.push(ib_ltfL, array.get(l1m, i))
+
+// seal on the first bar after IB ends (ib_h is non-na only on that bar)
+if not na(ib_h)
+    int hi_idx = -1
+    int lo_idx = -1
+    int n_ib = array.size(ib_ltfH)
+    if n_ib > 0
+        for i = 0 to n_ib - 1
+            if hi_idx == -1 and array.get(ib_ltfH, i) >= ib_h
+                hi_idx := i
+            if lo_idx == -1 and array.get(ib_ltfL, i) <= ib_l
+                lo_idx := i
+            if hi_idx != -1 and lo_idx != -1
+                break
+    // fallback for charts with no intrabar data: undecidable -> "–"
+    ib_extreme := hi_idx == -1 and lo_idx == -1 ? "–" :
+                  hi_idx == -1 ? "Low" : lo_idx == -1 ? "High" :
+                  (hi_idx <= lo_idx ? "High" : "Low")
+
+// ── first IB break after 10:30  (intrabar first-touch; matches Live indicator)
+var string first_break = "–"
+if is_ib and not is_ib[1]
+    first_break := "–"
+if not is_ib and is_ny and not na(f_ib_h) and first_break == "–"
+    string fnd = "–"
+    if not na(h1m) and array.size(h1m) > 0
+        for i = 0 to array.size(h1m) - 1
+            bool hb = array.get(h1m, i) >= f_ib_h
+            bool lb = array.get(l1m, i) <= f_ib_l
+            if hb or lb
+                fnd := hb ? "High" : "Low"   // same sub-bar tie -> high
+                break
+    else
+        if high >= f_ib_h
+            fnd := "High"
+        else if low <= f_ib_l
+            fnd := "Low"
+    if fnd != "–"
+        first_break := fnd
+
+// ============================================================
+// DERIVED CONDITIONS
+// ============================================================
+
+orb5_half  = na(f_orb5_h)  ? "–" : f_orb5_close  >= (f_orb5_h +f_orb5_l )/2 ? "Upper" : "Lower"
+orb15_half = na(f_orb15_h) ? "–" : f_orb15_close >= (f_orb15_h+f_orb15_l)/2 ? "Upper" : "Lower"
+ib_half    = na(f_ib_h)    ? "–" : f_ib_close    >= (f_ib_h   +f_ib_l   )/2 ? "Upper" : "Lower"
+
+trade_type = ib_extreme == "–" or ib_half == "–" ? "–" :
+     ib_extreme == "Low"  and ib_half == "Upper" ? "Extension Long"  :
+     ib_extreme == "High" and ib_half == "Lower" ? "Extension Short" :
+     ib_extreme == "High" and ib_half == "Upper" ? "Fade Long" : "Fade Short"
+
+// ============================================================
+// MAP CONDITIONS → HARDCODED PREDICTIONS  → [dir, pct, n]
+// ============================================================
+
+f_orb5_pred() =>
+    if orb5_half == "Upper"
+        [ORB5_U_DIR, ORB5_U_PCT, ORB5_U_N]
+    else if orb5_half == "Lower"
+        [ORB5_L_DIR, ORB5_L_PCT, ORB5_L_N]
+    else
+        ["–", float(na), 0]
+
+f_orb15_pred() =>
+    if orb15_half == "Upper"
+        [ORB15_U_DIR, ORB15_U_PCT, ORB15_U_N]
+    else if orb15_half == "Lower"
+        [ORB15_L_DIR, ORB15_L_PCT, ORB15_L_N]
+    else
+        ["–", float(na), 0]
+
+f_both_pred() =>
+    if na(f_orb5_h) or na(f_orb15_h)
+        ["–", float(na), 0]
+    else if orb5_half == "Upper" and orb15_half == "Upper"
+        [BOTH_UU_DIR, BOTH_UU_PCT, BOTH_UU_N]
+    else if orb5_half == "Lower" and orb15_half == "Lower"
+        [BOTH_LL_DIR, BOTH_LL_PCT, BOTH_LL_N]
+    else if orb5_half == "Upper" and orb15_half == "Lower"
+        [BOTH_UL_DIR, BOTH_UL_PCT, BOTH_UL_N]
+    else if orb5_half == "Lower" and orb15_half == "Upper"
+        [BOTH_LU_DIR, BOTH_LU_PCT, BOTH_LU_N]
+    else
+        ["–", float(na), 0]
+
+f_break_pred() =>
+    if trade_type == "Extension Long"
+        [EXTL_DIR, EXTL_PCT, EXTL_N]
+    else if trade_type == "Extension Short"
+        [EXTS_DIR, EXTS_PCT, EXTS_N]
+    else if trade_type == "Fade Long"
+        [FADL_DIR, FADL_PCT, FADL_N]
+    else if trade_type == "Fade Short"
+        [FADS_DIR, FADS_PCT, FADS_N]
+    else
+        ["–", float(na), 0]
+
+[o5p_dir,  o5p_pct,  o5p_n ] = f_orb5_pred()
+[o15p_dir, o15p_pct, o15p_n] = f_orb15_pred()
+[btp_dir,  btp_pct,  btp_n ] = f_both_pred()
+[fbp_dir,  fbp_pct,  fbp_n ] = f_break_pred()
+
+// ============================================================
+// TABLE PALETTE + VALIDATION HELPERS  (global scope)
+// ============================================================
+
+c_hdr  = color.rgb(40,40,40)
+c_htx  = color.white
+c_sub  = color.rgb(110,110,110)
+c_cell = color.white
+c_dim  = color.rgb(60,60,60)
+c_bull = color.rgb(0,150,60)
+c_bear = color.rgb(200,30,30)
+c_neut = color.rgb(130,130,130)
+c_ok   = color.rgb(0,150,60)
+c_no   = color.rgb(200,30,30)
+mono   = font.family_monospace
+
+f_valext(pred) =>
+    not show_valid or ib_extreme=="–" or pred=="–" ? "" : pred==ib_extreme ? "  ✓" : "  ✗"
+f_valext_col(pred, base) =>
+    not show_valid or ib_extreme=="–" or pred=="–" ? base : pred==ib_extreme ? c_ok : c_no
+f_valbrk(pred) =>
+    not show_valid or first_break=="–" or pred=="–" ? "" : pred==first_break ? "  ✓" : "  ✗"
+f_valbrk_col(pred, base) =>
+    not show_valid or first_break=="–" or pred=="–" ? base : pred==first_break ? c_ok : c_no
+f_predstr(dir, pct, n) =>
+    na(pct) ? "–" : dir + " " + str.tostring(pct, "#.1") + "%  (n=" + str.tostring(n) + ")"
+f_dircol(dir) =>
+    dir=="Low" ? c_bull : dir=="High" ? c_bear : c_neut
+
+// ============================================================
+// TABLE
+// ============================================================
+
+if show_table and is_ny
+    var table t = na
+    table.delete(t)
+    ts  = f_tbl_sz(tbl_size)
+    pos = f_tbl_pos(tbl_pos)
+
+    orb5_ready  = not na(f_orb5_h)
+    orb15_ready = not na(f_orb15_h)
+    ib_ready    = not na(f_ib_h)
+
+    nrows = 1
+    nrows += orb5_ready  ? 3 : 1
+    nrows += orb15_ready ? 5 : 0
+    nrows += ib_ready    ? 7 : 0
+
+    t := table.new(pos, 2, nrows, border_width=1, border_color=color.rgb(180,180,180), bgcolor=c_cell)
+    r = 0
+    table.cell(t,0,r,"IB/ORB PREDICTIONS",bgcolor=c_hdr,text_color=c_htx,text_size=ts,text_font_family=mono)
+    table.merge_cells(t,0,r,1,r)
+    r+=1
+
+    // ── ORB-5 (09:35) ──
+    if orb5_ready
+        table.cell(t,0,r,"── 09:35 · ORB-5 ──",bgcolor=c_sub,text_color=c_htx,text_size=ts,text_font_family=mono)
+        table.merge_cells(t,0,r,1,r)
+        r+=1
+        table.cell(t,0,r,"Close half",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,orb5_half,bgcolor=c_cell,text_color=orb5_half=="Upper"?c_bull:c_bear,text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"IB extreme 1st",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,f_predstr(o5p_dir,o5p_pct,o5p_n)+f_valext(o5p_dir),bgcolor=c_cell,text_color=f_valext_col(o5p_dir,f_dircol(o5p_dir)),text_size=ts,text_font_family=mono)
+        r+=1
+    else
+        table.cell(t,0,r,"Waiting for 09:35…",bgcolor=c_cell,text_color=c_neut,text_size=ts,text_font_family=mono)
+        table.merge_cells(t,0,r,1,r)
+        r+=1
+
+    // ── ORB-15 + combined (09:45) ──
+    if orb15_ready
+        table.cell(t,0,r,"── 09:45 · ORB-15 ──",bgcolor=c_sub,text_color=c_htx,text_size=ts,text_font_family=mono)
+        table.merge_cells(t,0,r,1,r)
+        r+=1
+        table.cell(t,0,r,"Close half",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,orb15_half,bgcolor=c_cell,text_color=orb15_half=="Upper"?c_bull:c_bear,text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"IB extreme 1st",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,f_predstr(o15p_dir,o15p_pct,o15p_n)+f_valext(o15p_dir),bgcolor=c_cell,text_color=f_valext_col(o15p_dir,f_dircol(o15p_dir)),text_size=ts,text_font_family=mono)
+        r+=1
+        agree = orb5_half=="Upper" and orb15_half=="Upper" ? "Both Upper" :
+             orb5_half=="Lower" and orb15_half=="Lower" ? "Both Lower" :
+             orb5_half=="Upper" and orb15_half=="Lower" ? "5↑ 15↓" : "5↓ 15↑"
+        table.cell(t,0,r,"ORB agreement",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,agree,bgcolor=c_cell,text_color=(orb5_half==orb15_half)?(orb5_half=="Upper"?c_bull:c_bear):c_neut,text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"Combined → IB 1st",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,f_predstr(btp_dir,btp_pct,btp_n)+f_valext(btp_dir),bgcolor=c_cell,text_color=f_valext_col(btp_dir,f_dircol(btp_dir)),text_size=ts,text_font_family=mono)
+        r+=1
+
+    // ── IB (10:30) ──
+    if ib_ready
+        table.cell(t,0,r,"── 10:30 · INITIAL BALANCE ──",bgcolor=c_sub,text_color=c_htx,text_size=ts,text_font_family=mono)
+        table.merge_cells(t,0,r,1,r)
+        r+=1
+        table.cell(t,0,r,"Extreme 1st (actual)",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,ib_extreme,bgcolor=c_cell,text_color=ib_extreme=="Low"?c_bull:ib_extreme=="High"?c_bear:c_neut,text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"Close half",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,ib_half,bgcolor=c_cell,text_color=ib_half=="Upper"?c_bull:c_bear,text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"Trade type",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,trade_type,bgcolor=c_cell,text_color=str.contains(trade_type,"Long")?c_bull:str.contains(trade_type,"Short")?c_bear:c_neut,text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"── FIRST BREAK > 10:30 ──",bgcolor=c_sub,text_color=c_htx,text_size=ts,text_font_family=mono)
+        table.merge_cells(t,0,r,1,r)
+        r+=1
+        table.cell(t,0,r,"IB level breaks 1st",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,na(fbp_pct)?"–":"IB "+fbp_dir+" "+str.tostring(fbp_pct,"#.1")+"%  (n="+str.tostring(fbp_n)+")"+f_valbrk(fbp_dir),bgcolor=c_cell,text_color=f_valbrk_col(fbp_dir,fbp_dir=="High"?c_bull:fbp_dir=="Low"?c_bear:c_neut),text_size=ts,text_font_family=mono)
+        r+=1
+        table.cell(t,0,r,"First break (actual)",bgcolor=c_cell,text_color=c_dim,text_size=ts,text_font_family=mono)
+        table.cell(t,1,r,first_break=="–"?"pending":first_break+" ✓",bgcolor=c_cell,text_color=first_break=="High"?c_bull:first_break=="Low"?c_bear:c_neut,text_size=ts,text_font_family=mono)
+        r+=1

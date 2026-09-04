@@ -1,0 +1,738 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessogreen
+
+//@version=6
+indicator("Initial Balance & Extensions with Z-Scores", shorttitle="IB Extensions Z", overlay=true, max_bars_back=5000)
+// Input Groups
+var g_SESS = "========= Trading Sessions =========="
+var g_INFO = "========= Display Options =========="
+var g_IB_LINES = "========= IB Lines (IBH/IBL) =========="
+var g_MID_LINES = "========= 50% & Fibonacci Lines =========="
+var g_EXT_LINES = "========= Extension Lines =========="
+var g_PERC_LINES = "========= Percentile Lines =========="
+var g_TABLES = "========= Tables =========="
+var g_GENERAL = "========= General Settings =========="
+
+// Trading Sessions
+ib_session = input.session("0830-0930", title="Initial Balance Period", group=g_SESS)
+break_tracking_session = input.session("0930-1600", title="Break Tracking Session", group=g_SESS)
+
+// Display Options
+show_intermediate_levels = input.bool(true, "Show 50% & Fibonacci Levels", group=g_INFO)
+show_ib_calculation_area = input.bool(false, "Highlight IB Calculation Period", group=g_INFO)
+show_labels = input.bool(true, "Show All Labels", group=g_INFO)
+fill_ib_areas = input.bool(true, "Fill IB Area", group=g_INFO)
+only_current_levels = input.bool(false, "Only Current Day Levels", group=g_INFO)
+only_current_zone = input.bool(true, "Only Current IB Zone", group=g_INFO)
+
+// IB Lines (IBH/IBL)
+show_ibh = input.bool(true, "Show IBH", inline="ibh", group=g_IB_LINES)
+ib_high_color = input.color(color.gray, "", inline="ibh", group=g_IB_LINES)
+ib_high_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="ibh", group=g_IB_LINES)
+ib_high_width = input.int(2, "", minval=1, maxval=4, inline="ibh", group=g_IB_LINES)
+
+show_ibl = input.bool(true, "Show IBL", inline="ibl", group=g_IB_LINES)
+ib_low_color = input.color(color.gray, "", inline="ibl", group=g_IB_LINES)
+ib_low_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="ibl", group=g_IB_LINES)
+ib_low_width = input.int(2, "", minval=1, maxval=4, inline="ibl", group=g_IB_LINES)
+
+// 50% & Fibonacci Lines
+show_mid = input.bool(true, "Show 50% Line", inline="mid", group=g_MID_LINES)
+mid_color = input.color(color.rgb(33, 149, 243, 60), "", inline="mid", group=g_MID_LINES)
+mid_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="mid", group=g_MID_LINES)
+mid_width = input.int(1, "", minval=1, maxval=4, inline="mid", group=g_MID_LINES)
+
+fib1 = input.float(0.214, 'Fib Level 1', inline="fib1", group=g_MID_LINES)
+fib1_show = input.bool(true, '', inline="fib1", group=g_MID_LINES)
+fib_color = input.color(color.rgb(33, 149, 243, 60), "", inline="fib1", group=g_MID_LINES)
+fib_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="fib1", group=g_MID_LINES)
+fib_width = input.int(1, "", minval=1, maxval=4, inline="fib1", group=g_MID_LINES)
+
+fib2 = input.float(0.236, 'Fib Level 2', inline="fib2", group=g_MID_LINES)
+fib2_show = input.bool(true, '', inline="fib2", group=g_MID_LINES)
+fib3 = input.float(0.786, 'Fib Level 3', inline="fib3", group=g_MID_LINES)
+fib3_show = input.bool(true, '', inline="fib3", group=g_MID_LINES)
+fib4 = input.float(0.800, 'Fib Level 4', inline="fib4", group=g_MID_LINES)
+fib4_show = input.bool(true, '', inline="fib4", group=g_MID_LINES)
+
+// Extension Lines
+show_extensions = input.bool(true, "Show Extensions", group=g_EXT_LINES)
+show_mean_high = input.bool(true, "Show Mean High", inline="meanhigh", group=g_EXT_LINES)
+show_median_high = input.bool(true, "Show Median High", inline="medianhigh", group=g_EXT_LINES)
+show_mean_low = input.bool(true, "Show Mean Low", inline="meanlow", group=g_EXT_LINES)
+show_median_low = input.bool(true, "Show Median Low", inline="medianlow", group=g_EXT_LINES)
+
+ext_color = input.color(color.teal, "Extension Color", inline="extcolor", group=g_EXT_LINES)
+ext_style = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="extcolor", group=g_EXT_LINES)
+ext_width = input.int(1, "Width", minval=1, maxval=4, inline="extcolor", group=g_EXT_LINES)
+
+show_sd1 = input.bool(true, "Show 1 SD", inline="sd1", group=g_EXT_LINES)
+show_sd2 = input.bool(true, "Show 2 SD", inline="sd1", group=g_EXT_LINES)
+show_sd3 = input.bool(false, "Show 3 SD", inline="sd2", group=g_EXT_LINES)
+show_sd4 = input.bool(false, "Show 4 SD", inline="sd2", group=g_EXT_LINES)
+z_score_threshold = input.float(2.0, "Z-Score Threshold", minval=0.5, step=0.1, group=g_EXT_LINES)
+
+// Percentile Lines
+show_percentiles = input.bool(true, "Show Percentiles", group=g_PERC_LINES)
+show_p25_high = input.bool(true, "Show 25th %ile High", inline="p25h", group=g_PERC_LINES)
+show_p75_high = input.bool(true, "Show 75th %ile High", inline="p25h", group=g_PERC_LINES)
+show_p25_low = input.bool(true, "Show 25th %ile Low", inline="p25l", group=g_PERC_LINES)
+show_p75_low = input.bool(true, "Show 75th %ile Low", inline="p25l", group=g_PERC_LINES)
+
+percentile_color = input.color(color.purple, "Percentile Color", inline="perccolor", group=g_PERC_LINES)
+percentile_style = input.string("Solid", "Style", options=["Solid", "Dashed", "Dotted"], inline="perccolor", group=g_PERC_LINES)
+percentile_width = input.int(2, "Width", minval=1, maxval=4, inline="perccolor", group=g_PERC_LINES)
+
+// Tables
+show_delta_analytics = input.bool(true, "Show IB Stats Table", group=g_TABLES)
+table_position = input.string('Top Right', "IB Stats Position", options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group=g_TABLES)
+table_size = input.string('Tiny', "IB Stats Text Size", options=['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group=g_TABLES)
+table_text = input.color(color.black, "IB Stats Text Color", group=g_TABLES)
+table_bg = input.color(color.white, "IB Stats Background", group=g_TABLES)
+table_frame = input.color(color.black, "IB Stats Frame", group=g_TABLES)
+table_border = input.color(color.black, "IB Stats Border", group=g_TABLES)
+table_border_width = input.int(1, "IB Stats Border Width", group=g_TABLES)
+table_frame_width = input.int(2, "IB Stats Frame Width", group=g_TABLES)
+
+show_z_score_table = input.bool(true, "Show Z-Score Table", group=g_TABLES)
+z_table_position = input.string("Bottom Left", "Z-Score Position", options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group=g_TABLES)
+z_table_size = input.string('Tiny', "Z-Score Text Size", options=['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group=g_TABLES)
+z_table_text = input.color(color.black, "Z-Score Text Color", group=g_TABLES)
+z_table_bg = input.color(color.white, "Z-Score Background", group=g_TABLES)
+z_table_frame = input.color(color.black, "Z-Score Frame", group=g_TABLES)
+z_table_border = input.color(color.black, "Z-Score Border", group=g_TABLES)
+z_table_border_width = input.int(1, "Z-Score Border Width", group=g_TABLES)
+z_table_frame_width = input.int(2, "Z-Score Frame Width", group=g_TABLES)
+
+// General Settings
+label_size = input.string("Small", "Label Size", options=["Auto", "Huge", "Large", "Normal", "Small", "Tiny"], group=g_GENERAL)
+extend_level = input.string("Right", "Extend Lines", options=["Right", "Left", "Both", "None"], group=g_GENERAL)
+fill_ib_color = input.color(color.rgb(33, 149, 243, 80), "IB Fill Color", group=g_GENERAL)
+ext = extend_level == "Right" ? extend.right : extend_level == "Left" ? extend.left : extend_level == "Both" ? extend.both : extend.none
+
+// Arrays for historical data
+var delta_history = array.new_float(0)
+var float[] high_extensions = array.new_float(0)
+var float[] low_extensions = array.new_float(0)
+var float[] high_break_extensions = array.new_float(0)
+var float[] low_break_extensions = array.new_float(0)
+
+inSession(sess) =>
+    na(time(timeframe.period, sess)) == false
+
+get_line_style(s) =>
+    s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
+
+get_levels(n) =>
+    h = high[1]
+    l = low[1]
+    for i = 1 to n
+        if low[i] < l
+            l := low[i]
+        if high[i] > h
+            h := high[i]
+    [h, l, (h + l) / 2]
+
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+var line ibh = na
+var line ibl = na
+var line ibm = na
+var line fib_ln_1 = na
+var line fib_ln_2 = na
+var line fib_ln_3 = na
+var line fib_ln_4 = na
+var label labelh = na
+var label labell = na
+var label labelm = na
+var label labelfib1 = na
+var label labelfib2 = na
+var label labelfib3 = na
+var label labelfib4 = na
+var box ib_area = na
+
+// Extension lines
+var line mean_high_ext_line = na
+var line median_high_ext_line = na
+var line mean_low_ext_line = na
+var line median_low_ext_line = na
+var line sd1_high_line = na
+var line sd2_high_line = na
+var line sd3_high_line = na
+var line sd4_high_line = na
+var line sd1_low_line = na
+var line sd2_low_line = na
+var line sd3_low_line = na
+var line sd4_low_line = na
+var line sd_high_line = na
+var line sd_low_line = na
+
+// Percentile lines
+var line p25_high_line = na
+var line p75_high_line = na
+var line p25_low_line = na
+var line p75_low_line = na
+
+// Z-Score Variables
+var float z_score_ib_delta = na
+var float z_score_high_ext = na
+var float z_score_low_ext = na
+var line z_score_ib_line = na
+var label z_score_ib_label = na
+var table z_score_table = na
+var float breakout_prob = na
+
+labelSize = (label_size == "Huge") ? size.huge :
+     (label_size == "Large") ? size.large :
+     (label_size == "Small") ? size.small :
+     (label_size == "Tiny") ? size.tiny :
+     (label_size == "Auto") ? size.auto : size.normal
+
+var offset = 0
+var float ib_delta = na
+var float current_high_ext = na
+var float current_low_ext = na
+var float ib_high = na
+var float ib_low = na
+var bool ib_formed = false
+
+ins = inSession(ib_session)
+
+bgcolor(show_ib_calculation_area and ins ? #673ab730 : na, title="IB calculation zone")
+
+if ins
+    offset += 1
+
+if ins[1] and not ins
+    [h, l, m] = get_levels(offset)
+    ib_delta := h - l
+    array.push(delta_history, ib_delta)
+    
+    // Store IB levels and reset extension tracking
+    ib_high := h
+    ib_low := l
+    ib_formed := true
+    current_high_ext := h
+    current_low_ext := l
+
+    // 1. Analyze IB Range Z-Score
+    if array.size(delta_history) >= 2
+        mean_delta = array.avg(delta_history)
+        sd_delta = array.stdev(delta_history)
+        z_score_ib_delta := (ib_delta - mean_delta) / sd_delta
+        line.delete(z_score_ib_line)
+        label.delete(z_score_ib_label)
+        if show_intermediate_levels
+            z_score_ib_line := line.new(bar_index[offset], m, bar_index, m, color=color.purple, style=line.style_dashed, width=1)
+            if show_labels
+                z_score_ib_label := label.new(bar_index[offset], m, "Z-Score 50% IB: " + str.tostring(z_score_ib_delta, "#.##"), 
+                                             style=label.style_none, textcolor=color.purple, size=labelSize)
+
+    line.set_extend(ibh, extend.none)
+    line.set_extend(ibl, extend.none)
+    if show_intermediate_levels
+        line.set_extend(ibm, extend.none)
+        if fib1_show
+            line.set_extend(fib_ln_1, extend.none)
+        if fib2_show
+            line.set_extend(fib_ln_2, extend.none)
+        if fib3_show
+            line.set_extend(fib_ln_3, extend.none)
+        if fib4_show
+            line.set_extend(fib_ln_4, extend.none)
+    
+    if show_labels
+        if only_current_levels
+            label.delete(labelh)
+            label.delete(labell)
+            if show_intermediate_levels
+                label.delete(labelm)
+        labelh := label.new(bar_index[offset], h, text="IBH: " + str.tostring(h), style=label.style_none, textcolor=ib_high_color, size=labelSize)
+        labell := label.new(bar_index[offset], l, text="IBL: " + str.tostring(l), style=label.style_none, textcolor=ib_low_color, size=labelSize)
+        
+        // Fixed: Only show intermediate level labels when both show_labels AND show_intermediate_levels are true
+        if show_intermediate_levels
+            if only_current_levels
+                label.delete(labelm)
+                if fib1_show
+                    label.delete(labelfib1)
+                if fib2_show
+                    label.delete(labelfib2)
+                if fib3_show
+                    label.delete(labelfib3)
+                if fib4_show
+                    label.delete(labelfib4)
+            labelm := label.new(bar_index[offset], m, text="50%: " + str.tostring(m), style=label.style_none, textcolor=mid_color, size=labelSize)
+
+    // Fixed: Only create Fibonacci labels when respective show flags are true AND show_labels AND show_intermediate_levels are true
+    if show_labels and show_intermediate_levels
+        if fib1_show
+            labelfib1 := label.new(bar_index[offset], l + (h - l) * fib1, text=str.tostring(fib1), style=label.style_none, textcolor=fib_color, size=labelSize)
+        if fib2_show
+            labelfib2 := label.new(bar_index[offset], l + (h - l) * fib2, text=str.tostring(fib2), style=label.style_none, textcolor=fib_color, size=labelSize)
+        if fib3_show
+            labelfib3 := label.new(bar_index[offset], l + (h - l) * fib3, text=str.tostring(fib3), style=label.style_none, textcolor=fib_color, size=labelSize)
+        if fib4_show
+            labelfib4 := label.new(bar_index[offset], l + (h - l) * fib4, text=str.tostring(fib4), style=label.style_none, textcolor=fib_color, size=labelSize)
+    
+    if fill_ib_areas
+        if only_current_zone
+            box.delete(ib_area)
+        ib_area := box.new(bar_index[offset], h, bar_index, l, bgcolor=fill_ib_color, border_color=#00000000)
+    if only_current_levels
+        line.delete(ibh)
+        line.delete(ibl)
+        if show_intermediate_levels
+            line.delete(ibm)
+            if fib1_show
+                line.delete(fib_ln_1)
+            if fib2_show
+                line.delete(fib_ln_2)
+            if fib3_show
+                line.delete(fib_ln_3)
+            if fib4_show
+                line.delete(fib_ln_4)
+     
+    ibh := line.new(bar_index[offset], h, bar_index, h, color=ib_high_color, extend=ext, width=ib_high_width, style=get_line_style(ib_high_style))
+    ibl := line.new(bar_index[offset], l, bar_index, l, color=ib_low_color, extend=ext, width=ib_low_width, style=get_line_style(ib_low_style))
+    if show_intermediate_levels
+        ibm := line.new(bar_index[offset], m, bar_index, m, color=mid_color, style=get_line_style(mid_style), extend=ext, width=mid_width)
+        if fib1_show
+            fib_ln_1 := line.new(bar_index[offset], l + (h - l) * fib1, bar_index, l + (h - l) * fib1, color=fib_color, style=get_line_style(fib_style), extend=ext, width=fib_width)
+        if fib2_show
+            fib_ln_2 := line.new(bar_index[offset], l + (h - l) * fib2, bar_index, l + (h - l) * fib2, color=fib_color, style=get_line_style(fib_style), extend=ext, width=fib_width)
+        if fib3_show
+            fib_ln_3 := line.new(bar_index[offset], l + (h - l) * fib3, bar_index, l + (h - l) * fib3, color=fib_color, style=get_line_style(fib_style), extend=ext, width=fib_width)
+        if fib4_show    
+            fib_ln_4 := line.new(bar_index[offset], l + (h - l) * fib4, bar_index, l + (h - l) * fib4, color=fib_color, style=get_line_style(fib_style), extend=ext, width=fib_width)    
+    
+    // Plot extensions
+    if show_extensions
+        mean_high_ext = array.avg(high_extensions)
+        median_high_ext = array.median(high_extensions)
+        mean_low_ext = array.avg(low_extensions)
+        median_low_ext = array.median(low_extensions)
+        high_sd = array.stdev(high_extensions)
+        low_sd = array.stdev(low_extensions)
+        
+        line.delete(mean_high_ext_line)
+        line.delete(median_high_ext_line)
+        line.delete(mean_low_ext_line)
+        line.delete(median_low_ext_line)
+        line.delete(sd1_high_line)
+        line.delete(sd2_high_line)
+        line.delete(sd3_high_line)
+        line.delete(sd4_high_line)
+        line.delete(sd1_low_line)
+        line.delete(sd2_low_line)
+        line.delete(sd3_low_line)
+        line.delete(sd4_low_line)
+        line.delete(sd_high_line)
+        line.delete(sd_low_line)
+        line.delete(p25_high_line)
+        line.delete(p75_high_line)
+        line.delete(p25_low_line)
+        line.delete(p75_low_line)
+        
+        if show_mean_high and not na(mean_high_ext)
+            mean_high_ext_line := line.new(bar_index[offset], ib_high + mean_high_ext, bar_index, ib_high + mean_high_ext, 
+                                          color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_high + mean_high_ext, "Mean High Ext: " + str.tostring(mean_high_ext, "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_median_high and not na(median_high_ext)
+            median_high_ext_line := line.new(bar_index[offset], ib_high + median_high_ext, bar_index, ib_high + median_high_ext,
+                                             color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_high + median_high_ext, "Median High Ext: " + str.tostring(median_high_ext, "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+                
+        if show_mean_low and not na(mean_low_ext)
+            mean_low_ext_line := line.new(bar_index[offset], ib_low - mean_low_ext, bar_index, ib_low - mean_low_ext, 
+                                         color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_low - mean_low_ext, "Mean Low Ext: " + str.tostring(mean_low_ext, "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_median_low and not na(median_low_ext)
+            median_low_ext_line := line.new(bar_index[offset], ib_low - median_low_ext, bar_index, ib_low - median_low_ext, 
+                                           color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_low - median_low_ext, "Median Low Ext: " + str.tostring(median_low_ext, "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        // Add percentile lines for break extensions
+        if show_percentiles and show_p25_high and array.size(high_break_extensions) > 0
+            high_break_25th = array.percentile_linear_interpolation(high_break_extensions, 25)
+            
+            if not na(high_break_25th)
+                p25_high_line := line.new(bar_index[offset], ib_high + high_break_25th, bar_index, ib_high + high_break_25th, 
+                                         color=percentile_color, extend=ext, style=get_line_style(percentile_style), width=percentile_width)
+                if show_labels
+                    label.new(bar_index[offset], ib_high + high_break_25th, "25th %ile", 
+                             style=label.style_none, textcolor=percentile_color, size=labelSize)
+        
+        if show_percentiles and show_p75_high and array.size(high_break_extensions) > 0
+            high_break_75th = array.percentile_linear_interpolation(high_break_extensions, 75)
+            
+            if not na(high_break_75th)
+                p75_high_line := line.new(bar_index[offset], ib_high + high_break_75th, bar_index, ib_high + high_break_75th, 
+                                         color=percentile_color, extend=ext, style=get_line_style(percentile_style), width=percentile_width)
+                if show_labels
+                    label.new(bar_index[offset], ib_high + high_break_75th, "75th %ile", 
+                             style=label.style_none, textcolor=percentile_color, size=labelSize)
+        
+        if show_percentiles and show_p25_low and array.size(low_break_extensions) > 0
+            low_break_25th = array.percentile_linear_interpolation(low_break_extensions, 25)
+            
+            if not na(low_break_25th)
+                p25_low_line := line.new(bar_index[offset], ib_low - low_break_25th, bar_index, ib_low - low_break_25th,
+                                         color=percentile_color, extend=ext, style=get_line_style(percentile_style), width=percentile_width)
+                if show_labels
+                    label.new(bar_index[offset], ib_low - low_break_25th, "25th %ile", 
+                             style=label.style_none, textcolor=percentile_color, size=labelSize)
+        
+        if show_percentiles and show_p75_low and array.size(low_break_extensions) > 0
+            low_break_75th = array.percentile_linear_interpolation(low_break_extensions, 75)
+            
+            if not na(low_break_75th)
+                p75_low_line := line.new(bar_index[offset], ib_low - low_break_75th, bar_index, ib_low - low_break_75th,
+                                         color=percentile_color, extend=ext, style=get_line_style(percentile_style), width=percentile_width)
+                if show_labels
+                    label.new(bar_index[offset], ib_low - low_break_75th, "75th %ile", 
+                             style=label.style_none, textcolor=percentile_color, size=labelSize)
+                        
+        // SD Levels
+        if show_sd1 and not na(high_sd)
+            sd1_high_line := line.new(bar_index[offset], ib_high + mean_high_ext + high_sd, bar_index, ib_high + mean_high_ext + high_sd, 
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_high + mean_high_ext + high_sd, "1 SD High: " + str.tostring(mean_high_ext + high_sd, "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd1_low_line := line.new(bar_index[offset], ib_low - mean_low_ext - low_sd, bar_index, ib_low - mean_low_ext - low_sd,
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_low - mean_low_ext - low_sd, "1 SD Low: " + str.tostring(mean_low_ext + low_sd, "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_sd2 and not na(high_sd)
+            sd2_high_line := line.new(bar_index[offset], ib_high + mean_high_ext + (high_sd * 2), bar_index, ib_high + mean_high_ext + (high_sd * 2), 
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_high + mean_high_ext + (high_sd * 2), "2 SD High: " + str.tostring(mean_high_ext + (high_sd * 2), "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd2_low_line := line.new(bar_index[offset], ib_low - mean_low_ext - (low_sd * 2), bar_index, ib_low - mean_low_ext - (low_sd * 2),
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_low - mean_low_ext - (low_sd * 2), "2 SD Low: " + str.tostring(mean_low_ext + (low_sd * 2), "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_sd3 and not na(high_sd)
+            sd3_high_line := line.new(bar_index[offset], ib_high + mean_high_ext + (high_sd * 3), bar_index, ib_high + mean_high_ext + (high_sd * 3), 
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_high + mean_high_ext + (high_sd * 3), "3 SD High: " + str.tostring(mean_high_ext + (high_sd * 3), "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd3_low_line := line.new(bar_index[offset], ib_low - mean_low_ext - (low_sd * 3), bar_index, ib_low - mean_low_ext - (low_sd * 3),
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_low - mean_low_ext - (low_sd * 3), "3 SD Low: " + str.tostring(mean_low_ext + (low_sd * 3), "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+        
+        if show_sd4 and not na(high_sd)
+            sd4_high_line := line.new(bar_index[offset], ib_high + mean_high_ext + (high_sd * 4), bar_index, ib_high + mean_high_ext + (high_sd * 4), 
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_high + mean_high_ext + (high_sd * 4), "4 SD High: " + str.tostring(mean_high_ext + (high_sd * 4), "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+            sd4_low_line := line.new(bar_index[offset], ib_low - mean_low_ext - (low_sd * 4), bar_index, ib_low - mean_low_ext - (low_sd * 4),
+                                     color=ext_color, extend=ext, style=get_line_style(ext_style), width=ext_width)
+            if show_labels
+                label.new(bar_index[offset], ib_low - mean_low_ext - (low_sd * 4), "4 SD Low: " + str.tostring(mean_low_ext + (low_sd * 4), "#.##"), 
+                         style=label.style_none, textcolor=ext_color, size=labelSize)
+    
+    offset := 0
+
+// Track extensions after IB is formed
+if ib_formed and not ins
+    if high > current_high_ext
+        current_high_ext := high
+    if low < current_low_ext
+        current_low_ext := low
+
+// When new IB starts, store previous extensions and calculate z-scores
+if not ins[1] and ins and ib_formed
+    if not na(current_high_ext) and not na(ib_high)
+        high_ext_value = current_high_ext - ib_high
+        array.push(high_extensions, high_ext_value)
+        if array.size(high_extensions) >= 2
+            mean_high_ext = array.avg(high_extensions)
+            high_sd = array.stdev(high_extensions)
+            z_score_high_ext := (high_ext_value - mean_high_ext) / high_sd
+            if show_extensions and not na(z_score_high_ext) and math.abs(z_score_high_ext) >= z_score_threshold
+                line.delete(sd_high_line)
+                sd_high_line := line.new(bar_index[offset], current_high_ext, bar_index, current_high_ext,
+                                         color=color.orange, extend=ext, style=line.style_dashed)
+                if show_labels
+                    label.new(bar_index[offset], current_high_ext, "Dynamic High Z=" + str.tostring(z_score_high_ext, "#.##"), 
+                             style=label.style_none, textcolor=color.orange, size=labelSize)
+
+    if not na(current_low_ext) and not na(ib_low)
+        low_ext_value = ib_low - current_low_ext
+        array.push(low_extensions, low_ext_value)
+        if array.size(low_extensions) >= 2
+            mean_low_ext = array.avg(low_extensions)
+            low_sd = array.stdev(low_extensions)
+            z_score_low_ext := (low_ext_value - mean_low_ext) / low_sd
+            if show_extensions and not na(z_score_low_ext) and math.abs(z_score_low_ext) >= z_score_threshold
+                line.delete(sd_low_line)
+                sd_low_line := line.new(bar_index[offset], current_low_ext, bar_index, current_low_ext, 
+                                       color=color.orange, extend=ext, style=line.style_dashed)
+                if show_labels
+                    label.new(bar_index[offset], current_low_ext, "Dynamic Low Z=" + str.tostring(z_score_low_ext, "#.##"), 
+                             style=label.style_none, textcolor=color.orange, size=labelSize)
+    ib_formed := false
+
+// Break tracking variables
+var int[] historical_high_breaks = array.new_int(0)
+var int[] historical_low_breaks = array.new_int(0)
+var int[] historical_both_sides_break = array.new_int(0)
+var int[] historical_no_breaks = array.new_int(0)
+
+// Session tracking for current day
+var bool high_broken_today = false
+var bool low_broken_today = false
+var bool session_recorded = false
+
+// Track maximum extensions during break days
+var float max_high_break_ext_today = 0.0
+var float max_low_break_ext_today = 0.0
+
+// Define break tracking session
+break_ins = inSession(break_tracking_session)
+
+// When IB session ends, reset break tracking for the day
+if ins[1] and not ins
+    high_broken_today := false
+    low_broken_today := false
+    session_recorded := false
+    max_high_break_ext_today := 0.0
+    max_low_break_ext_today := 0.0
+
+// Real-time break detection during break tracking session after IB ends
+if not ins and ib_formed and break_ins and not session_recorded
+    // Check for breaks above IBH
+    if high > ib_high and not high_broken_today
+        high_broken_today := true
+    
+    // Check for breaks below IBL  
+    if low < ib_low and not low_broken_today
+        low_broken_today := true
+    
+    // Track maximum extensions on break days
+    if high_broken_today
+        current_high_ext = high - ib_high
+        if current_high_ext > max_high_break_ext_today
+            max_high_break_ext_today := current_high_ext
+    
+    if low_broken_today
+        current_low_ext = ib_low - low
+        if current_low_ext > max_low_break_ext_today
+            max_low_break_ext_today := current_low_ext
+
+// At the end of break tracking session, record the day's break pattern
+if break_ins[1] and not break_ins and not session_recorded and ib_formed
+    session_recorded := true
+    
+    if high_broken_today and low_broken_today
+        array.push(historical_both_sides_break, bar_index)
+        // Store extensions for both breaks
+        array.push(high_break_extensions, max_high_break_ext_today)
+        array.push(low_break_extensions, max_low_break_ext_today)
+    else if high_broken_today
+        array.push(historical_high_breaks, bar_index)
+        // Store extension for high break
+        array.push(high_break_extensions, max_high_break_ext_today)
+    else if low_broken_today
+        array.push(historical_low_breaks, bar_index)
+        // Store extension for low break
+        array.push(low_break_extensions, max_low_break_ext_today)
+    else
+        array.push(historical_no_breaks, bar_index)
+
+if (not ins) and (not ins[1])
+    line.set_x2(ibh, bar_index)
+    line.set_x2(ibl, bar_index)
+    if show_intermediate_levels and not na(ibm)
+        line.set_x2(ibm, bar_index)
+        if fib1_show and not na(fib_ln_1)
+            line.set_x2(fib_ln_1, bar_index)
+        if fib2_show and not na(fib_ln_2)
+            line.set_x2(fib_ln_2, bar_index)
+        if fib3_show and not na(fib_ln_3)
+            line.set_x2(fib_ln_3, bar_index)
+        if fib4_show and not na(fib_ln_4)
+            line.set_x2(fib_ln_4, bar_index)
+    if not na(z_score_ib_line)
+        line.set_x2(z_score_ib_line, bar_index)
+    if show_extensions
+        if show_mean_high and not na(mean_high_ext_line)
+            line.set_x2(mean_high_ext_line, bar_index)
+        if show_median_high and not na(median_high_ext_line)
+            line.set_x2(median_high_ext_line, bar_index)
+        if show_mean_low and not na(mean_low_ext_line)
+            line.set_x2(mean_low_ext_line, bar_index)
+        if show_median_low and not na(median_low_ext_line)
+            line.set_x2(median_low_ext_line, bar_index)
+        if show_sd1 and not na(sd1_high_line)
+            line.set_x2(sd1_high_line, bar_index)
+        if show_sd2 and not na(sd2_high_line)
+            line.set_x2(sd2_high_line, bar_index)
+        if show_sd3 and not na(sd3_high_line)
+            line.set_x2(sd3_high_line, bar_index)
+        if show_sd4 and not na(sd4_high_line)
+            line.set_x2(sd4_high_line, bar_index)
+        if show_sd1 and not na(sd1_low_line)
+            line.set_x2(sd1_low_line, bar_index)
+        if show_sd2 and not na(sd2_low_line)
+            line.set_x2(sd2_low_line, bar_index)
+        if show_sd3 and not na(sd3_low_line)
+            line.set_x2(sd3_low_line, bar_index)
+        if show_sd4 and not na(sd4_low_line)
+            line.set_x2(sd4_low_line, bar_index)
+        if not na(sd_high_line)
+            line.set_x2(sd_high_line, bar_index)
+        if not na(sd_low_line)
+            line.set_x2(sd_low_line, bar_index)
+    if show_percentiles
+        if show_p25_high and not na(p25_high_line)
+            line.set_x2(p25_high_line, bar_index)
+        if show_p75_high and not na(p75_high_line)
+            line.set_x2(p75_high_line, bar_index)
+        if show_p25_low and not na(p25_low_line)
+            line.set_x2(p25_low_line, bar_index)
+        if show_p75_low and not na(p75_low_line)
+            line.set_x2(p75_low_line, bar_index)
+
+var table ib_analytics = table.new(position.bottom_left, 20, 20)
+
+ib_sentiment() =>
+    h = array.max(delta_history)
+    l = array.min(delta_history)
+    a = array.avg(delta_history)
+    h_comp = ib_delta > h ? ib_delta - h : (ib_delta - h) * -1
+    l_comp = ib_delta > l ? ib_delta - l : (ib_delta - l) * -1
+    a_comp = ib_delta > a ? ib_delta - a : (ib_delta - a) * -1
+    (h_comp < l_comp and h_comp < a_comp) ? "Huge" : (l_comp < h_comp and l_comp < a_comp) ? "Small" : "Medium"
+
+sd = array.stdev(delta_history)
+med = array.median(delta_history)
+
+total_high_breaks = array.size(historical_high_breaks)
+total_low_breaks = array.size(historical_low_breaks)
+total_both_sides_breaks = array.size(historical_both_sides_break)
+total_no_breaks = array.size(historical_no_breaks)
+sess_cnt = total_high_breaks + total_low_breaks + total_both_sides_breaks + total_no_breaks
+
+// Z-Score Table
+if show_z_score_table and barstate.islast
+    z_score_table := table.new(
+         position = get_table_position(z_table_position),
+         columns = 2,
+         rows = 5,
+         bgcolor = z_table_bg,
+         frame_color = z_table_frame,
+         frame_width = z_table_frame_width,
+         border_color = z_table_border,
+         border_width = z_table_border_width
+     )
+    ts = get_table_text_size(z_table_size)
+
+    table.cell(z_score_table, 0, 0, "Z-Score Stats", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(z_score_table, 1, 0, "Value", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    
+    table.cell(z_score_table, 0, 1, "IB Range Z-Score", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(z_score_table, 1, 1, str.tostring(z_score_ib_delta, "#.##"), bgcolor=color.white, text_color=math.abs(z_score_ib_delta) > 2 ? color.red : z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    
+    table.cell(z_score_table, 0, 2, "High Ext Z-Score", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(z_score_table, 1, 2, str.tostring(z_score_high_ext, "#.##"), bgcolor=color.white, text_color=math.abs(z_score_high_ext) > 2 ? color.red : z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    
+    table.cell(z_score_table, 0, 3, "Low Ext Z-Score", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(z_score_table, 1, 3, str.tostring(z_score_low_ext, "#.##"), bgcolor=color.white, text_color=math.abs(z_score_low_ext) > 2 ? color.red : z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    
+    if array.size(historical_both_sides_break) + array.size(historical_high_breaks) + array.size(historical_low_breaks) > 0
+        total_breaks = array.size(historical_high_breaks) + array.size(historical_low_breaks) + array.size(historical_both_sides_break)
+        total_sessions = array.size(delta_history)
+        breakout_prob := (total_breaks / total_sessions) * 100
+        if not na(z_score_ib_delta) and z_score_ib_delta < 0
+            breakout_prob := breakout_prob * (1 + math.abs(z_score_ib_delta) * 0.1)
+    table.cell(z_score_table, 0, 4, "Breakout Probability", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(z_score_table, 1, 4, str.tostring(breakout_prob, "#.##") + "%", bgcolor=color.white, text_color=z_table_text, text_size=ts, text_font_family=font.family_monospace)
+
+// IB Stats Table
+if show_delta_analytics and barstate.islast
+    ib_analytics := table.new(
+         position = get_table_position(table_position),
+         columns = 2,
+         rows = 20,
+         bgcolor = table_bg,
+         frame_color = table_frame,
+         frame_width = table_frame_width,
+         border_color = table_border,
+         border_width = table_border_width
+     )
+
+    ts = get_table_text_size(table_size)
+
+    table.cell(ib_analytics, 0, 0, "IB Stats", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 0, "Value", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 1, "IB max range", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 1, str.tostring(array.max(delta_history), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 2, "IB average range", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 2, str.tostring(array.avg(delta_history), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 3, "IB min range", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 3, str.tostring(array.min(delta_history), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 4, "Today's range", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 4, str.tostring(ib_delta), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 5, "IB range standard deviation", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 5, str.tostring(math.round(sd, 2)), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 6, "IB range median", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 6, str.tostring(math.round(med, 2)), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 7, "Total IB high breaks", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 7, str.tostring(total_high_breaks), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 8, "Total IB low breaks", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 8, str.tostring(total_low_breaks), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 9, "No break", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 9, str.tostring(total_no_breaks), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 10, "Both side break", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 10, str.tostring(total_both_sides_breaks), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 11, "Total IB sessions", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 11, str.tostring(sess_cnt), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 12, "Mean High Extension", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 12, str.tostring(array.avg(high_extensions), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 13, "Median High Extension", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 13, str.tostring(array.median(high_extensions), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 14, "Mean Low Extension", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 14, str.tostring(array.avg(low_extensions), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 0, 15, "Median Low Extension", bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(ib_analytics, 1, 15, str.tostring(array.median(low_extensions), "#.####"), bgcolor=color.white, text_color=table_text, text_size=ts, text_font_family=font.family_monospace)

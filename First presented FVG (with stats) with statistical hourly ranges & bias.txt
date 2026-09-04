@@ -1,0 +1,629 @@
+//@version=5
+indicator("Every Hour 1st FVG with stats - RTH Confluence", overlay=true, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
+
+// ============================================================================
+// INPUT GROUPS
+// ============================================================================
+
+ltfResolution = input.string("5", "FVG Timeframe",
+     options=["1", "3", "5", "15"],
+     group="Detection Settings",
+     tooltip="Timeframe for FVG detection - works on any chart timeframe")
+
+bullColor       = input.color(color.new(#05f3bf, 75),  "Bullish FVG Color",      group="Display Settings")
+bearColor       = input.color(color.new(#e903a4, 75),  "Bearish FVG Color",      group="Display Settings")
+rthBullColor    = input.color(color.new(#00bfff, 60),  "RTH Bull FVG Color",     group="Display Settings")
+rthBearColor    = input.color(color.new(#ff6600, 60),  "RTH Bear FVG Color",     group="Display Settings")
+showMidpoints   = input.bool(true,                     "Show Midpoint Lines",     group="Display Settings")
+midpointColor   = input.color(color.new(color.black, 0), "Midpoint Line Color",  group="Display Settings")
+midpointStyle   = input.string("Solid", "Midpoint Line Style",
+     options=["Solid", "Dotted", "Dashed"], group="Display Settings")
+
+tablePosition   = input.string("Top Right", "Table Position",
+     options=["Top Left","Top Center","Top Right","Middle Left","Middle Center","Middle Right","Bottom Left","Bottom Center","Bottom Right"],
+     group="Table Settings")
+tableTextSize   = input.string("Small", "Table Text Size",
+     options=["Tiny","Small","Normal","Large"], group="Table Settings")
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+string sessionTimezone = "America/New_York"
+
+midpointStyleConverted =
+     midpointStyle == "Solid"  ? line.style_solid  :
+     midpointStyle == "Dotted" ? line.style_dotted :
+     line.style_dashed
+
+tablePositionConverted =
+     tablePosition == "Top Left"       ? position.top_left      :
+     tablePosition == "Top Center"     ? position.top_center    :
+     tablePosition == "Top Right"      ? position.top_right     :
+     tablePosition == "Middle Left"    ? position.middle_left   :
+     tablePosition == "Middle Center"  ? position.middle_center :
+     tablePosition == "Middle Right"   ? position.middle_right  :
+     tablePosition == "Bottom Left"    ? position.bottom_left   :
+     tablePosition == "Bottom Center"  ? position.bottom_center :
+     position.bottom_right
+
+tableTextSizeConverted =
+     tableTextSize == "Tiny"   ? size.tiny   :
+     tableTextSize == "Small"  ? size.small  :
+     tableTextSize == "Normal" ? size.normal :
+     size.large
+
+// ============================================================================
+// STATE VARIABLES
+// ============================================================================
+
+var bool          currentHourFvgFound = false
+var int           lastHour            = na
+var array<box>    fvgBoxes            = array.new<box>()
+var array<line>   fvgMidLines         = array.new<line>()
+
+// RTH window state
+var string  w1FvgDirection  = "None"   // "BISI", "SIBI", "None"
+var string  w2FvgDirection  = "None"
+var bool    w1FvgFound      = false
+var bool    w2FvgFound      = false
+var bool    w1WindowClosed  = false    // true once clock passes 10:00am
+var bool    w2WindowClosed  = false    // true once clock passes 11:00am
+var box     w1FvgBox        = na
+var box     w2FvgBox        = na
+var line    w1MidLine       = na
+var line    w2MidLine       = na
+
+// ============================================================================
+// MULTI-TIMEFRAME DATA
+// ============================================================================
+
+getFVGData() =>
+    [time, close, high, low, open, high[1], low[1], close[1], open[1], high[2], low[2], close[2], open[2]]
+
+[mtfTime, mtfClose, mtfHigh, mtfLow, mtfOpen, mtfHigh1, mtfLow1, mtfClose1, mtfOpen1, mtfHigh2, mtfLow2, mtfClose2, mtfOpen2] =
+     request.security(syminfo.tickerid, ltfResolution, getFVGData(), lookahead=barmerge.lookahead_on)
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+getHourEndTime(int t, string tz) =>
+    int hourStart = timestamp(tz, year(t, tz), month(t, tz), dayofmonth(t, tz), hour(t, tz), 0, 0)
+    hourStart + 3600000
+
+getRthCloseTime(int t, string tz) =>
+    // 4:15pm on the same NY calendar date
+    timestamp(tz, year(t, tz), month(t, tz), dayofmonth(t, tz), 16, 15, 0)
+
+// ============================================================================
+// HOUR / SESSION CHANGE DETECTION
+// ============================================================================
+
+int  currentHour     = hour(time, sessionTimezone)
+int  currentMinute   = minute(time, sessionTimezone)
+bool isNewHour       = na(lastHour) or currentHour != lastHour
+int  currentDow      = dayofweek(time, sessionTimezone)
+bool isWeekendClosed = currentDow == dayofweek.saturday or (currentDow == dayofweek.sunday and currentHour < 18)
+
+// Detect new RTH day (reset at 9:30am)
+bool isNewRthDay = isNewHour and currentHour == 9 and currentMinute == 30
+
+// Window boundary flags
+bool entering930 = isNewHour and currentHour == 9   // 9:00 open → window starts at first 9:30 bar, handled below
+bool at1000      = isNewHour and currentHour == 10
+bool at1100      = isNewHour and currentHour == 11
+
+if isNewHour
+    lastHour             := currentHour
+    currentHourFvgFound  := false
+
+// Reset RTH window tracking at start of each new day (when we hit 9am or earlier pre-market)
+if isNewHour and currentHour == 9
+    w1FvgDirection := "None"
+    w2FvgDirection := "None"
+    w1FvgFound     := false
+    w2FvgFound     := false
+    w1WindowClosed := false
+    w2WindowClosed := false
+
+// Close windows at the right hour
+if at1000
+    w1WindowClosed := true
+if at1100
+    w2WindowClosed := true
+
+// ============================================================================
+// FVG DETECTION
+// ============================================================================
+
+bool  isBullishFvg    = false
+bool  isBearishFvg    = false
+float fvgBullTop      = 0.0
+float fvgBullBot      = 0.0
+float fvgBearTop      = 0.0
+float fvgBearBot      = 0.0
+int   fvgFormationTime = 0
+
+bool bullFVG = mtfLow > mtfHigh2 and mtfClose > mtfHigh2
+bool bearFVG = mtfHigh < mtfLow2 and mtfClose < mtfLow2
+
+int middleHour = hour(mtfTime[1], sessionTimezone)
+
+if bullFVG and middleHour == currentHour
+    isBullishFvg    := true
+    fvgBullTop      := mtfLow
+    fvgBullBot      := mtfHigh2
+    fvgFormationTime := mtfTime[2]
+
+if bearFVG and middleHour == currentHour and not isBullishFvg
+    isBearishFvg    := true
+    fvgBearTop      := mtfLow2
+    fvgBearBot      := mtfHigh
+    fvgFormationTime := mtfTime[2]
+
+// ============================================================================
+// RTH WINDOW FVG CAPTURE
+// 9:30–10:00 = Window 1  |  10:00–11:00 = Window 2
+// ============================================================================
+
+bool inW1 = (currentHour == 9 and currentMinute >= 30) or currentHour == 9 and not w1WindowClosed
+bool inW2 = currentHour == 10 and not w2WindowClosed
+
+int rthCloseTs = getRthCloseTime(time, sessionTimezone)
+
+// Window 1: capture first FVG between 9:30 and 10:00
+if inW1 and not w1FvgFound and not isWeekendClosed
+    if isBullishFvg
+        w1FvgDirection := "BISI"
+        w1FvgFound     := true
+        w1FvgBox       := box.new(left=fvgFormationTime, top=fvgBullTop, right=rthCloseTs, bottom=fvgBullBot,
+             bgcolor=rthBullColor, border_color=rthBullColor, border_width=2, xloc=xloc.bar_time)
+        if showMidpoints
+            float mid = (fvgBullTop + fvgBullBot) / 2.0
+            w1MidLine := line.new(fvgFormationTime, mid, rthCloseTs, mid,
+                 color=midpointColor, style=midpointStyleConverted, width=1, xloc=xloc.bar_time)
+
+    else if isBearishFvg
+        w1FvgDirection := "SIBI"
+        w1FvgFound     := true
+        w1FvgBox       := box.new(left=fvgFormationTime, top=fvgBearTop, right=rthCloseTs, bottom=fvgBearBot,
+             bgcolor=rthBearColor, border_color=rthBearColor, border_width=2, xloc=xloc.bar_time)
+        if showMidpoints
+            float mid = (fvgBearTop + fvgBearBot) / 2.0
+            w1MidLine := line.new(fvgFormationTime, mid, rthCloseTs, mid,
+                 color=midpointColor, style=midpointStyleConverted, width=1, xloc=xloc.bar_time)
+
+// Window 2: capture first FVG between 10:00 and 11:00
+if inW2 and not w2FvgFound and not isWeekendClosed
+    if isBullishFvg
+        w2FvgDirection := "BISI"
+        w2FvgFound     := true
+        w2FvgBox       := box.new(left=fvgFormationTime, top=fvgBullTop, right=rthCloseTs, bottom=fvgBullBot,
+             bgcolor=rthBullColor, border_color=rthBullColor, border_width=2, xloc=xloc.bar_time)
+        if showMidpoints
+            float mid = (fvgBullTop + fvgBullBot) / 2.0
+            w2MidLine := line.new(fvgFormationTime, mid, rthCloseTs, mid,
+                 color=midpointColor, style=midpointStyleConverted, width=1, xloc=xloc.bar_time)
+
+    else if isBearishFvg
+        w2FvgDirection := "SIBI"
+        w2FvgFound     := true
+        w2FvgBox       := box.new(left=fvgFormationTime, top=fvgBearTop, right=rthCloseTs, bottom=fvgBearBot,
+             bgcolor=rthBearColor, border_color=rthBearColor, border_width=2, xloc=xloc.bar_time)
+        if showMidpoints
+            float mid = (fvgBearTop + fvgBearBot) / 2.0
+            w2MidLine := line.new(fvgFormationTime, mid, rthCloseTs, mid,
+                 color=midpointColor, style=midpointStyleConverted, width=1, xloc=xloc.bar_time)
+
+// ============================================================================
+// REGULAR HOURLY FVG BOXES (unchanged logic, skip if already drawn as RTH box)
+// ============================================================================
+
+bool isRthWindow = (currentHour == 9 and currentMinute >= 30) or currentHour == 10
+
+if not currentHourFvgFound and not isWeekendClosed and not isRthWindow
+    if isBullishFvg
+        int boxRight = getHourEndTime(time, sessionTimezone)
+        box newBox = box.new(left=fvgFormationTime, top=fvgBullTop, right=boxRight, bottom=fvgBullBot,
+             bgcolor=bullColor, border_color=bullColor, border_width=1, xloc=xloc.bar_time)
+        array.push(fvgBoxes, newBox)
+        if showMidpoints
+            float mid = (fvgBullTop + fvgBullBot) / 2.0
+            line newMidLine = line.new(fvgFormationTime, mid, boxRight, mid,
+                 color=midpointColor, style=midpointStyleConverted, width=1, xloc=xloc.bar_time)
+            array.push(fvgMidLines, newMidLine)
+        currentHourFvgFound := true
+
+    else if isBearishFvg
+        int boxRight = getHourEndTime(time, sessionTimezone)
+        box newBox = box.new(left=fvgFormationTime, top=fvgBearTop, right=boxRight, bottom=fvgBearBot,
+             bgcolor=bearColor, border_color=bearColor, border_width=1, xloc=xloc.bar_time)
+        array.push(fvgBoxes, newBox)
+        if showMidpoints
+            float mid = (fvgBearTop + fvgBearBot) / 2.0
+            line newMidLine = line.new(fvgFormationTime, mid, boxRight, mid,
+                 color=midpointColor, style=midpointStyleConverted, width=1, xloc=xloc.bar_time)
+            array.push(fvgMidLines, newMidLine)
+        currentHourFvgFound := true
+
+// ============================================================================
+// STATISTICAL DATA (original arrays unchanged)
+// ============================================================================
+
+var float[] hourlyAvgRange = array.from(
+     0.140, 0.169, 0.218, 0.311, 0.268, 0.231, 0.225, 0.249,
+     0.325, 0.626, 0.630, 0.493, 0.418, 0.417, 0.461, 0.503,
+     0.283, 0.060, 0.242, 0.179, 0.222, 0.208, 0.172, 0.143)
+
+var float[] bullContinuation = array.from(
+     69.6, 70.9, 76.0, 74.6, 73.7, 70.8, 70.4, 72.8,
+     68.8, 60.1, 74.5, 74.6, 73.4, 71.0, 72.8, 68.0,
+     86.1, 100.0, 80.9, 70.2, 74.7, 69.9, 72.1, 73.0)
+
+var float[] bearContinuation = array.from(
+     66.4, 67.2, 70.8, 69.4, 73.8, 68.5, 66.6, 69.3,
+     66.8, 54.4, 71.9, 68.3, 68.7, 65.3, 66.9, 67.1,
+     76.4, 100.0, 78.5, 65.4, 71.0, 66.8, 66.7, 67.7)
+
+var float[] bisiEffectiveness = array.from(
+     74.5, 75.6, 77.5, 78.0, 78.3, 78.2, 77.4, 79.9,
+     76.4, 73.1, 78.1, 81.5, 80.1, 79.5, 79.7, 74.1,
+     81.0, 100.0, 70.7, 74.4, 77.8, 77.0, 76.2, 77.9)
+
+var float[] sibiEffectiveness = array.from(
+     71.1, 73.1, 75.3, 76.3, 78.6, 76.3, 75.5, 77.2,
+     74.9, 68.6, 77.9, 74.9, 77.6, 75.8, 75.4, 73.9,
+     74.0, 97.1, 71.2, 70.1, 76.0, 75.1, 74.2, 72.4)
+
+var float[] hourlyBullishBias = array.from(
+     49.94, 50.40, 50.89, 51.51, 49.98, 50.28, 50.76, 52.49,
+     50.18, 52.57, 51.61, 55.74, 52.60, 53.29, 53.34, 50.39,
+     57.82, 51.52, 49.88, 51.53, 51.11, 51.27, 51.47, 52.92)
+
+var float[] hourlyMedianRange = array.from(
+     0.097, 0.123, 0.162, 0.246, 0.208, 0.177, 0.176, 0.196,
+     0.241, 0.536, 0.532, 0.406, 0.337, 0.334, 0.350, 0.378,
+     0.193, 0.047, 0.162, 0.127, 0.160, 0.152, 0.123, 0.102)
+
+// ============================================================================
+// RTH CONFLUENCE DATA  (from Python analysis)
+// Row order: BISI/BISI, BISI/SIBI, BISI/NoFVG, SIBI/BISI, SIBI/SIBI,
+//            SIBI/NoFVG, NoFVG/BISI, NoFVG/SIBI, NoFVG/NoFVG
+// Columns: bull%, bear%
+// ============================================================================
+
+// W1-only stats  [BISI, SIBI, None]
+var float[] w1BullPct  = array.from(71.2, 37.2, 54.7)
+var float[] w1BearPct  = array.from(28.6, 62.5, 45.2)
+var int[]   w1Sample   = array.from(1000, 931, 1199)
+
+// Confluence stats  [9 combos as above]
+var float[] comboBullPct = array.from(79.2, 59.7, 77.9, 48.8, 22.6, 43.3, 66.2, 43.9, 53.1)
+var float[] comboBearPct = array.from(20.6, 40.0, 22.1, 51.0, 76.8, 56.7, 33.8, 55.9, 46.9)
+var int[]   comboSample  = array.from(485,  402,  113,  441,  393,   97,  529,  542,  128)
+
+// Helper: get W1 index (0=BISI, 1=SIBI, 2=None)
+getW1Index(string dir) =>
+    dir == "BISI" ? 0 : dir == "SIBI" ? 1 : 2
+
+// Helper: get combo index
+getComboIndex(string d1, string d2) =>
+    int i1 = d1 == "BISI" ? 0 : d1 == "SIBI" ? 1 : 2
+    int i2 = d2 == "BISI" ? 0 : d2 == "SIBI" ? 1 : 2
+    i1 * 3 + i2
+
+// ============================================================================
+// HOURLY TRACKING (first 15 min etc — unchanged)
+// ============================================================================
+
+var float  hourlyOpen        = na
+var int    hourlyOpenTime    = na
+var string first15minDirection = "Pending"
+var bool   first15minSet     = false
+var float  first15minClose   = na
+var bool   currentHourBullFvg = false
+var bool   currentHourBearFvg = false
+
+if isNewHour
+    hourlyOpen           := open
+    hourlyOpenTime       := time
+    first15minDirection  := "Pending"
+    first15minSet        := false
+    first15minClose      := na
+    currentHourBullFvg   := false
+    currentHourBearFvg   := false
+
+if isBullishFvg and not currentHourBullFvg and not currentHourBearFvg
+    currentHourBullFvg := true
+else if isBearishFvg and not currentHourBullFvg and not currentHourBearFvg
+    currentHourBearFvg := true
+
+get15MinData() => [time, close, open]
+[time15, close15, open15] = request.security(syminfo.tickerid, ltfResolution, get15MinData(), lookahead=barmerge.lookahead_on)
+
+if not first15minSet and not na(hourlyOpenTime)
+    int fifteenMinMark = hourlyOpenTime + 900000
+    int candle15Hour   = hour(time15, sessionTimezone)
+    if candle15Hour == currentHour and time15 >= fifteenMinMark
+        first15minClose := close15
+        first15minDirection :=
+             first15minClose > hourlyOpen ? "Bullish" :
+             first15minClose < hourlyOpen ? "Bearish" : "Neutral"
+        first15minSet := true
+
+// ============================================================================
+// HOURLY LINES (unchanged)
+// ============================================================================
+
+showHourlyLines  = input.bool(true,  "Show Hourly Lines",    group="Hourly Lines")
+showDelimiter    = input.bool(true,  "Show Hour Delimiter",  group="Hourly Lines")
+delimiterColor   = input.color(color.new(color.gray, 50), "Delimiter Color", group="Hourly Lines")
+delimiterWidth   = input.int(1, "Delimiter Width", minval=1, maxval=5, group="Hourly Lines")
+
+showOpenLine     = input.bool(true, "Show Hourly Open",      group="Hourly Lines")
+openLineColor    = input.color(color.new(color.blue, 0), "Open Line Color", group="Hourly Lines")
+openLineWidth    = input.int(1, "Open Line Width", minval=1, maxval=5, group="Hourly Lines")
+openLineStyle    = input.string("Dashed", "Open Line Style", options=["Solid","Dashed","Dotted"], group="Hourly Lines")
+
+showRangeLines   = input.bool(true, "Show Range Lines",      group="Hourly Lines")
+rangeStatistic   = input.string("Mean", "Range Statistic",   options=["Mean","Median"], group="Hourly Lines")
+rangeHighColor   = input.color(color.new(color.teal, 20),    "Range High Color", group="Hourly Lines")
+rangeLowColor    = input.color(color.new(color.red,  20),    "Range Low Color",  group="Hourly Lines")
+rangeLineWidth   = input.int(2, "Range Line Width", minval=1, maxval=5, group="Hourly Lines")
+rangeLineStyle   = input.string("Dashed", "Range Line Style", options=["Solid","Dashed","Dotted"], group="Hourly Lines")
+
+showLineLabels   = input.bool(true, "Show Line Labels",      group="Hourly Lines")
+labelTextSize    = input.string("Small", "Label Text Size",  options=["Tiny","Small","Normal"], group="Hourly Lines")
+
+openLineStyleConverted  = openLineStyle  == "Solid" ? line.style_solid : openLineStyle  == "Dotted" ? line.style_dotted : line.style_dashed
+rangeLineStyleConverted = rangeLineStyle == "Solid" ? line.style_solid : rangeLineStyle == "Dotted" ? line.style_dotted : line.style_dashed
+labelTextSizeConverted  = labelTextSize  == "Tiny"  ? size.tiny        : labelTextSize  == "Small"  ? size.small        : size.normal
+
+var line  currentDelimiter      = na
+var line  currentOpenLine       = na
+var line  currentRangeHigh      = na
+var line  currentRangeLow       = na
+var label currentOpenLabel      = na
+var label currentRangeHighLabel = na
+var label currentRangeLowLabel  = na
+
+if isNewHour and showHourlyLines and not isWeekendClosed
+    if not na(currentDelimiter)
+        line.delete(currentDelimiter)
+    if not na(currentOpenLine)
+        line.delete(currentOpenLine)
+    if not na(currentRangeHigh)
+        line.delete(currentRangeHigh)
+    if not na(currentRangeLow)
+        line.delete(currentRangeLow)
+    if not na(currentOpenLabel)
+        label.delete(currentOpenLabel)
+    if not na(currentRangeHighLabel)
+        label.delete(currentRangeHighLabel)
+    if not na(currentRangeLowLabel)
+        label.delete(currentRangeLowLabel)
+
+    int hourStart = time
+    int hourEnd   = getHourEndTime(time, sessionTimezone)
+
+    if showDelimiter
+        currentDelimiter := line.new(x1=hourStart, y1=low, x2=hourStart, y2=high, xloc=xloc.bar_time,
+             color=delimiterColor, width=delimiterWidth, style=line.style_solid, extend=extend.both)
+
+    if showOpenLine and not na(hourlyOpen)
+        currentOpenLine := line.new(x1=hourStart, y1=hourlyOpen, x2=hourEnd, y2=hourlyOpen, xloc=xloc.bar_time,
+             color=openLineColor, width=openLineWidth, style=openLineStyleConverted)
+        if showLineLabels
+            currentOpenLabel := label.new(x=hourEnd, y=hourlyOpen,
+                 text="Open: " + str.tostring(hourlyOpen, format.mintick),
+                 xloc=xloc.bar_time, yloc=yloc.price, color=color.new(openLineColor, 100),
+                 textcolor=openLineColor, style=label.style_label_left,
+                 size=labelTextSizeConverted, text_font_family=font.family_monospace)
+
+    if showRangeLines and not na(hourlyOpen)
+        float rangeVal   = rangeStatistic == "Mean" ? array.get(hourlyAvgRange, currentHour) : array.get(hourlyMedianRange, currentHour)
+        float upperRange = hourlyOpen + (rangeVal / 100 * hourlyOpen)
+        float lowerRange = hourlyOpen - (rangeVal / 100 * hourlyOpen)
+
+        currentRangeHigh := line.new(x1=hourStart, y1=upperRange, x2=hourEnd, y2=upperRange, xloc=xloc.bar_time,
+             color=rangeHighColor, width=rangeLineWidth, style=rangeLineStyleConverted)
+        currentRangeLow  := line.new(x1=hourStart, y1=lowerRange, x2=hourEnd, y2=lowerRange, xloc=xloc.bar_time,
+             color=rangeLowColor,  width=rangeLineWidth, style=rangeLineStyleConverted)
+
+        if showLineLabels
+            string statLabel = rangeStatistic == "Mean" ? "Avg" : "Med"
+            currentRangeHighLabel := label.new(x=hourEnd, y=upperRange,
+                 text=statLabel + " High: " + str.tostring(upperRange, format.mintick),
+                 xloc=xloc.bar_time, yloc=yloc.price, color=color.new(rangeHighColor, 100),
+                 textcolor=rangeHighColor, style=label.style_label_left,
+                 size=labelTextSizeConverted, text_font_family=font.family_monospace)
+            currentRangeLowLabel := label.new(x=hourEnd, y=lowerRange,
+                 text=statLabel + " Low: " + str.tostring(lowerRange, format.mintick),
+                 xloc=xloc.bar_time, yloc=yloc.price, color=color.new(rangeLowColor, 100),
+                 textcolor=rangeLowColor, style=label.style_label_left,
+                 size=labelTextSizeConverted, text_font_family=font.family_monospace)
+
+if showHourlyLines and showDelimiter and not na(currentDelimiter) and not isWeekendClosed
+    line.set_y1(currentDelimiter, low)
+    line.set_y2(currentDelimiter, high)
+
+// ============================================================================
+// STATISTICS TABLE  (original 10 rows + 6 new RTH rows)
+// Total rows needed: 16
+// ============================================================================
+
+var table statsTable = table.new(tablePositionConverted, 2, 16,
+     bgcolor=color.white, border_color=color.black, border_width=1)
+
+if barstate.islast
+    table.clear(statsTable, 0, 0, 1, 15)
+
+    int    h      = currentHour
+    string ampm   = h >= 12 ? "PM" : "AM"
+    int    hour12 = h > 12 ? h - 12 : (h == 0 ? 12 : h)
+    string hourLabel = str.tostring(hour12) + ampm
+
+    // ── rows 0–9: original table (unchanged) ──────────────────────────────
+
+    table.cell(statsTable, 0, 0, "Hour",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 0, hourLabel,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    string fvgStatus  = "None Yet"
+    color  fvgBgColor = color.white
+    if currentHourBullFvg
+        fvgStatus  := "Bull FVG"
+        fvgBgColor := color.new(color.green, 80)
+    else if currentHourBearFvg
+        fvgStatus  := "Bear FVG"
+        fvgBgColor := color.new(color.red, 80)
+    table.cell(statsTable, 0, 1, "FVG Status",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 1, fvgStatus, bgcolor=fvgBgColor,
+         text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    table.cell(statsTable, 0, 2, "1st 15min",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 2, first15minDirection,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    string contProb   = "-"
+    color  contBgColor = color.white
+    if first15minSet
+        if first15minDirection == "Bullish"
+            contProb   := str.tostring(array.get(bullContinuation, h), "#.#") + "% ↑"
+            contBgColor := color.new(color.green, 80)
+        else if first15minDirection == "Bearish"
+            contProb   := str.tostring(array.get(bearContinuation, h), "#.#") + "% ↓"
+            contBgColor := color.new(color.red, 80)
+        else
+            contProb := "Neutral"
+    table.cell(statsTable, 0, 3, "Continuation %",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 3, contProb, bgcolor=contBgColor,
+         text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    table.cell(statsTable, 0, 4, "Avg Range %",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 4, str.tostring(array.get(hourlyAvgRange, h), "#.###") + "%",
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    string fvgEffect = ""
+    if currentHourBullFvg
+        fvgEffect := str.tostring(array.get(bisiEffectiveness, h), "#.#") + "% ↑"
+    else if currentHourBearFvg
+        fvgEffect := str.tostring(array.get(sibiEffectiveness, h), "#.#") + "% ↓"
+    table.cell(statsTable, 0, 5, "FVG Effect %",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 5, fvgEffect,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    string timeLeft = "-"
+    if not na(hourlyOpenTime)
+        int remainingMs = 3600000 - (timenow - hourlyOpenTime)
+        if remainingMs < 0
+            timeLeft := "00:00"
+        else
+            int remainingMin = math.floor(remainingMs / 60000)
+            int remainingSec = math.floor((remainingMs % 60000) / 1000)
+            string minStr = remainingMin < 10 ? "0" + str.tostring(remainingMin) : str.tostring(remainingMin)
+            string secStr = remainingSec < 10 ? "0" + str.tostring(remainingSec) : str.tostring(remainingSec)
+            timeLeft := minStr + ":" + secStr
+    table.cell(statsTable, 0, 6, "Time Left",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 6, timeLeft,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    float  bias    = array.get(hourlyBullishBias, h)
+    string biasStr = bias > 50 ? "↑ " + str.tostring(bias, "#.#") + "%" : "↓ " + str.tostring(100 - bias, "#.#") + "%"
+    table.cell(statsTable, 0, 7, "Hourly Bias",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 7, biasStr,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    table.cell(statsTable, 0, 8, "H Open",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 8, not na(hourlyOpen) ? str.tostring(hourlyOpen, format.mintick) : "-",
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    string rangeStr = "-"
+    if not na(hourlyOpen)
+        float avgRangeVal = array.get(hourlyAvgRange, h)
+        rangeStr := str.tostring(hourlyOpen - (avgRangeVal/100*hourlyOpen), format.mintick) + " - " +
+                     str.tostring(hourlyOpen + (avgRangeVal/100*hourlyOpen), format.mintick)
+    table.cell(statsTable, 0, 9, "Exp Range",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 9, rangeStr,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    // ── rows 10–15: RTH confluence section ────────────────────────────────
+
+    // Row 10: divider header
+    table.cell(statsTable, 0, 10, "── RTH CONFLUENCE ──", bgcolor=color.navy,
+         text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 10, "9:30–4:15pm",         bgcolor=color.navy,
+         text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    // Row 11: W1 FVG signal
+    string w1Label  = w1FvgDirection == "BISI" ? "BISI ↑" : w1FvgDirection == "SIBI" ? "SIBI ↓" : "No FVG"
+    color  w1LabelBg = w1FvgDirection == "BISI" ? color.new(#00bfff, 60) : w1FvgDirection == "SIBI" ? color.new(#ff6600, 60) : color.white
+    table.cell(statsTable, 0, 11, "W1 (9:30-10)",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 11, w1Label, bgcolor=w1LabelBg,
+         text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    // Row 12: W2 FVG signal
+    string w2Label   = w2FvgDirection == "BISI" ? "BISI ↑" : w2FvgDirection == "SIBI" ? "SIBI ↓" : w2WindowClosed ? "No FVG" : "Pending"
+    color  w2LabelBg = w2FvgDirection == "BISI" ? color.new(#00bfff, 60) : w2FvgDirection == "SIBI" ? color.new(#ff6600, 60) : color.white
+    table.cell(statsTable, 0, 12, "W2 (10-11am)",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 12, w2Label, bgcolor=w2LabelBg,
+         text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    // Row 13: RTH Bull %
+    // Row 14: RTH Bear %
+    // Row 15: Sample N
+    // Logic: show W1-only after 10am, upgrade to confluence after 11am
+    bool showConfluence = w2WindowClosed  // after 11am, show full confluence
+    bool showW1Only     = w1WindowClosed and not w2WindowClosed  // 10am-11am window
+
+    float rthBullDisplay = na
+    float rthBearDisplay = na
+    int   rthNDisplay    = na
+
+    if showConfluence
+        int ci = getComboIndex(w1FvgDirection, w2FvgDirection)
+        rthBullDisplay := array.get(comboBullPct, ci)
+        rthBearDisplay := array.get(comboBearPct, ci)
+        rthNDisplay    := array.get(comboSample,  ci)
+    else if showW1Only
+        int wi = getW1Index(w1FvgDirection)
+        rthBullDisplay := array.get(w1BullPct, wi)
+        rthBearDisplay := array.get(w1BearPct, wi)
+        rthNDisplay    := array.get(w1Sample,  wi)
+
+    string rthBullStr  = not na(rthBullDisplay) ? str.tostring(rthBullDisplay, "#.#") + "%" : "-"
+    string rthBearStr  = not na(rthBearDisplay) ? str.tostring(rthBearDisplay, "#.#") + "%" : "-"
+    string rthNStr     = not na(rthNDisplay)    ? "n=" + str.tostring(rthNDisplay)           : "-"
+    string tableMode   = showConfluence ? "(confluence)" : showW1Only ? "(W1 only)" : ""
+
+    // colour the bias cell by which side is dominant
+    color bullDisplayBg = not na(rthBullDisplay) and rthBullDisplay > rthBearDisplay ? color.new(color.green, 70) : color.white
+    color bearDisplayBg = not na(rthBearDisplay) and rthBearDisplay > rthBullDisplay ? color.new(color.red,   70) : color.white
+
+    table.cell(statsTable, 0, 13, "RTH Bull% " + tableMode,
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 13, rthBullStr, bgcolor=bullDisplayBg,
+         text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    table.cell(statsTable, 0, 14, "RTH Bear%",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 14, rthBearStr, bgcolor=bearDisplayBg,
+         text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+
+    table.cell(statsTable, 0, 15, "RTH Sample",
+         bgcolor=color.black, text_color=color.white, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)
+    table.cell(statsTable, 1, 15, rthNStr,
+         bgcolor=color.white, text_color=color.black, text_size=tableTextSizeConverted, text_font_family=font.family_monospace)

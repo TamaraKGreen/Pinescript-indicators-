@@ -1,0 +1,1243 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=6
+indicator("Session Range Projections", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// -------------------------------------------------- Inputs --------------------------------------------------
+var g_GLOBAL = "Global Settings"
+label_size_input = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], tooltip = "Select the size of label text", group = g_GLOBAL)
+label_text_color = input.color(color.black, "Label Text Color", tooltip = "Select the color of label text", group = g_GLOBAL)
+
+// -------------------------------------------------- Inputs --------------------------------------------------
+// Range 1 Settings
+var g_RANGE_1 = "Range 1 Settings"
+session         = input.session("0200-0215", "Session 1", inline = "X", tooltip = "The time window whose range will be utilized for projections", group = g_RANGE_1)
+stats_session   = input.session("0230-0800", "Statistics Tracking Session", inline = "X", tooltip = "The time window during which statistics (first touch, opposite hits) are tracked", group = g_RANGE_1)
+proj_type_1     = input.string("Range Extensions", "Projection Type", options = ["Range Extensions", "True Standard Deviations", "Both"], tooltip = "Select which projections to plot", group = g_RANGE_1)
+range_basis_1   = input.string("Wick", "Range Basis", options = ["Wick", "Body", "Both"], tooltip = "Calculate projections based on wick (high/low), body (open/close), or both", group = g_RANGE_1)
+horiz_lines     = input.bool(true, "Range/Deviation lines - first range", tooltip = "Show all lines for Range 1", group = g_RANGE_1)
+show_re_1       = input.bool(true, "Show Range Extensions", tooltip = "Enable or disable Range Extensions for Range 1", group = g_RANGE_1) // New input
+show_tsd_1      = input.bool(true, "Show True Standard Deviations", tooltip = "Enable or disable True Standard Deviations for Range 1", group = g_RANGE_1) // New input
+show_box_1      = input.bool(true, "Show Range Boxes", tooltip = "Enable or disable wick and body boxes for Range 1", group = g_RANGE_1) // New input
+use_sd_1        = input.bool(true, "RE 1", inline = "RE1", tooltip = "Enable projection at this RE level", group = g_RANGE_1)
+sd_1            = input.float(1, "", 0, inline = "RE1", group = g_RANGE_1)
+use_sd_2        = input.bool(true, "RE 2", inline = "RE2", tooltip = "Enable projection at this RE level", group = g_RANGE_1)
+sd_2            = input.float(2, "", 0, inline = "RE2", group = g_RANGE_1)
+use_sd_3        = input.bool(true, "RE 3", inline = "RE3", tooltip = "Enable projection at this RE level", group = g_RANGE_1)
+sd_3            = input.float(3, "", 0, inline = "RE3", group = g_RANGE_1)
+use_sd_4        = input.bool(true, "RE 4", inline = "RE4", tooltip = "Enable projection at this RE level", group = g_RANGE_1)
+sd_4            = input.float(4, "", 0, inline = "RE4", group = g_RANGE_1)
+use_sd_5        = input.bool(true, "RE 5", inline = "RE5", tooltip = "Enable projection at this RE level", group = g_RANGE_1)
+sd_5            = input.float(5, "", 0, inline = "RE5", group = g_RANGE_1)
+use_sd_6        = input.bool(true, "RE 6", inline = "RE6", tooltip = "Enable projection at this RE level", group = g_RANGE_1)
+sd_6            = input.float(6, "", 0, inline = "RE6", group = g_RANGE_1)
+use_true_sd_1_1 = input.bool(true, "True SD 1", inline = "TSD1_1", tooltip = "Enable true standard deviation level 1 for Range 1", group = g_RANGE_1)
+true_sd_1_1     = input.float(1.0, "", 0, inline = "TSD1_1", group = g_RANGE_1)
+use_true_sd_2_1 = input.bool(true, "True SD 2", inline = "TSD2_1", tooltip = "Enable true standard deviation level 2 for Range 1", group = g_RANGE_1)
+true_sd_2_1     = input.float(2.0, "", 0, inline = "TSD2_1", group = g_RANGE_1)
+use_true_sd_3_1 = input.bool(true, "True SD 3", inline = "TSD3_1", tooltip = "Enable true standard deviation level 3 for Range 1", group = g_RANGE_1)
+true_sd_3_1     = input.float(3.0, "", 0, inline = "TSD3_1", group = g_RANGE_1)
+use_true_sd_4_1 = input.bool(true, "True SD 4", inline = "TSD4_1", tooltip = "Enable true standard deviation level 4 for Range 1", group = g_RANGE_1)
+true_sd_4_1     = input.float(4.0, "", 0, inline = "TSD4_1", group = g_RANGE_1)
+true_sd_color_1 = input.color(color.green, "True SD Color", group = g_RANGE_1)
+true_sd_style_1 = input.string("Dashed", "True SD Style", options = ["Solid", "Dotted", "Dashed"], group = g_RANGE_1)
+true_sd_anchor_1 = input.string("Open", "True SD Anchor", options = ["Open", "High/Low"], tooltip = "Anchor true SD levels to session open or high/low", group = g_RANGE_1)
+max_sessions_1  = input.int(100, "Max Sessions for SD", minval=1, tooltip="Number of historical sessions to calculate true standard deviation", group = g_RANGE_1)
+extend_bars     = input.int(0, "Extend Lines (Bars)", minval=0, tooltip="Number of bars to extend deviation lines beyond the session end for Range 1", group = g_RANGE_1)
+range_box_color_1  = input.color(color.new(color.yellow, 70), "First range wick box colour", group = g_RANGE_1)
+range_body_color_1 = input.color(color.new(color.yellow, 60), "First range body box colour", group = g_RANGE_1)
+wick_line_color_1  = input.color(color.black, "First range wick line colour", group = g_RANGE_1)
+wick_proj_style_1  = input.string('Dotted', "First range wick line style", options = ['Solid', 'Dotted', 'Dashed'], group = g_RANGE_1)
+body_line_color_1  = input.color(color.gray, "First range body line colour", group = g_RANGE_1)
+body_proj_style_1  = input.string('Dashed', "First range body line style", options = ['Solid', 'Dotted', 'Dashed'], group = g_RANGE_1)
+
+// Range 2 Settings
+var g_RANGE_2 = "Range 2 Settings"
+session_2       = input.session("0900-0915", "Session 2", inline = "X", tooltip = "The second time window whose range will be utilized for projections", group = g_RANGE_2)
+proj_type_2     = input.string("Range Extensions", "Projection Type", options = ["Range Extensions", "True Standard Deviations", "Both"], tooltip = "Select which projections to plot", group = g_RANGE_2)
+range_basis_2   = input.string("Wick", "Range Basis", options = ["Wick", "Body"], tooltip = "Calculate projections based on wick (high/low) or body (open/close)", group = g_RANGE_2)
+horiz_lines_2   = input.bool(true, "Range/Deviation lines - second range", tooltip = "Show all lines for Range 2", group = g_RANGE_2)
+show_re_2       = input.bool(true, "Show Range Extensions", tooltip = "Enable or disable Range Extensions for Range 2", group = g_RANGE_2) // New input
+show_tsd_2      = input.bool(true, "Show True Standard Deviations", tooltip = "Enable or disable True Standard Deviations for Range 2", group = g_RANGE_2) // New input
+show_box_2      = input.bool(true, "Show Range Boxes", tooltip = "Enable or disable wick and body boxes for Range 2", group = g_RANGE_2) // New input
+use_sd_7        = input.bool(true, "RE 1", inline = "SD7", tooltip = "Enable projection at this RE level", group = g_RANGE_2)
+sd_7            = input.float(1, "", 0, inline = "SD7", group = g_RANGE_2)
+use_sd_8        = input.bool(true, "RE 2", inline = "SD8", tooltip = "Enable projection at this RE level", group = g_RANGE_2)
+sd_8            = input.float(2, "", 0, inline = "SD8", group = g_RANGE_2)
+use_sd_9        = input.bool(true, "RE 3", inline = "SD9", tooltip = "Enable projection at this RE level", group = g_RANGE_2)
+sd_9            = input.float(3, "", 0, inline = "SD9", group = g_RANGE_2)
+use_sd_10       = input.bool(true, "RE 4", inline = "SD10", tooltip = "Enable projection at this RE level", group = g_RANGE_2)
+sd_10           = input.float(4, "", 0, inline = "SD10", group = g_RANGE_2)
+use_sd_11       = input.bool(true, "RE 5", inline = "SD11", tooltip = "Enable projection at this RE level", group = g_RANGE_2)
+sd_11           = input.float(5, "", 0, inline = "SD11", group = g_RANGE_2)
+use_sd_12       = input.bool(true, "RE 6", inline = "SD12", tooltip = "Enable projection at this RE level", group = g_RANGE_2)
+sd_12           = input.float(6, "", 0, inline = "SD12", group = g_RANGE_2)
+use_true_sd_1_2 = input.bool(true, "True SD 1", inline = "TSD1_2", tooltip = "Enable true standard deviation level 1 for Range 2", group = g_RANGE_2)
+true_sd_1_2     = input.float(1.0, "", 0, inline = "TSD1_2", group = g_RANGE_2)
+use_true_sd_2_2 = input.bool(true, "True SD 2", inline = "TSD2_2", tooltip = "Enable true standard deviation level 2 for Range 2", group = g_RANGE_2)
+true_sd_2_2     = input.float(2.0, "", 0, inline = "TSD2_2", group = g_RANGE_2)
+use_true_sd_3_2 = input.bool(true, "True SD 3", inline = "TSD3_2", tooltip = "Enable true standard deviation level 3 for Range 2", group = g_RANGE_2)
+true_sd_3_2     = input.float(3.0, "", 0, inline = "TSD3_2", group = g_RANGE_2)
+use_true_sd_4_2 = input.bool(true, "True SD 4", inline = "TSD4_2", tooltip = "Enable true standard deviation level 4 for Range 2", group = g_RANGE_2)
+true_sd_4_2     = input.float(4.0, "", 0, inline = "TSD4_2", group = g_RANGE_2)
+true_sd_color_2 = input.color(color.green, "True SD Color", group = g_RANGE_2)
+true_sd_style_2 = input.string("Dashed", "True SD Style", options = ["Solid", "Dotted", "Dashed"], group = g_RANGE_2)
+true_sd_anchor_2 = input.string("Open", "True SD Anchor", options = ["Open", "High/Low"], tooltip = "Anchor true SD levels to session open or high/low", group = g_RANGE_2)
+max_sessions_2  = input.int(100, "Max Sessions for SD", minval=1, tooltip="Number of historical sessions to calculate true standard deviation", group = g_RANGE_2)
+extend_bars_2   = input.int(0, "Extend Lines (Bars)", minval=0, tooltip="Number of bars to extend deviation lines beyond the session end for Range 2", group = g_RANGE_2)
+range_box_color_2  = input.color(color.new(color.fuchsia, 70), "Second range wick box colour", group = g_RANGE_2)
+range_body_color_2 = input.color(color.new(color.fuchsia, 60), "Second range body box colour", group = g_RANGE_2)
+wick_line_color_2  = input.color(color.black, "Second range wick line colour", group = g_RANGE_2)
+wick_proj_style_2  = input.string('Dotted', "Second range wick line style", options = ['Solid', 'Dotted', 'Dashed'], group = g_RANGE_2)
+body_line_color_2  = input.color(color.gray, "Second range body line colour", group = g_RANGE_2)
+body_proj_style_2  = input.string('Dashed', "Second range body line style", options = ['Solid', 'Dotted', 'Dashed'], group = g_RANGE_2)
+
+// Range 3 Settings
+var g_RANGE_3 = "Range 3 Settings"
+session_3       = input.session("1300-1315", "Session 3", inline = "X", tooltip = "The third time window whose range will be utilized for projections", group = g_RANGE_3)
+proj_type_3     = input.string("Range Extensions", "Projection Type", options = ["Range Extensions", "True Standard Deviations", "Both"], tooltip = "Select which projections to plot", group = g_RANGE_3)
+range_basis_3   = input.string("Wick", "Range Basis", options = ["Wick", "Body"], tooltip = "Calculate projections based on wick (high/low) or body (open/close)", group = g_RANGE_3)
+horiz_lines_3   = input.bool(true, "/Range/Deviation lines - third range", tooltip = "Show all lines for Range 3", group = g_RANGE_3)
+show_re_3       = input.bool(true, "Show Range Extensions", tooltip = "Enable or disable Range Extensions for Range 3", group = g_RANGE_3) // New input
+show_tsd_3      = input.bool(true, "Show True Standard Deviations", tooltip = "Enable or disable True Standard Deviations for Range 3", group = g_RANGE_3) // New input
+show_box_3      = input.bool(true, "Show Range Boxes", tooltip = "Enable or disable wick and body boxes for Range 3", group = g_RANGE_3) // New input
+use_sd_13       = input.bool(true, "RE 1", inline = "SD13", tooltip = "Enable projection at this RE level", group = g_RANGE_3)
+sd_13           = input.float(1, "", 0, inline = "SD13", group = g_RANGE_3)
+use_sd_14       = input.bool(true, "RE 2", inline = "SD14", tooltip = "Enable projection at this RE level", group = g_RANGE_3)
+sd_14           = input.float(2, "", 0, inline = "SD14", group = g_RANGE_3)
+use_sd_15       = input.bool(true, "RE 3", inline = "SD15", tooltip = "Enable projection at this RE level", group = g_RANGE_3)
+sd_15           = input.float(3, "", 0, inline = "SD15", group = g_RANGE_3)
+use_sd_16       = input.bool(true, "RE 4", inline = "SD16", tooltip = "Enable projection at this RE level", group = g_RANGE_3)
+sd_16           = input.float(4, "", 0, inline = "SD16", group = g_RANGE_3)
+use_sd_17       = input.bool(true, "RE 5", inline = "SD17", tooltip = "Enable projection at this RE level", group = g_RANGE_3)
+sd_17           = input.float(5, "", 0, inline = "SD17", group = g_RANGE_3)
+use_sd_18       = input.bool(true, "RE 6", inline = "SD18", tooltip = "Enable projection at this RE level", group = g_RANGE_3)
+sd_18           = input.float(6, "", 0, inline = "SD18", group = g_RANGE_3)
+use_true_sd_1_3 = input.bool(true, "True SD 1", inline = "TSD1_3", tooltip = "Enable true standard deviation level 1 for Range 3", group = g_RANGE_3)
+true_sd_1_3     = input.float(1.0, "", 0, inline = "TSD1_3", group = g_RANGE_3)
+use_true_sd_2_3 = input.bool(true, "True SD 2", inline = "TSD2_3", tooltip = "Enable true standard deviation level 2 for Range 3", group = g_RANGE_3)
+true_sd_2_3     = input.float(2.0, "", 0, inline = "TSD2_3", group = g_RANGE_3)
+use_true_sd_3_3 = input.bool(true, "True SD 3", inline = "TSD3_3", tooltip = "Enable true standard deviation level 3 for Range 3", group = g_RANGE_3)
+true_sd_3_3     = input.float(3.0, "", 0, inline = "TSD3_3", group = g_RANGE_3)
+use_true_sd_4_3 = input.bool(true, "True SD 4", inline = "TSD4_3", tooltip = "Enable true standard deviation level 4 for Range 3", group = g_RANGE_3)
+true_sd_4_3     = input.float(4.0, "", 0, inline = "TSD4_3", group = g_RANGE_3)
+true_sd_color_3 = input.color(color.green, "True SD Color", group = g_RANGE_3)
+true_sd_style_3 = input.string("Dashed", "True SD Style", options = ["Solid", "Dotted", "Dashed"], group = g_RANGE_3)
+true_sd_anchor_3 = input.string("Open", "True SD Anchor", options = ["Open", "High/Low"], tooltip = "Anchor true SD levels to session open or high/low", group = g_RANGE_3)
+max_sessions_3  = input.int(100, "Max Sessions for SD", minval=1, tooltip="Number of historical sessions to calculate true standard deviation", group = g_RANGE_3)
+extend_bars_3   = input.int(0, "Extend Lines (Bars)", minval=0, tooltip="Number of bars to extend deviation lines beyond the session end for Range 3", group = g_RANGE_3)
+range_box_color_3  = input.color(color.new(color.teal, 70), "Third range wick box colour", group = g_RANGE_3)
+range_body_color_3 = input.color(color.new(color.teal, 60), "Third range body box colour", group = g_RANGE_3)
+wick_line_color_3  = input.color(color.black, "Third range wick line colour", group = g_RANGE_3)
+wick_proj_style_3  = input.string('Dotted', "Third range wick line style", options = ['Solid', 'Dotted', 'Dashed'], group = g_RANGE_3)
+body_line_color_3  = input.color(color.gray, "Third range body line colour", group = g_RANGE_3)
+body_proj_style_3  = input.string('Dashed', "Third range body line style", options = ['Solid', 'Dotted', 'Dashed'], group = g_RANGE_3)
+
+// -------------------------------------------------- Functions --------------------------------------------------
+get_line_style(i) =>
+    result = switch i
+        'Solid' => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+
+get_label_size(i) =>
+    result = switch i
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+
+wick_proj_style_1 := get_line_style(wick_proj_style_1)
+wick_proj_style_2 := get_line_style(wick_proj_style_2)
+wick_proj_style_3 := get_line_style(wick_proj_style_3)
+body_proj_style_1 := get_line_style(body_proj_style_1)
+body_proj_style_2 := get_line_style(body_proj_style_2)
+body_proj_style_3 := get_line_style(body_proj_style_3)
+true_sd_style_1 := get_line_style(true_sd_style_1)
+true_sd_style_2 := get_line_style(true_sd_style_2)
+true_sd_style_3 := get_line_style(true_sd_style_3)
+
+// -------------------------------------------------- Constants & Variables --------------------------------------------------
+t = not na(time("", session, "America/New_York"))
+t2 = not na(time("", session_2, "America/New_York"))
+t3 = not na(time("", session_3, "America/New_York"))
+label_size = get_label_size(label_size_input)
+
+// Range 1 variables
+range_high = high
+range_low = low
+range_body_high = math.max(open, close)
+range_body_low = math.min(open, close)
+var box range_box = na
+var box body_box = na
+var int start = 0
+var int end_bar = 0
+var float session_open = na
+var float[] range_distances_1 = array.new_float(0)
+var line line_p1 = na
+var line line_p2 = na
+var line line_p3 = na
+var line line_p4 = na
+var line line_p5 = na
+var line line_p6 = na
+var line line_m1 = na
+var line line_m2 = na
+var line line_m3 = na
+var line line_m4 = na
+var line line_m5 = na
+var line line_m6 = na
+var line line_p1_body = na
+var line line_p2_body = na
+var line line_p3_body = na
+var line line_p4_body = na
+var line line_p5_body = na
+var line line_p6_body = na
+var line line_m1_body = na
+var line line_m2_body = na
+var line line_m3_body = na
+var line line_m4_body = na
+var line line_m5_body = na
+var line line_m6_body = na
+var line line_true_sd_1_upper_1 = na
+var line line_true_sd_1_lower_1 = na
+var line line_true_sd_2_upper_1 = na
+var line line_true_sd_2_lower_1 = na
+var line line_true_sd_3_upper_1 = na
+var line line_true_sd_3_lower_1 = na
+var line line_true_sd_4_upper_1 = na
+var line line_true_sd_4_lower_1 = na
+// True SD statistics for Range 1
+var int[] first_hit_minus_tsd = array.new_int(5, 0)  // For -1TSD to -4TSD
+var int[] first_hit_plus_tsd = array.new_int(5, 0)   // For +1TSD to +4TSD
+var int[] both_hit_tsd = array.new_int(5, 0)         // For both -nTSD and +nTSD
+var bool[] hit_minus_tsd = array.new_bool(5, false)  // Current session hits
+var bool[] hit_plus_tsd = array.new_bool(5, false)
+var float[] minus_levels_tsd = array.new_float(5, na) // Store -1TSD to -4TSD levels
+var float[] plus_levels_tsd = array.new_float(5, na)  // Store +1TSD to +4TSD levels
+line[] lines_minus_tsd = array.new_line(5, na)
+line[] lines_plus_tsd = array.new_line(5, na)
+bool[] use_true_sd = array.new_bool(5, false)
+use_true_sd.set(1, use_true_sd_1_1)
+use_true_sd.set(2, use_true_sd_2_1)
+use_true_sd.set(3, use_true_sd_3_1)
+use_true_sd.set(4, use_true_sd_4_1)
+
+// Range 2 variables
+range_high_2 = high
+range_low_2 = low
+range_body_high_2 = math.max(open, close)
+range_body_low_2 = math.min(open, close)
+var box range_box_2 = na
+var box body_box_2 = na
+var int start_2 = 0
+var int end_bar_2 = 0
+var float session_open_2 = na
+var float[] range_distances_2 = array.new_float(0)
+var line line_p1_2 = na
+var line line_p2_2 = na
+var line line_p3_2 = na
+var line line_p4_2 = na
+var line line_p5_2 = na
+var line line_p6_2 = na
+var line line_m1_2 = na
+var line line_m2_2 = na
+var line line_m3_2 = na
+var line line_m4_2 = na
+var line line_m5_2 = na
+var line line_m6_2 = na
+var line line_p1_2_body = na
+var line line_p2_2_body = na
+var line line_p3_2_body = na
+var line line_p4_2_body = na
+var line line_p5_2_body = na
+var line line_p6_2_body = na
+var line line_m1_2_body = na
+var line line_m2_2_body = na
+var line line_m3_2_body = na
+var line line_m4_2_body = na
+var line line_m5_2_body = na
+var line line_m6_2_body = na
+var line line_true_sd_1_upper_2 = na
+var line line_true_sd_1_lower_2 = na
+var line line_true_sd_2_upper_2 = na
+var line line_true_sd_2_lower_2 = na
+var line line_true_sd_3_upper_2 = na
+var line line_true_sd_3_lower_2 = na
+var line line_true_sd_4_upper_2 = na
+var line line_true_sd_4_lower_2 = na
+
+// Range 3 variables
+range_high_3 = high
+range_low_3 = low
+range_body_high_3 = math.max(open, close)
+range_body_low_3 = math.min(open, close)
+var box range_box_3 = na
+var box body_box_3 = na
+var int start_3 = 0
+var int end_bar_3 = 0
+var float session_open_3 = na
+var float[] range_distances_3 = array.new_float(0)
+var line line_p1_3 = na
+var line line_p2_3 = na
+var line line_p3_3 = na
+var line line_p4_3 = na
+var line line_p5_3 = na
+var line line_p6_3 = na
+var line line_m1_3 = na
+var line line_m2_3 = na
+var line line_m3_3 = na
+var line line_m4_3 = na
+var line line_m5_3 = na
+var line line_m6_3 = na
+var line line_p1_3_body = na
+var line line_p2_3_body = na
+var line line_p3_3_body = na
+var line line_p4_3_body = na
+var line line_p5_3_body = na
+var line line_p6_3_body = na
+var line line_m1_3_body = na
+var line line_m2_3_body = na
+var line line_m3_3_body = na
+var line line_m4_3_body = na
+var line line_m5_3_body = na
+var line line_m6_3_body = na
+var line line_true_sd_1_upper_3 = na
+var line line_true_sd_1_lower_3 = na
+var line line_true_sd_2_upper_3 = na
+var line line_true_sd_2_lower_3 = na
+var line line_true_sd_3_upper_3 = na
+var line line_true_sd_3_lower_3 = na
+var line line_true_sd_4_upper_3 = na
+var line line_true_sd_4_lower_3 = na
+
+// -------------------------------------------------- Core Logic --------------------------------------------------
+
+// Range 1 Core Logic
+if t and not t[1]
+    if show_box_1
+        range_box := box.new(bar_index, range_high, bar_index, range_low, border_color = range_box_color_1, bgcolor = range_box_color_1)
+        body_box := box.new(bar_index, range_body_high, bar_index, range_body_low, border_color = range_body_color_1, bgcolor = range_body_color_1)
+    start := bar_index
+    session_open := open
+else if t
+    if show_box_1
+        range_box.set_right(bar_index)
+        body_box.set_right(bar_index)
+        if range_high > range_box.get_top()
+            range_box.set_top(range_high)
+        if range_low < range_box.get_bottom()
+            range_box.set_bottom(range_low)
+        if range_body_high > body_box.get_top()
+            body_box.set_top(range_body_high)
+        if range_body_low < body_box.get_bottom()
+            body_box.set_bottom(range_body_low)
+else if not t and t[1]
+    top = range_box.get_top()
+    bot = range_box.get_bottom()
+    dif = top - bot
+    top_body = body_box.get_top()
+    bot_body = body_box.get_bottom()
+    dif_body = top_body - bot_body
+    end_bar := bar_index
+    
+    // Store session range for true SD calculation
+    float range_to_store = range_basis_1 == "Wick" ? dif : dif_body
+    array.push(range_distances_1, range_to_store)
+    if array.size(range_distances_1) > max_sessions_1
+        array.shift(range_distances_1)
+    
+    // Calculate true standard deviation
+    float true_std_dev_1 = array.size(range_distances_1) > 1 ? math.sqrt(array.variance(range_distances_1)) : 0
+    
+    // Reset boxes
+    if show_box_1
+        range_box := na
+        body_box := na
+    line_p1 := na
+    
+    // Determine range and anchor based on user selection
+    float proj_range = range_basis_1 == "Wick" ? dif : dif_body
+    float anchor_upper = range_basis_1 == "Wick" ? (true_sd_anchor_1 == "Open" ? session_open : top) : (true_sd_anchor_1 == "Open" ? session_open : top_body)
+    float anchor_lower = range_basis_1 == "Wick" ? (true_sd_anchor_1 == "Open" ? session_open : bot) : (true_sd_anchor_1 == "Open" ? session_open : bot_body)
+    float proj_top = range_basis_1 == "Wick" ? top : top_body
+    float proj_bot = range_basis_1 == "Wick" ? bot : bot_body
+    string label_suffix = range_basis_1 == "Wick" ? "W" : "B"
+    
+    // Range Extensions (Wick, Body, or Both)
+    if (proj_type_1 == "Range Extensions" or proj_type_1 == "Both") and show_re_1 and horiz_lines
+        if range_basis_1 == "Wick" or range_basis_1 == "Both"
+            // Wick-based projections
+            if use_sd_1
+                line_p1 := line.new(start, top + dif * sd_1, end_bar, top + dif * sd_1, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, top + dif * sd_1, "+" + str.tostring(sd_1) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_2
+                line_p2 := line.new(start, top + dif * sd_2, end_bar, top + dif * sd_2, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, top + dif * sd_2, "+" + str.tostring(sd_2) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_3
+                line_p3 := line.new(start, top + dif * sd_3, end_bar, top + dif * sd_3, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, top + dif * sd_3, "+" + str.tostring(sd_3) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_4
+                line_p4 := line.new(start, top + dif * sd_4, end_bar, top + dif * sd_4, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, top + dif * sd_4, "+" + str.tostring(sd_4) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_5
+                line_p5 := line.new(start, top + dif * sd_5, end_bar, top + dif * sd_5, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, top + dif * sd_5, "+" + str.tostring(sd_5) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_6
+                line_p6 := line.new(start, top + dif * sd_6, end_bar, top + dif * sd_6, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, top + dif * sd_6, "+" + str.tostring(sd_6) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_1
+                line_m1 := line.new(start, bot - dif * sd_1, end_bar, bot - dif * sd_1, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, bot - dif * sd_1, "-" + str.tostring(sd_1) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_2
+                line_m2 := line.new(start, bot - dif * sd_2, end_bar, bot - dif * sd_2, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, bot - dif * sd_2, "-" + str.tostring(sd_2) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_3
+                line_m3 := line.new(start, bot - dif * sd_3, end_bar, bot - dif * sd_3, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, bot - dif * sd_3, "-" + str.tostring(sd_3) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_4
+                line_m4 := line.new(start, bot - dif * sd_4, end_bar, bot - dif * sd_4, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, bot - dif * sd_4, "-" + str.tostring(sd_4) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_5
+                line_m5 := line.new(start, bot - dif * sd_5, end_bar, bot - dif * sd_5, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, bot - dif * sd_5, "-" + str.tostring(sd_5) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_6
+                line_m6 := line.new(start, bot - dif * sd_6, end_bar, bot - dif * sd_6, color = wick_line_color_1, style = wick_proj_style_1)
+                label.new(start - 1, bot - dif * sd_6, "-" + str.tostring(sd_6) + "W", color = wick_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if range_basis_1 == "Body" or range_basis_1 == "Both"
+            // Body-based projections
+            if use_sd_1
+                line_p1_body := line.new(start, top_body + dif_body * sd_1, end_bar, top_body + dif_body * sd_1, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, top_body + dif_body * sd_1, "+" + str.tostring(sd_1) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_2
+                line_p2_body := line.new(start, top_body + dif_body * sd_2, end_bar, top_body + dif_body * sd_2, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, top_body + dif_body * sd_2, "+" + str.tostring(sd_2) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_3
+                line_p3_body := line.new(start, top_body + dif_body * sd_3, end_bar, top_body + dif_body * sd_3, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, top_body + dif_body * sd_3, "+" + str.tostring(sd_3) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_4
+                line_p4_body := line.new(start, top_body + dif_body * sd_4, end_bar, top_body + dif_body * sd_4, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, top_body + dif_body * sd_4, "+" + str.tostring(sd_4) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_5
+                line_p5_body := line.new(start, top_body + dif_body * sd_5, end_bar, top_body + dif_body * sd_5, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, top_body + dif_body * sd_5, "+" + str.tostring(sd_5) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_6
+                line_p6_body := line.new(start, top_body + dif_body * sd_6, end_bar, top_body + dif_body * sd_6, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, top_body + dif_body * sd_6, "+" + str.tostring(sd_6) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_1
+                line_m1_body := line.new(start, bot_body - dif_body * sd_1, end_bar, bot_body - dif_body * sd_1, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, bot_body - dif_body * sd_1, "-" + str.tostring(sd_1) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_2
+                line_m2_body := line.new(start, bot_body - dif_body * sd_2, end_bar, bot_body - dif_body * sd_2, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, bot_body - dif_body * sd_2, "-" + str.tostring(sd_2) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_3
+                line_m3_body := line.new(start, bot_body - dif_body * sd_3, end_bar, bot_body - dif_body * sd_3, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, bot_body - dif_body * sd_3, "-" + str.tostring(sd_3) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_4
+                line_m4_body := line.new(start, bot_body - dif_body * sd_4, end_bar, bot_body - dif_body * sd_4, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, bot_body - dif_body * sd_4, "-" + str.tostring(sd_4) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_5
+                line_m5_body := line.new(start, bot_body - dif_body * sd_5, end_bar, bot_body - dif_body * sd_5, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, bot_body - dif_body * sd_5, "-" + str.tostring(sd_5) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_6
+                line_m6_body := line.new(start, bot_body - dif_body * sd_6, end_bar, bot_body - dif_body * sd_6, color = body_line_color_1, style = body_proj_style_1)
+                label.new(start - 1, bot_body - dif_body * sd_6, "-" + str.tostring(sd_6) + "B", color = body_line_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+
+    // True Standard Deviation Levels
+    if (proj_type_1 == "True Standard Deviations" or proj_type_1 == "Both") and show_tsd_1 and horiz_lines and true_std_dev_1 > 0
+        if use_true_sd_1_1
+            line_true_sd_1_upper_1 := line.new(start, anchor_upper + true_std_dev_1 * true_sd_1_1, end_bar, anchor_upper + true_std_dev_1 * true_sd_1_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_upper + true_std_dev_1 * true_sd_1_1, "+" + str.tostring(true_sd_1_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_1_lower_1 := line.new(start, anchor_lower - true_std_dev_1 * true_sd_1_1, end_bar, anchor_lower - true_std_dev_1 * true_sd_1_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_lower - true_std_dev_1 * true_sd_1_1, "-" + str.tostring(true_sd_1_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_2_1
+            line_true_sd_2_upper_1 := line.new(start, anchor_upper + true_std_dev_1 * true_sd_2_1, end_bar, anchor_upper + true_std_dev_1 * true_sd_2_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_upper + true_std_dev_1 * true_sd_2_1, "+" + str.tostring(true_sd_2_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_2_lower_1 := line.new(start, anchor_lower - true_std_dev_1 * true_sd_2_1, end_bar, anchor_lower - true_std_dev_1 * true_sd_2_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_lower - true_std_dev_1 * true_sd_2_1, "-" + str.tostring(true_sd_2_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_3_1
+            line_true_sd_3_upper_1 := line.new(start, anchor_upper + true_std_dev_1 * true_sd_3_1, end_bar, anchor_upper + true_std_dev_1 * true_sd_3_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_upper + true_std_dev_1 * true_sd_3_1, "+" + str.tostring(true_sd_3_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_3_lower_1 := line.new(start, anchor_lower - true_std_dev_1 * true_sd_3_1, end_bar, anchor_lower - true_std_dev_1 * true_sd_3_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_lower - true_std_dev_1 * true_sd_3_1, "-" + str.tostring(true_sd_3_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_4_1
+            line_true_sd_4_upper_1 := line.new(start, anchor_upper + true_std_dev_1 * true_sd_4_1, end_bar, anchor_upper + true_std_dev_1 * true_sd_4_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_upper + true_std_dev_1 * true_sd_4_1, "+" + str.tostring(true_sd_4_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_4_lower_1 := line.new(start, anchor_lower - true_std_dev_1 * true_sd_4_1, end_bar, anchor_lower - true_std_dev_1 * true_sd_4_1, color = true_sd_color_1, style = true_sd_style_1)
+            label.new(start - 1, anchor_lower - true_std_dev_1 * true_sd_4_1, "-" + str.tostring(true_sd_4_1) + "TSD" + label_suffix, color = true_sd_color_1, style = label.style_none, textcolor = label_text_color, size = label_size)
+else if not t and not na(line_p1) and extend_bars > 0
+    if show_re_1
+        line_p1.set_x2(end_bar + extend_bars)
+        line_p2.set_x2(end_bar + extend_bars)
+        line_p3.set_x2(end_bar + extend_bars)
+        line_p4.set_x2(end_bar + extend_bars)
+        line_p5.set_x2(end_bar + extend_bars)
+        line_p6.set_x2(end_bar + extend_bars)
+        line_m1.set_x2(end_bar + extend_bars)
+        line_m2.set_x2(end_bar + extend_bars)
+        line_m3.set_x2(end_bar + extend_bars)
+        line_m4.set_x2(end_bar + extend_bars)
+        line_m5.set_x2(end_bar + extend_bars)
+        line_m6.set_x2(end_bar + extend_bars)
+        line_p1_body.set_x2(end_bar + extend_bars)
+        line_p2_body.set_x2(end_bar + extend_bars)
+        line_p3_body.set_x2(end_bar + extend_bars)
+        line_p4_body.set_x2(end_bar + extend_bars)
+        line_p5_body.set_x2(end_bar + extend_bars)
+        line_p6_body.set_x2(end_bar + extend_bars)
+        line_m1_body.set_x2(end_bar + extend_bars)
+        line_m2_body.set_x2(end_bar + extend_bars)
+        line_m3_body.set_x2(end_bar + extend_bars)
+        line_m4_body.set_x2(end_bar + extend_bars)
+        line_m5_body.set_x2(end_bar + extend_bars)
+        line_m6_body.set_x2(end_bar + extend_bars)
+    if show_tsd_1
+        if not na(line_true_sd_1_upper_1)
+            line_true_sd_1_upper_1.set_x2(end_bar + extend_bars)
+            line_true_sd_1_lower_1.set_x2(end_bar + extend_bars)
+        if not na(line_true_sd_2_upper_1)
+            line_true_sd_2_upper_1.set_x2(end_bar + extend_bars)
+            line_true_sd_2_lower_1.set_x2(end_bar + extend_bars)
+        if not na(line_true_sd_3_upper_1)
+            line_true_sd_3_upper_1.set_x2(end_bar + extend_bars)
+            line_true_sd_3_lower_1.set_x2(end_bar + extend_bars)
+        if not na(line_true_sd_4_upper_1)
+            line_true_sd_4_upper_1.set_x2(end_bar + extend_bars)
+            line_true_sd_4_lower_1.set_x2(end_bar + extend_bars)
+
+// Range 2 Core Logic
+if t2 and not t2[1]
+    if show_box_2
+        range_box_2 := box.new(bar_index, range_high_2, bar_index, range_low_2, border_color = range_box_color_2, bgcolor = range_box_color_2)
+        body_box_2 := box.new(bar_index, range_body_high_2, bar_index, range_body_low_2, border_color = range_body_color_2, bgcolor = range_body_color_2)
+    start_2 := bar_index
+    session_open_2 := open
+else if t2
+    if show_box_2
+        range_box_2.set_right(bar_index)
+        body_box_2.set_right(bar_index)
+        if range_high_2 > range_box_2.get_top()
+            range_box_2.set_top(range_high_2)
+        if range_low_2 < range_box_2.get_bottom()
+            range_box_2.set_bottom(range_low_2)
+        if range_body_high_2 > body_box_2.get_top()
+            body_box_2.set_top(range_body_high_2)
+        if range_body_low_2 < body_box_2.get_bottom()
+            body_box_2.set_bottom(range_body_low_2)
+else if not t2 and t2[1]
+    top_2 = range_box_2.get_top()
+    bot_2 = range_box_2.get_bottom()
+    dif_2 = top_2 - bot_2
+    top_2_body = body_box_2.get_top()
+    bot_2_body = body_box_2.get_bottom()
+    dif_2_body = top_2_body - bot_2_body
+    end_bar_2 := bar_index
+    
+    // Store session range for true SD calculation
+    float range_to_store_2 = range_basis_2 == "Wick" ? dif_2 : dif_2_body
+    array.push(range_distances_2, range_to_store_2)
+    if array.size(range_distances_2) > max_sessions_2
+        array.shift(range_distances_2)
+    
+    // Calculate true standard deviation
+    float true_std_dev_2 = array.size(range_distances_2) > 1 ? math.sqrt(array.variance(range_distances_2)) : 0
+    
+    // Reset boxes
+    if show_box_2
+        range_box_2 := na
+        body_box_2 := na
+    line_p1_2 := na
+    
+    // Determine range and anchor based on user selection
+    float proj_range_2 = range_basis_2 == "Wick" ? dif_2 : dif_2_body
+    float anchor_upper_2 = range_basis_2 == "Wick" ? (true_sd_anchor_2 == "Open" ? session_open_2 : top_2) : (true_sd_anchor_2 == "Open" ? session_open_2 : top_2_body)
+    float anchor_lower_2 = range_basis_2 == "Wick" ? (true_sd_anchor_2 == "Open" ? session_open_2 : bot_2) : (true_sd_anchor_2 == "Open" ? session_open_2 : bot_2_body)
+    float proj_top_2 = range_basis_2 == "Wick" ? top_2 : top_2_body
+    float proj_bot_2 = range_basis_2 == "Wick" ? bot_2 : bot_2_body
+    string label_suffix_2 = range_basis_2 == "Wick" ? "W" : "B"
+    
+    // Range Extensions (Wick or Body based on range_basis_2)
+    if (proj_type_2 == "Range Extensions" or proj_type_2 == "Both") and show_re_2 and horiz_lines_2
+        if range_basis_2 == "Wick"
+            // Wick-based projections
+            if use_sd_7
+                line_p1_2 := line.new(start_2, top_2 + dif_2 * sd_7, end_bar_2, top_2 + dif_2 * sd_7, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, top_2 + dif_2 * sd_7, "+" + str.tostring(sd_7) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_8
+                line_p2_2 := line.new(start_2, top_2 + dif_2 * sd_8, end_bar_2, top_2 + dif_2 * sd_8, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, top_2 + dif_2 * sd_8, "+" + str.tostring(sd_8) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_9
+                line_p3_2 := line.new(start_2, top_2 + dif_2 * sd_9, end_bar_2, top_2 + dif_2 * sd_9, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, top_2 + dif_2 * sd_9, "+" + str.tostring(sd_9) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_10
+                line_p4_2 := line.new(start_2, top_2 + dif_2 * sd_10, end_bar_2, top_2 + dif_2 * sd_10, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, top_2 + dif_2 * sd_10, "+" + str.tostring(sd_10) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_11
+                line_p5_2 := line.new(start_2, top_2 + dif_2 * sd_11, end_bar_2, top_2 + dif_2 * sd_11, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, top_2 + dif_2 * sd_11, "+" + str.tostring(sd_11) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_12
+                line_p6_2 := line.new(start_2, top_2 + dif_2 * sd_12, end_bar_2, top_2 + dif_2 * sd_12, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, top_2 + dif_2 * sd_12, "+" + str.tostring(sd_12) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_7
+                line_m1_2 := line.new(start_2, bot_2 - dif_2 * sd_7, end_bar_2, bot_2 - dif_2 * sd_7, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, bot_2 - dif_2 * sd_7, "-" + str.tostring(sd_7) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_8
+                line_m2_2 := line.new(start_2, bot_2 - dif_2 * sd_8, end_bar_2, bot_2 - dif_2 * sd_8, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, bot_2 - dif_2 * sd_8, "-" + str.tostring(sd_8) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_9
+                line_m3_2 := line.new(start_2, bot_2 - dif_2 * sd_9, end_bar_2, bot_2 - dif_2 * sd_9, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, bot_2 - dif_2 * sd_9, "-" + str.tostring(sd_9) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_10
+                line_m4_2 := line.new(start_2, bot_2 - dif_2 * sd_10, end_bar_2, bot_2 - dif_2 * sd_10, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, bot_2 - dif_2 * sd_10, "-" + str.tostring(sd_10) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_11
+                line_m5_2 := line.new(start_2, bot_2 - dif_2 * sd_11, end_bar_2, bot_2 - dif_2 * sd_11, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, bot_2 - dif_2 * sd_11, "-" + str.tostring(sd_11) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_12
+                line_m6_2 := line.new(start_2, bot_2 - dif_2 * sd_12, end_bar_2, bot_2 - dif_2 * sd_12, color = wick_line_color_2, style = wick_proj_style_2)
+                label.new(start_2 - 1, bot_2 - dif_2 * sd_12, "-" + str.tostring(sd_12) + "W", color = wick_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+        else if range_basis_2 == "Body"
+            // Body-based projections
+            if use_sd_7
+                line_p1_2_body := line.new(start_2, top_2_body + dif_2_body * sd_7, end_bar_2, top_2_body + dif_2_body * sd_7, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, top_2_body + dif_2_body * sd_7, "+" + str.tostring(sd_7) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_8
+                line_p2_2_body := line.new(start_2, top_2_body + dif_2_body * sd_8, end_bar_2, top_2_body + dif_2_body * sd_8, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, top_2_body + dif_2_body * sd_8, "+" + str.tostring(sd_8) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_9
+                line_p3_2_body := line.new(start_2, top_2_body + dif_2_body * sd_9, end_bar_2, top_2_body + dif_2_body * sd_9, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, top_2_body + dif_2_body * sd_9, "+" + str.tostring(sd_9) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_10
+                line_p4_2_body := line.new(start_2, top_2_body + dif_2_body * sd_10, end_bar_2, top_2_body + dif_2_body * sd_10, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, top_2_body + dif_2_body * sd_10, "+" + str.tostring(sd_10) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_11
+                line_p5_2_body := line.new(start_2, top_2_body + dif_2_body * sd_11, end_bar_2, top_2_body + dif_2_body * sd_11, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, top_2_body + dif_2_body * sd_11, "+" + str.tostring(sd_11) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_12
+                line_p6_2_body := line.new(start_2, top_2_body + dif_2_body * sd_12, end_bar_2, top_2_body + dif_2_body * sd_12, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, top_2_body + dif_2_body * sd_12, "+" + str.tostring(sd_12) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_7
+                line_m1_2_body := line.new(start_2, bot_2_body - dif_2_body * sd_7, end_bar_2, bot_2_body - dif_2_body * sd_7, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, bot_2_body - dif_2_body * sd_7, "-" + str.tostring(sd_7) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_8
+                line_m2_2_body := line.new(start_2, bot_2_body - dif_2_body * sd_8, end_bar_2, bot_2_body - dif_2_body * sd_8, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, bot_2_body - dif_2_body * sd_8, "-" + str.tostring(sd_8) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_9
+                line_m3_2_body := line.new(start_2, bot_2_body - dif_2_body * sd_9, end_bar_2, bot_2_body - dif_2_body * sd_9, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, bot_2_body - dif_2_body * sd_9, "-" + str.tostring(sd_9) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_10
+                line_m4_2_body := line.new(start_2, bot_2_body - dif_2_body * sd_10, end_bar_2, bot_2_body - dif_2_body * sd_10, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, bot_2_body - dif_2_body * sd_10, "-" + str.tostring(sd_10) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_11
+                line_m5_2_body := line.new(start_2, bot_2_body - dif_2_body * sd_11, end_bar_2, bot_2_body - dif_2_body * sd_11, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, bot_2_body - dif_2_body * sd_11, "-" + str.tostring(sd_11) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_12
+                line_m6_2_body := line.new(start_2, bot_2_body - dif_2_body * sd_12, end_bar_2, bot_2_body - dif_2_body * sd_12, color = body_line_color_2, style = body_proj_style_2)
+                label.new(start_2 - 1, bot_2_body - dif_2_body * sd_12, "-" + str.tostring(sd_12) + "B", color = body_line_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)    
+    // True Standard Deviation Levels
+    if (proj_type_2 == "True Standard Deviations" or proj_type_2 == "Both") and show_tsd_2 and horiz_lines_2 and true_std_dev_2 > 0
+        if use_true_sd_1_2
+            line_true_sd_1_upper_2 := line.new(start_2, anchor_upper_2 + true_std_dev_2 * true_sd_1_2, end_bar_2, anchor_upper_2 + true_std_dev_2 * true_sd_1_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_upper_2 + true_std_dev_2 * true_sd_1_2, "+" + str.tostring(true_sd_1_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_1_lower_2 := line.new(start_2, anchor_lower_2 - true_std_dev_2 * true_sd_1_2, end_bar_2, anchor_lower_2 - true_std_dev_2 * true_sd_1_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_lower_2 - true_std_dev_2 * true_sd_1_2, "-" + str.tostring(true_sd_1_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_2_2
+            line_true_sd_2_upper_2 := line.new(start_2, anchor_upper_2 + true_std_dev_2 * true_sd_2_2, end_bar_2, anchor_upper_2 + true_std_dev_2 * true_sd_2_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_upper_2 + true_std_dev_2 * true_sd_2_2, "+" + str.tostring(true_sd_2_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_2_lower_2 := line.new(start_2, anchor_lower_2 - true_std_dev_2 * true_sd_2_2, end_bar_2, anchor_lower_2 - true_std_dev_2 * true_sd_2_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_lower_2 - true_std_dev_2 * true_sd_2_2, "-" + str.tostring(true_sd_2_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_3_2
+            line_true_sd_3_upper_2 := line.new(start_2, anchor_upper_2 + true_std_dev_2 * true_sd_3_2, end_bar_2, anchor_upper_2 + true_std_dev_2 * true_sd_3_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_upper_2 + true_std_dev_2 * true_sd_3_2, "+" + str.tostring(true_sd_3_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_3_lower_2 := line.new(start_2, anchor_lower_2 - true_std_dev_2 * true_sd_3_2, end_bar_2, anchor_lower_2 - true_std_dev_2 * true_sd_3_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_lower_2 - true_std_dev_2 * true_sd_3_2, "-" + str.tostring(true_sd_3_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_4_2
+            line_true_sd_4_upper_2 := line.new(start_2, anchor_upper_2 + true_std_dev_2 * true_sd_4_2, end_bar_2, anchor_upper_2 + true_std_dev_2 * true_sd_4_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_upper_2 + true_std_dev_2 * true_sd_4_2, "+" + str.tostring(true_sd_4_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_4_lower_2 := line.new(start_2, anchor_lower_2 - true_std_dev_2 * true_sd_4_2, end_bar_2, anchor_lower_2 - true_std_dev_2 * true_sd_4_2, color = true_sd_color_2, style = true_sd_style_2)
+            label.new(start_2 - 1, anchor_lower_2 - true_std_dev_2 * true_sd_4_2, "-" + str.tostring(true_sd_4_2) + "TSD" + label_suffix_2, color = true_sd_color_2, style = label.style_none, textcolor = label_text_color, size = label_size)
+else if not t2 and not na(line_p1_2) and extend_bars_2 > 0
+    if show_re_2
+        line_p1_2.set_x2(end_bar_2 + extend_bars_2)
+        line_p2_2.set_x2(end_bar_2 + extend_bars_2)
+        line_p3_2.set_x2(end_bar_2 + extend_bars_2)
+        line_p4_2.set_x2(end_bar_2 + extend_bars_2)
+        line_p5_2.set_x2(end_bar_2 + extend_bars_2)
+        line_p6_2.set_x2(end_bar_2 + extend_bars_2)
+        line_m1_2.set_x2(end_bar_2 + extend_bars_2)
+        line_m2_2.set_x2(end_bar_2 + extend_bars_2)
+        line_m3_2.set_x2(end_bar_2 + extend_bars_2)
+        line_m4_2.set_x2(end_bar_2 + extend_bars_2)
+        line_m5_2.set_x2(end_bar_2 + extend_bars_2)
+        line_m6_2.set_x2(end_bar_2 + extend_bars_2)
+        line_p1_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_p2_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_p3_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_p4_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_p5_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_p6_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_m1_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_m2_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_m3_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_m4_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_m5_2_body.set_x2(end_bar_2 + extend_bars_2)
+        line_m6_2_body.set_x2(end_bar_2 + extend_bars_2)
+    if show_tsd_2
+        if not na(line_true_sd_1_upper_2)
+            line_true_sd_1_upper_2.set_x2(end_bar_2 + extend_bars_2)
+            line_true_sd_1_lower_2.set_x2(end_bar_2 + extend_bars_2)
+        if not na(line_true_sd_2_upper_2)
+            line_true_sd_2_upper_2.set_x2(end_bar_2 + extend_bars_2)
+            line_true_sd_2_lower_2.set_x2(end_bar_2 + extend_bars_2)
+        if not na(line_true_sd_3_upper_2)
+            line_true_sd_3_upper_2.set_x2(end_bar_2 + extend_bars_2)
+            line_true_sd_3_lower_2.set_x2(end_bar_2 + extend_bars_2)
+        if not na(line_true_sd_4_upper_2)
+            line_true_sd_4_upper_2.set_x2(end_bar_2 + extend_bars_2)
+            line_true_sd_4_lower_2.set_x2(end_bar_2 + extend_bars_2)
+
+// Range 3 Core Logic
+if t3 and not t3[1]
+    if show_box_3
+        range_box_3 := box.new(bar_index, range_high_3, bar_index, range_low_3, border_color = range_box_color_3, bgcolor = range_box_color_3)
+        body_box_3 := box.new(bar_index, range_body_high_3, bar_index, range_body_low_3, border_color = range_body_color_3, bgcolor = range_body_color_3)
+    start_3 := bar_index
+    session_open_3 := open
+else if t3
+    if show_box_3
+        range_box_3.set_right(bar_index)
+        body_box_3.set_right(bar_index)
+        if range_high_3 > range_box_3.get_top()
+            range_box_3.set_top(range_high_3)
+        if range_low_3 < range_box_3.get_bottom()
+            range_box_3.set_bottom(range_low_3)
+        if range_body_high_3 > body_box_3.get_top()
+            body_box_3.set_top(range_body_high_3)
+        if range_body_low_3 < body_box_3.get_bottom()
+            body_box_3.set_bottom(range_body_low_3)
+else if not t3 and t3[1]
+    top_3 = range_box_3.get_top()
+    bot_3 = range_box_3.get_bottom()
+    dif_3 = top_3 - bot_3
+    top_3_body = body_box_3.get_top()
+    bot_3_body = body_box_3.get_bottom()
+    dif_3_body = top_3_body - bot_3_body
+    end_bar_3 := bar_index
+    
+    // Store session range for true SD calculation
+    float range_to_store_3 = range_basis_3 == "Wick" ? dif_3 : dif_3_body
+    array.push(range_distances_3, range_to_store_3)
+    if array.size(range_distances_3) > max_sessions_3
+        array.shift(range_distances_3)
+    
+    // Calculate true standard deviation
+    float true_std_dev_3 = array.size(range_distances_3) > 1 ? math.sqrt(array.variance(range_distances_3)) : 0
+    
+    // Reset boxes
+    if show_box_3
+        range_box_3 := na
+        body_box_3 := na
+    line_p1_3 := na
+    
+    // Determine range and anchor based on user selection
+    float proj_range_3 = range_basis_3 == "Wick" ? dif_3 : dif_3_body
+    float anchor_upper_3 = range_basis_3 == "Wick" ? (true_sd_anchor_3 == "Open" ? session_open_3 : top_3) : (true_sd_anchor_3 == "Open" ? session_open_3 : top_3_body)
+    float anchor_lower_3 = range_basis_3 == "Wick" ? (true_sd_anchor_3 == "Open" ? session_open_3 : bot_3) : (true_sd_anchor_3 == "Open" ? session_open_3 : bot_3_body)
+    float proj_top_3 = range_basis_3 == "Wick" ? top_3 : top_3_body
+    float proj_bot_3 = range_basis_3 == "Wick" ? bot_3 : bot_3_body
+    string label_suffix_3 = range_basis_3 == "Wick" ? "W" : "B"
+    
+    // Range Extensions (Wick or Body based on range_basis_3)
+    if (proj_type_3 == "Range Extensions" or proj_type_3 == "Both") and show_re_3 and horiz_lines_3
+        if range_basis_3 == "Wick"
+            // Wick-based projections
+            if use_sd_13
+                line_p1_3 := line.new(start_3, top_3 + dif_3 * sd_13, end_bar_3, top_3 + dif_3 * sd_13, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, top_3 + dif_3 * sd_13, "+" + str.tostring(sd_13) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_14
+                line_p2_3 := line.new(start_3, top_3 + dif_3 * sd_14, end_bar_3, top_3 + dif_3 * sd_14, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, top_3 + dif_3 * sd_14, "+" + str.tostring(sd_14) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_15
+                line_p3_3 := line.new(start_3, top_3 + dif_3 * sd_15, end_bar_3, top_3 + dif_3 * sd_15, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, top_3 + dif_3 * sd_15, "+" + str.tostring(sd_15) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_16
+                line_p4_3 := line.new(start_3, top_3 + dif_3 * sd_16, end_bar_3, top_3 + dif_3 * sd_16, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, top_3 + dif_3 * sd_16, "+" + str.tostring(sd_16) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_17
+                line_p5_3 := line.new(start_3, top_3 + dif_3 * sd_17, end_bar_3, top_3 + dif_3 * sd_17, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, top_3 + dif_3 * sd_17, "+" + str.tostring(sd_17) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_18
+                line_p6_3 := line.new(start_3, top_3 + dif_3 * sd_18, end_bar_3, top_3 + dif_3 * sd_18, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, top_3 + dif_3 * sd_18, "+" + str.tostring(sd_18) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_13
+                line_m1_3 := line.new(start_3, bot_3 - dif_3 * sd_13, end_bar_3, bot_3 - dif_3 * sd_13, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, bot_3 - dif_3 * sd_13, "-" + str.tostring(sd_13) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_14
+                line_m2_3 := line.new(start_3, bot_3 - dif_3 * sd_14, end_bar_3, bot_3 - dif_3 * sd_14, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, bot_3 - dif_3 * sd_14, "-" + str.tostring(sd_14) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_15
+                line_m3_3 := line.new(start_3, bot_3 - dif_3 * sd_15, end_bar_3, bot_3 - dif_3 * sd_15, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, bot_3 - dif_3 * sd_15, "-" + str.tostring(sd_15) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_16
+                line_m4_3 := line.new(start_3, bot_3 - dif_3 * sd_16, end_bar_3, bot_3 - dif_3 * sd_16, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, bot_3 - dif_3 * sd_16, "-" + str.tostring(sd_16) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_17
+                line_m5_3 := line.new(start_3, bot_3 - dif_3 * sd_17, end_bar_3, bot_3 - dif_3 * sd_17, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, bot_3 - dif_3 * sd_17, "-" + str.tostring(sd_17) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_18
+                line_m6_3 := line.new(start_3, bot_3 - dif_3 * sd_18, end_bar_3, bot_3 - dif_3 * sd_18, color = wick_line_color_3, style = wick_proj_style_3)
+                label.new(start_3 - 1, bot_3 - dif_3 * sd_18, "-" + str.tostring(sd_18) + "W", color = wick_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+        else if range_basis_3 == "Body"
+            // Body-based projections
+            if use_sd_13
+                line_p1_3_body := line.new(start_3, top_3_body + dif_3_body * sd_13, end_bar_3, top_3_body + dif_3_body * sd_13, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, top_3_body + dif_3_body * sd_13, "+" + str.tostring(sd_13) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_14
+                line_p2_3_body := line.new(start_3, top_3_body + dif_3_body * sd_14, end_bar_3, top_3_body + dif_3_body * sd_14, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, top_3_body + dif_3_body * sd_14, "+" + str.tostring(sd_14) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_15
+                line_p3_3_body := line.new(start_3, top_3_body + dif_3_body * sd_15, end_bar_3, top_3_body + dif_3_body * sd_15, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, top_3_body + dif_3_body * sd_15, "+" + str.tostring(sd_15) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_16
+                line_p4_3_body := line.new(start_3, top_3_body + dif_3_body * sd_16, end_bar_3, top_3_body + dif_3_body * sd_16, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, top_3_body + dif_3_body * sd_16, "+" + str.tostring(sd_16) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_17
+                line_p5_3_body := line.new(start_3, top_3_body + dif_3_body * sd_17, end_bar_3, top_3_body + dif_3_body * sd_17, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, top_3_body + dif_3_body * sd_17, "+" + str.tostring(sd_17) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_18
+                line_p6_3_body := line.new(start_3, top_3_body + dif_3_body * sd_18, end_bar_3, top_3_body + dif_3_body * sd_18, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, top_3_body + dif_3_body * sd_18, "+" + str.tostring(sd_18) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_13
+                line_m1_3_body := line.new(start_3, bot_3_body - dif_3_body * sd_13, end_bar_3, bot_3_body - dif_3_body * sd_13, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, bot_3_body - dif_3_body * sd_13, "-" + str.tostring(sd_13) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_14
+                line_m2_3_body := line.new(start_3, bot_3_body - dif_3_body * sd_14, end_bar_3, bot_3_body - dif_3_body * sd_14, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, bot_3_body - dif_3_body * sd_14, "-" + str.tostring(sd_14) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_15
+                line_m3_3_body := line.new(start_3, bot_3_body - dif_3_body * sd_15, end_bar_3, bot_3_body - dif_3_body * sd_15, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, bot_3_body - dif_3_body * sd_15, "-" + str.tostring(sd_15) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_16
+                line_m4_3_body := line.new(start_3, bot_3_body - dif_3_body * sd_16, end_bar_3, bot_3_body - dif_3_body * sd_16, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, bot_3_body - dif_3_body * sd_16, "-" + str.tostring(sd_16) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_17
+                line_m5_3_body := line.new(start_3, bot_3_body - dif_3_body * sd_17, end_bar_3, bot_3_body - dif_3_body * sd_17, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, bot_3_body - dif_3_body * sd_17, "-" + str.tostring(sd_17) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            if use_sd_18
+                line_m6_3_body := line.new(start_3, bot_3_body - dif_3_body * sd_18, end_bar_3, bot_3_body - dif_3_body * sd_18, color = body_line_color_3, style = body_proj_style_3)
+                label.new(start_3 - 1, bot_3_body - dif_3_body * sd_18, "-" + str.tostring(sd_18) + "B", color = body_line_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+    
+    // True Standard Deviation Levels
+    if (proj_type_3 == "True Standard Deviations" or proj_type_3 == "Both") and show_tsd_3 and horiz_lines_3 and true_std_dev_3 > 0
+        if use_true_sd_1_3
+            line_true_sd_1_upper_3 := line.new(start_3, anchor_upper_3 + true_std_dev_3 * true_sd_1_3, end_bar_3, anchor_upper_3 + true_std_dev_3 * true_sd_1_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_upper_3 + true_std_dev_3 * true_sd_1_3, "+" + str.tostring(true_sd_1_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_1_lower_3 := line.new(start_3, anchor_lower_3 - true_std_dev_3 * true_sd_1_3, end_bar_3, anchor_lower_3 - true_std_dev_3 * true_sd_1_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_lower_3 - true_std_dev_3 * true_sd_1_3, "-" + str.tostring(true_sd_1_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_2_3
+            line_true_sd_2_upper_3 := line.new(start_3, anchor_upper_3 + true_std_dev_3 * true_sd_2_3, end_bar_3, anchor_upper_3 + true_std_dev_3 * true_sd_2_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_upper_3 + true_std_dev_3 * true_sd_2_3, "+" + str.tostring(true_sd_2_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_2_lower_3 := line.new(start_3, anchor_lower_3 - true_std_dev_3 * true_sd_2_3, end_bar_3, anchor_lower_3 - true_std_dev_3 * true_sd_2_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_lower_3 - true_std_dev_3 * true_sd_2_3, "-" + str.tostring(true_sd_2_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_3_3
+            line_true_sd_3_upper_3 := line.new(start_3, anchor_upper_3 + true_std_dev_3 * true_sd_3_3, end_bar_3, anchor_upper_3 + true_std_dev_3 * true_sd_3_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_upper_3 + true_std_dev_3 * true_sd_3_3, "+" + str.tostring(true_sd_3_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_3_lower_3 := line.new(start_3, anchor_lower_3 - true_std_dev_3 * true_sd_3_3, end_bar_3, anchor_lower_3 - true_std_dev_3 * true_sd_3_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_lower_3 - true_std_dev_3 * true_sd_3_3, "-" + str.tostring(true_sd_3_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+        if use_true_sd_4_3
+            line_true_sd_4_upper_3 := line.new(start_3, anchor_upper_3 + true_std_dev_3 * true_sd_4_3, end_bar_3, anchor_upper_3 + true_std_dev_3 * true_sd_4_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_upper_3 + true_std_dev_3 * true_sd_4_3, "+" + str.tostring(true_sd_4_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+            line_true_sd_4_lower_3 := line.new(start_3, anchor_lower_3 - true_std_dev_3 * true_sd_4_3, end_bar_3, anchor_lower_3 - true_std_dev_3 * true_sd_4_3, color = true_sd_color_3, style = true_sd_style_3)
+            label.new(start_3 - 1, anchor_lower_3 - true_std_dev_3 * true_sd_4_3, "-" + str.tostring(true_sd_4_3) + "TSD" + label_suffix_3, color = true_sd_color_3, style = label.style_none, textcolor = label_text_color, size = label_size)
+else if not t3 and not na(line_p1_3) and extend_bars_3 > 0
+    if show_re_3
+        line_p1_3.set_x2(end_bar_3 + extend_bars_3)
+        line_p2_3.set_x2(end_bar_3 + extend_bars_3)
+        line_p3_3.set_x2(end_bar_3 + extend_bars_3)
+        line_p4_3.set_x2(end_bar_3 + extend_bars_3)
+        line_p5_3.set_x2(end_bar_3 + extend_bars_3)
+        line_p6_3.set_x2(end_bar_3 + extend_bars_3)
+        line_m1_3.set_x2(end_bar_3 + extend_bars_3)
+        line_m2_3.set_x2(end_bar_3 + extend_bars_3)
+        line_m3_3.set_x2(end_bar_3 + extend_bars_3)
+        line_m4_3.set_x2(end_bar_3 + extend_bars_3)
+        line_m5_3.set_x2(end_bar_3 + extend_bars_3)
+        line_m6_3.set_x2(end_bar_3 + extend_bars_3)
+        line_p1_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_p2_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_p3_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_p4_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_p5_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_p6_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_m1_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_m2_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_m3_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_m4_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_m5_3_body.set_x2(end_bar_3 + extend_bars_3)
+        line_m6_3_body.set_x2(end_bar_3 + extend_bars_3)
+    if show_tsd_3
+        if not na(line_true_sd_1_upper_3)
+            line_true_sd_1_upper_3.set_x2(end_bar_3 + extend_bars_3)
+            line_true_sd_1_lower_3.set_x2(end_bar_3 + extend_bars_3)
+        if not na(line_true_sd_2_upper_3)
+            line_true_sd_2_upper_3.set_x2(end_bar_3 + extend_bars_3)
+            line_true_sd_2_lower_3.set_x2(end_bar_3 + extend_bars_3)
+        if not na(line_true_sd_3_upper_3)
+            line_true_sd_3_upper_3.set_x2(end_bar_3 + extend_bars_3)
+            line_true_sd_3_lower_3.set_x2(end_bar_3 + extend_bars_3)
+        if not na(line_true_sd_4_upper_3)
+            line_true_sd_4_upper_3.set_x2(end_bar_3 + extend_bars_3)
+            line_true_sd_4_lower_3.set_x2(end_bar_3 + extend_bars_3)
+
+var g_TABLE = "Table Settings"
+tbl_pos_range = input.string("Bottom Left", "Range Extensions Table Position", options=["Top Right", "Top Left", "Top Center", "Middle Center", "Left Center", "Right Center", "Bottom Middle", "Bottom Left", "Bottom Right"], group=g_TABLE)
+tbl_pos_tsd = input.string("Bottom Right", "TSD Table Position", options=["Top Right", "Top Left", "Top Center", "Middle Center", "Left Center", "Right Center", "Bottom Middle", "Bottom Left", "Bottom Right"], group=g_TABLE)
+show_range_table = input.bool(true, "Show Range Extensions Table", tooltip="Enable or disable the Range Extensions statistics table", group=g_TABLE) // New input
+show_tsd_table = input.bool(true, "Show TSD Table", tooltip="Enable or disable the True Standard Deviation statistics table", group=g_TABLE) // New input
+tbl_bg = input.color(color.white, "Table Background", group=g_TABLE)
+tbl_bd = input.color(color.black, "Table Borders", group=g_TABLE)
+tbl_txt = input.color(color.black, "Table Text", group=g_TABLE)
+tbl_size = input.string("small", "Table Size", options=["tiny", "small", "normal", "large"], group=g_TABLE)
+
+// Function to map string size to text_size
+get_text_size(string size) =>
+    result = switch size
+        "tiny" => size.tiny
+        "small" => tbl_size
+        "normal" => size.normal
+        "large" => size.large
+    result
+
+// Function to map string position to table position
+get_table_pos(string pos) =>
+    result = switch pos
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Middle Center" => position.middle_center
+        "Left Center" => position.middle_left
+        "Right Center" => position.middle_right
+        "Bottom Middle" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right        
+    result
+
+// Statistics variables for Range 1
+var int total_sessions = 0
+// Body-based statistics
+var int[] first_hit_minus_body = array.new_int(7, 0)  // For -1B to -6B
+var int[] first_hit_plus_body = array.new_int(7, 0)   // For +1B to +6B
+var int[] both_hit_body = array.new_int(7, 0)         // For both -nB and +nB
+var bool[] hit_minus_body = array.new_bool(7, false)  // Current session hits
+var bool[] hit_plus_body = array.new_bool(7, false)
+var float[] minus_levels_body = array.new_float(7, na) // Store -1B to -6B levels
+var float[] plus_levels_body = array.new_float(7, na)  // Store +1B to +6B levels
+// Wick-based statistics
+var int[] first_hit_minus_wick = array.new_int(7, 0)  // For -1W to -6W
+var int[] first_hit_plus_wick = array.new_int(7, 0)   // For +1W to +6W
+var int[] both_hit_wick = array.new_int(7, 0)         // For both -nW and +nW
+var bool[] hit_minus_wick = array.new_bool(7, false)  // Current session hits
+var bool[] hit_plus_wick = array.new_bool(7, false)
+var float[] minus_levels_wick = array.new_float(7, na) // Store -1W to -6W levels
+var float[] plus_levels_wick = array.new_float(7, na)  // Store +1W to +6W levels
+var bool session_ended = false
+
+// Line arrays
+line[] lines_minus_body = array.new_line(7, na)
+line[] lines_plus_body = array.new_line(7, na)
+line[] lines_minus_wick = array.new_line(7, na)
+line[] lines_plus_wick = array.new_line(7, na)
+bool[] use_sd = array.new_bool(7, false)
+use_sd.set(1, use_sd_1)
+use_sd.set(2, use_sd_2)
+use_sd.set(3, use_sd_3)
+use_sd.set(4, use_sd_4)
+use_sd.set(5, use_sd_5)
+use_sd.set(6, use_sd_6)
+use_true_sd.set(1, use_true_sd_1_1)
+use_true_sd.set(2, use_true_sd_2_1)
+use_true_sd.set(3, use_true_sd_3_1)
+use_true_sd.set(4, use_true_sd_4_1)
+
+// Update line arrays at session end
+if not t and t[1]
+    // Set body lines
+    lines_minus_body.set(1, line_m1_body)
+    lines_minus_body.set(2, line_m2_body)
+    lines_minus_body.set(3, line_m3_body)
+    lines_minus_body.set(4, line_m4_body)
+    lines_minus_body.set(5, line_m5_body)
+    lines_minus_body.set(6, line_m6_body)
+    lines_plus_body.set(1, line_p1_body)
+    lines_plus_body.set(2, line_p2_body)
+    lines_plus_body.set(3, line_p3_body)
+    lines_plus_body.set(4, line_p4_body)
+    lines_plus_body.set(5, line_p5_body)
+    lines_plus_body.set(6, line_p6_body)
+    // Set wick lines
+    lines_minus_wick.set(1, line_m1)
+    lines_minus_wick.set(2, line_m2)
+    lines_minus_wick.set(3, line_m3)
+    lines_minus_wick.set(4, line_m4)
+    lines_minus_wick.set(5, line_m5)
+    lines_minus_wick.set(6, line_m6)
+    lines_plus_wick.set(1, line_p1)
+    lines_plus_wick.set(2, line_p2)
+    lines_plus_wick.set(3, line_p3)
+    lines_plus_wick.set(4, line_p4)
+    lines_plus_wick.set(5, line_p5)
+    lines_plus_wick.set(6, line_p6)
+    // Set TSD lines
+    lines_minus_tsd.set(1, line_true_sd_1_lower_1)
+    lines_minus_tsd.set(2, line_true_sd_2_lower_1)
+    lines_minus_tsd.set(3, line_true_sd_3_lower_1)
+    lines_minus_tsd.set(4, line_true_sd_4_lower_1)
+    lines_plus_tsd.set(1, line_true_sd_1_upper_1)
+    lines_plus_tsd.set(2, line_true_sd_2_upper_1)
+    lines_plus_tsd.set(3, line_true_sd_3_upper_1)
+    lines_plus_tsd.set(4, line_true_sd_4_upper_1)
+
+// Reset tracking variables at session start
+if t and not t[1]
+    for i = 1 to 6
+        // Body-based
+        if hit_minus_body.get(i) and hit_plus_body.get(i)
+            both_hit_body.set(i, both_hit_body.get(i) + 1)
+        hit_minus_body.set(i, false)
+        hit_plus_body.set(i, false)
+        minus_levels_body.set(i, na)
+        plus_levels_body.set(i, na)
+        // Wick-based
+        if hit_minus_wick.get(i) and hit_plus_wick.get(i)
+            both_hit_wick.set(i, both_hit_wick.get(i) + 1)
+        hit_minus_wick.set(i, false)
+        hit_plus_wick.set(i, false)
+        minus_levels_wick.set(i, na)
+        plus_levels_wick.set(i, na)
+    for i = 1 to 4
+        // TSD-based
+        if hit_minus_tsd.get(i) and hit_plus_tsd.get(i)
+            both_hit_tsd.set(i, both_hit_tsd.get(i) + 1)
+        hit_minus_tsd.set(i, false)
+        hit_plus_tsd.set(i, false)
+        minus_levels_tsd.set(i, na)
+        plus_levels_tsd.set(i, na)
+    session_ended := false
+
+// Capture levels and session end
+if not t and t[1]
+    total_sessions := total_sessions + 1
+    session_ended := true
+    for i = 1 to 6
+        // Body-based levels
+        if use_sd.get(i) and not na(lines_minus_body.get(i))
+            minus_levels_body.set(i, line.get_y1(lines_minus_body.get(i)))
+        if use_sd.get(i) and not na(lines_plus_body.get(i))
+            plus_levels_body.set(i, line.get_y1(lines_plus_body.get(i)))
+        // Wick-based levels
+        if use_sd.get(i) and not na(lines_minus_wick.get(i))
+            minus_levels_wick.set(i, line.get_y1(lines_minus_wick.get(i)))
+        if use_sd.get(i) and not na(lines_plus_wick.get(i))
+            plus_levels_wick.set(i, line.get_y1(lines_plus_wick.get(i)))
+    for i = 1 to 4
+        // TSD-based levels
+        if use_true_sd.get(i) and not na(lines_minus_tsd.get(i))
+            minus_levels_tsd.set(i, line.get_y1(lines_minus_tsd.get(i)))
+        if use_true_sd.get(i) and not na(lines_plus_tsd.get(i))
+            plus_levels_tsd.set(i, line.get_y1(lines_plus_tsd.get(i)))
+
+// Check for first touch after session ends
+if session_ended and not t and not na(time("", stats_session, "America/New_York"))
+    for i = 1 to 6
+        // Body-based hits
+        if use_sd.get(i) and not na(minus_levels_body.get(i)) and not hit_minus_body.get(i) and low <= minus_levels_body.get(i)
+            hit_minus_body.set(i, true)
+            first_hit_minus_body.set(i, first_hit_minus_body.get(i) + 1)
+        if use_sd.get(i) and not na(plus_levels_body.get(i)) and not hit_plus_body.get(i) and high >= plus_levels_body.get(i)
+            hit_plus_body.set(i, true)
+            first_hit_plus_body.set(i, first_hit_plus_body.get(i) + 1)
+        // Wick-based hits
+        if use_sd.get(i) and not na(minus_levels_wick.get(i)) and not hit_minus_wick.get(i) and low <= minus_levels_wick.get(i)
+            hit_minus_wick.set(i, true)
+            first_hit_minus_wick.set(i, first_hit_minus_wick.get(i) + 1)
+        if use_sd.get(i) and not na(plus_levels_wick.get(i)) and not hit_plus_wick.get(i) and high >= plus_levels_wick.get(i)
+            hit_plus_wick.set(i, true)
+            first_hit_plus_wick.set(i, first_hit_plus_wick.get(i) + 1)
+    for i = 1 to 4
+        // TSD-based hits
+        if use_true_sd.get(i) and not na(minus_levels_tsd.get(i)) and not hit_minus_tsd.get(i) and low <= minus_levels_tsd.get(i)
+            hit_minus_tsd.set(i, true)
+            first_hit_minus_tsd.set(i, first_hit_minus_tsd.get(i) + 1)
+        if use_true_sd.get(i) and not na(plus_levels_tsd.get(i)) and not hit_plus_tsd.get(i) and high >= plus_levels_tsd.get(i)
+            hit_plus_tsd.set(i, true)
+            first_hit_plus_tsd.set(i, first_hit_plus_tsd.get(i) + 1)
+
+// Function to track hits (updated to include first hit percentage)
+get_OTP_modified(level_index, is_wick, is_tsd) =>
+    float pct_minus_to_plus = is_tsd ? (first_hit_minus_tsd.get(level_index) > 0 ? (both_hit_tsd.get(level_index) / first_hit_minus_tsd.get(level_index)) * 100 : 0) : is_wick ? (first_hit_minus_wick.get(level_index) > 0 ? (both_hit_wick.get(level_index) / first_hit_minus_wick.get(level_index)) * 100 : 0) : (first_hit_minus_body.get(level_index) > 0 ? (both_hit_body.get(level_index) / first_hit_minus_body.get(level_index)) * 100 : 0)
+    float pct_plus_to_minus = is_tsd ? (first_hit_plus_tsd.get(level_index) > 0 ? (both_hit_tsd.get(level_index) / first_hit_plus_tsd.get(level_index)) * 100 : 0) : is_wick ? (first_hit_plus_wick.get(level_index) > 0 ? (both_hit_wick.get(level_index) / first_hit_plus_wick.get(level_index)) * 100 : 0) : (first_hit_plus_body.get(level_index) > 0 ? (both_hit_body.get(level_index) / first_hit_plus_body.get(level_index)) * 100 : 0)
+    float pct_hit_minus = is_tsd ? (total_sessions > 0 ? (first_hit_minus_tsd.get(level_index) / total_sessions) * 100 : 0) : is_wick ? (total_sessions > 0 ? (first_hit_minus_wick.get(level_index) / total_sessions) * 100 : 0) : (total_sessions > 0 ? (first_hit_minus_body.get(level_index) / total_sessions) * 100 : 0)
+    float pct_hit_plus = is_tsd ? (total_sessions > 0 ? (first_hit_plus_tsd.get(level_index) / total_sessions) * 100 : 0) : is_wick ? (total_sessions > 0 ? (first_hit_plus_wick.get(level_index) / total_sessions) * 100 : 0) : (total_sessions > 0 ? (first_hit_plus_body.get(level_index) / total_sessions) * 100 : 0)
+    bool hit_both = is_tsd ? (hit_minus_tsd.get(level_index) and hit_plus_tsd.get(level_index)) : is_wick ? (hit_minus_wick.get(level_index) and hit_plus_wick.get(level_index)) : (hit_minus_body.get(level_index) and hit_plus_body.get(level_index))
+    str_minus_to_plus = str.tostring(math.round(pct_minus_to_plus, 1)) + "%"
+    str_plus_to_minus = str.tostring(math.round(pct_plus_to_minus, 1)) + "%"
+    str_hit_minus = str.tostring(math.round(pct_hit_minus, 1)) + "%"
+    str_hit_plus = str.tostring(math.round(pct_hit_plus, 1)) + "%"
+    [str_minus_to_plus, str_plus_to_minus, hit_both, str_hit_minus, str_hit_plus]
+
+// Statistics tables
+var table range_table = na
+var table tsd_table = na
+var string last_range_config = ""
+var string last_tsd_config = ""
+var int last_range_height = 0
+var int last_tsd_height = 0
+if not t and t[1]
+    // Calculate enabled levels
+    int enabled_levels = 0
+    for i = 1 to 6
+        if use_sd.get(i)
+            enabled_levels += 1
+    int enabled_tsd_levels = 0
+    for i = 1 to 4
+        if use_true_sd.get(i)
+            enabled_tsd_levels += 1
+    // Calculate rows needed
+    int rows_per_type = 2 * enabled_levels
+    int range_table_height = range_basis_1 == "Both" ? 2 + 2 * rows_per_type : 2 + rows_per_type
+    int tsd_table_height = 2 + 2 * enabled_tsd_levels
+    // Create configuration strings to detect changes
+    string range_config = range_basis_1 + proj_type_1 + str.tostring(enabled_levels) + tbl_pos_range
+    string tsd_config = proj_type_1 + str.tostring(enabled_tsd_levels) + tbl_pos_tsd
+    
+    // Range Extensions Table (shown if proj_type_1 is "Range Extensions" or "Both" and show_range_table is true)
+    if (proj_type_1 == "Range Extensions" or proj_type_1 == "Both") and show_range_table
+        if range_config != last_range_config or range_table_height != last_range_height or na(range_table)
+            if not na(range_table)
+                range_table.delete()
+            range_table := table.new(get_table_pos(tbl_pos_range), 4, range_table_height, bgcolor=tbl_bg, border_color=tbl_bd, frame_color=tbl_bd, frame_width=1, border_width=1)
+            last_range_config := range_config
+            last_range_height := range_table_height
+        // Clear existing cells
+        for r = 0 to range_table_height - 1
+            for c = 0 to 3
+                table.cell(range_table, c, r, "", bgcolor=na, text_color=na)
+        // Populate table
+        table.cell(range_table, 0, 0, syminfo.ticker + ", " + timeframe.period + "\nStats Range: " + str.tostring(stats_session) + " (" + str.tostring(total_sessions) + ")", text_size=size.tiny, text_color=tbl_txt, text_font_family=font.family_monospace)
+        table.cell(range_table, 0, 1, "Level", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        table.cell(range_table, 1, 1, "First Touch", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        table.cell(range_table, 2, 1, "% Opposite Hit", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        table.cell(range_table, 3, 1, "% Hit", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        int row = 2
+        float[] re_levels = array.new_float(6, 0)
+        re_levels.set(0, sd_6)
+        re_levels.set(1, sd_5)
+        re_levels.set(2, sd_4)
+        re_levels.set(3, sd_3)
+        re_levels.set(4, sd_2)
+        re_levels.set(5, sd_1)
+        
+        // Wick stats (for Wick or Both)
+        if range_basis_1 == "Wick" or range_basis_1 == "Both"
+            // First populate positive levels from highest to lowest
+            for i = 0 to 5
+                int level = 6 - i
+                if use_sd.get(level)
+                    [otp_minus_to_plus, otp_plus_to_minus, otp_hit, hit_minus, hit_plus] = get_OTP_modified(level, true, false)
+                    table.cell(range_table, 0, row, "+" + str.tostring(re_levels.get(i)) + "W", text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold)
+                    table.cell(range_table, 1, row, str.tostring(first_hit_plus_wick.get(level)), text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 2, row, otp_plus_to_minus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 3, row, hit_plus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    row += 1
+            // Then populate negative levels from lowest to highest (so they appear in reverse order)
+            for i = 5 to 0
+                int level = 6 - i
+                if use_sd.get(level)
+                    [otp_minus_to_plus, otp_plus_to_minus, otp_hit, hit_minus, hit_plus] = get_OTP_modified(level, true, false)
+                    table.cell(range_table, 0, row, "-" + str.tostring(re_levels.get(i)) + "W", text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold)
+                    table.cell(range_table, 1, row, str.tostring(first_hit_minus_wick.get(level)), text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 2, row, otp_minus_to_plus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 3, row, hit_minus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    row += 1
+        // Body stats (for Body or Both)
+        if range_basis_1 == "Body" or range_basis_1 == "Both"
+            // First populate positive levels from highest to lowest
+            for i = 0 to 5
+                int level = 6 - i
+                if use_sd.get(level)
+                    [otp_minus_to_plus, otp_plus_to_minus, otp_hit, hit_minus, hit_plus] = get_OTP_modified(level, false, false)
+                    table.cell(range_table, 0, row, "+" + str.tostring(re_levels.get(i)) + "B", text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold)
+                    table.cell(range_table, 1, row, str.tostring(first_hit_plus_body.get(level)), text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 2, row, otp_plus_to_minus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 3, row, hit_plus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    row += 1
+            // Then populate negative levels from lowest to highest (so they appear in reverse order)
+            for i = 5 to 0
+                int level = 6 - i
+                if use_sd.get(level)
+                    [otp_minus_to_plus, otp_plus_to_minus, otp_hit, hit_minus, hit_plus] = get_OTP_modified(level, false, false)
+                    table.cell(range_table, 0, row, "-" + str.tostring(re_levels.get(i)) + "B", text_color=tbl_txt, text_size=tbl_size,text_font_family=font.family_monospace, text_formatting=text.format_bold)
+                    table.cell(range_table, 1, row, str.tostring(first_hit_minus_body.get(level)), text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 2, row, otp_minus_to_plus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    table.cell(range_table, 3, row, hit_minus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                    row += 1
+    else
+        // Delete range table if not needed or disabled
+        if not na(range_table)
+            range_table.delete()
+            range_table := na
+            last_range_config := ""
+            last_range_height := 0    
+            
+// TSD Table (shown if proj_type_1 is "True Standard Deviations" or "Both" and show_tsd_table is true)
+    if (proj_type_1 == "True Standard Deviations" or proj_type_1 == "Both") and show_tsd_table
+        if tsd_config != last_tsd_config or tsd_table_height != last_tsd_height or na(tsd_table)
+            if not na(tsd_table)
+                tsd_table.delete()
+            tsd_table := table.new(get_table_pos(tbl_pos_tsd), 4, tsd_table_height, bgcolor=tbl_bg, border_color=tbl_bd, frame_color=tbl_bd, frame_width=1, border_width=1)
+            last_tsd_config := tsd_config
+            last_tsd_height := tsd_table_height
+        // Clear existing cells
+        for r = 0 to tsd_table_height - 1
+            for c = 0 to 3
+                table.cell(tsd_table, c, r, "", bgcolor=na, text_color=na)
+        // Populate table
+        table.cell(tsd_table, 0, 0, syminfo.ticker + ", " + timeframe.period + "\nTSD Stats Range: " + str.tostring(stats_session) + " (" + str.tostring(total_sessions) + ")", text_size=size.tiny, text_color=tbl_txt, text_font_family=font.family_monospace)
+        table.cell(tsd_table, 0, 1, "Level", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        table.cell(tsd_table, 1, 1, "First Touch", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        table.cell(tsd_table, 2, 1, "% Opposite Hit", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        table.cell(tsd_table, 3, 1, "% Hit", text_color=tbl_bg, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold, bgcolor=tbl_txt)
+        int row = 2
+        string tsd_suffix = range_basis_1 == "Wick" ? "W" : "B"
+        float[] tsd_levels = array.new_float(4, 0)
+        tsd_levels.set(0, true_sd_4_1)
+        tsd_levels.set(1, true_sd_3_1)
+        tsd_levels.set(2, true_sd_2_1)
+        tsd_levels.set(3, true_sd_1_1)
+        
+        // First populate positive levels from highest to lowest
+        for i = 0 to 3
+            int level = 4 - i
+            if use_true_sd.get(level)
+                [otp_minus_to_plus, otp_plus_to_minus, otp_hit, hit_minus, hit_plus] = get_OTP_modified(level, false, true)
+                table.cell(tsd_table, 0, row, "+" + str.tostring(tsd_levels.get(i)) + "TSD" + tsd_suffix, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold)
+                table.cell(tsd_table, 1, row, str.tostring(first_hit_plus_tsd.get(level)), text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                table.cell(tsd_table, 2, row, otp_plus_to_minus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                table.cell(tsd_table, 3, row, hit_plus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                row += 1
+        // Then populate negative levels from lowest to highest (so they appear in reverse order)
+        for i = 3 to 0
+            int level = 4 - i
+            if use_true_sd.get(level)
+                [otp_minus_to_plus, otp_plus_to_minus, otp_hit, hit_minus, hit_plus] = get_OTP_modified(level, false, true)
+                table.cell(tsd_table, 0, row, "-" + str.tostring(tsd_levels.get(i)) + "TSD" + tsd_suffix, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, text_formatting=text.format_bold)
+                table.cell(tsd_table, 1, row, str.tostring(first_hit_minus_tsd.get(level)), text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                table.cell(tsd_table, 2, row, otp_minus_to_plus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                table.cell(tsd_table, 3, row, hit_minus, text_color=tbl_txt, text_size=tbl_size, text_font_family=font.family_monospace, bgcolor=tbl_bg)
+                row += 1
+    else
+        // Delete TSD table if not needed or disabled
+        if not na(tsd_table)
+            tsd_table.delete()
+            tsd_table := na
+            last_tsd_config := ""
+            last_tsd_height := 0

@@ -1,0 +1,550 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Oscillator Suite", shorttitle = "Osc", max_lines_count = 500)
+
+// --- Normalised Price Oscillator Settings ---
+var g_NPPO = "Normalised Price Oscillator Settings"
+dW = input.bool(true, title="Show Main Signal", group=g_NPPO, tooltip="Length of the hyper wave")
+mL = input.int(7, title="Main Length", minval=5, maxval=200, group=g_NPPO)
+sT = input.string("SMA", title="Signal Type", options=["SMA", "EMA", "WMA", "HMA", "RMA", "VWMA", "T3", "ZEMA", "KAMA", "GKEMA"], group=g_NPPO, tooltip="[SMA] Simple Moving Average\n[EMA] Exponential Moving Average\n[WMA] Weighted Moving Average\n[HMA] Hull Moving Average\n[RMA] Running Moving Average\n[VWMA] Volume Weighted Moving Average\n[T3] Tillson T3 Moving Average\n[ZEMA] Zero-Lag Exponential Moving Average\n[KAMA] Kaufman Adaptive Moving Average\n[GKEMA] Gaussian Kernel Smoothing EMA")
+gkBandwidth = input.float(10.0, title="GKEMA Bandwidth Factor", minval=1.0, maxval=50.0, group=g_NPPO, tooltip="Bandwidth factor for Gaussian Kernel smoothing (only used when GKEMA is selected)")
+t3VolumeFactor = input.float(0.7, title="T3 Volume Factor", minval=0.1, maxval=1.0, step=0.1, group=g_NPPO, tooltip="Volume factor for T3 MA (only used when T3 is selected)")
+sL = input.int(3, title="Signal Length", minval=2, maxval=10, group=g_NPPO)
+tCSS = input.int(80, title="Transparency", minval=0, maxval=100, group=g_NPPO)
+fCSS = input.color(#51B155, title="Signal Color", group=g_NPPO)
+sCSS = input.color(#80828D, title="Signal MA Color", group=g_NPPO)
+
+// --- Divergence Settings ---
+var g_DIVERGENCE = "Divergence Settings"
+dvT = input.int(20, title="Divergence Sensitivity", minval=20, maxval=40, group=g_DIVERGENCE, tooltip="Sensibility of the real time divergence : less sensibility = more short term divs; more sensibility = more long term divs")
+sDiv = input.bool(true, title="Show Divergences", group=g_DIVERGENCE)
+blDv = input.color(color.new(#2962ff, 20), title="Bullish Divergence Color", group=g_DIVERGENCE)
+brDv = input.color(color.new(#f23645, 20), title="Bearish Divergence Color", group=g_DIVERGENCE)
+
+// --- Smart Money Flow Settings ---
+var g_MONEYFLOW = "Smart Money Flow"
+Smf = input.bool(true, title="Show Money Flow", group=g_MONEYFLOW)
+mfL = input.int(35, title="Money Flow Length", minval=10, maxval=55, group=g_MONEYFLOW)
+mfS = input.int(6, title="Money Flow Smoothing", minval=2, maxval=10, group=g_MONEYFLOW)
+mfBL = input.color(#0026ff, title="Bullish MF Color", group=g_MONEYFLOW)
+mfBR = input.color(#ff00ea, title="Bearish MF Color", group=g_MONEYFLOW)
+
+// --- Confluence Settings ---
+var g_CONFLUENCE = "Confluence Settings"
+sCNF = input.bool(true, title="Show Confluence Meter", group=g_CONFLUENCE, tooltip="Show confluence meter at the side of the oscillator")
+sCNB = input.bool(true, title="Show Confluence Areas", group=g_CONFLUENCE, tooltip="Show confluence area at the bottom/top of the oscillator")
+cnBL = input.color(#04a54d, title="Bullish Confluence Color", group=g_CONFLUENCE)
+cnBR = input.color(#c300ff, title="Bearish Confluence Color", group=g_CONFLUENCE)
+
+// --- Reversal Settings ---
+var g_REVERSAL = "Reversal Settings"
+rsS = input.bool(true, title="Show Reversal Signals", group=g_REVERSAL)
+rsF = input.int(4, title="Reversal Factor Strength", options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], group=g_REVERSAL, tooltip="More factor will return in less signals but in a stronger way, less factor will return more signal with less strength")
+rsBL = input.color(#089981, title="Bullish Reversal Color", group=g_REVERSAL)
+rsBR = input.color(#f23645, title="Bearish Reversal Color", group=g_REVERSAL)
+
+// --- Signal Strength Table Settings ---
+var g_SIGNALTABLE = "Signal Strength Table"
+showSS = input.bool(true, title="Show Signal Table", group=g_SIGNALTABLE)
+tablePosition = input.string("top_right", title="Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=g_SIGNALTABLE)
+tableSize = input.string("small", title="Table Text Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=g_SIGNALTABLE)
+
+// --- Table Color Settings ---
+var g_TABLECOLORS = "Table Colors"
+tableHeaderBg = input.color(color.black, title="Header Background", group=g_TABLECOLORS)
+tableHeaderText = input.color(color.white, title="Header Text", group=g_TABLECOLORS)
+tableDataBg = input.color(color.white, title="Data Background", group=g_TABLECOLORS)
+tableDataText = input.color(color.black, title="Data Text", group=g_TABLECOLORS)
+tableCheckTrue = input.color(color.green, title="Checkmark True (✓)", group=g_TABLECOLORS)
+tableCheckFalse = input.color(color.red, title="Checkmark False (✗)", group=g_TABLECOLORS)
+tableBorderColor = input.color(color.gray, title="Border Color", group=g_TABLECOLORS)
+
+type oL
+    float sig
+    float sgD
+    color cO
+
+type dP
+    int n
+    float src
+    float p
+
+type smf
+    float mfi
+    color mfc
+    float blMFI
+    float brMFI
+
+type cnf
+    color up
+    color dn
+    float[] blT
+    float[] brT
+
+type signalStrength
+    int bullishScore
+    int bearishScore
+
+var oL osc = oL.new (na, na, na )
+var dP div = dP.new (na, na, na )
+var smf mf = smf.new(na, na, na, na)
+var signalStrength ss = signalStrength.new(0, 0)
+
+var cnf cf = cnf.new(
+       color.rgb(54, 58, 69, 60)
+     , color.rgb(54, 58, 69, 60)
+     , array.new<float>(1, na)
+     , array.new<float>(1, na)
+     )
+
+mfT() =>
+    switch
+        mf.mfi > 0 =>
+            if cf.brT.size() > 1
+                cf.brT.pop()
+            if cf.blT.size() > mfL
+                cf.blT.pop()
+            if mf.mfi > cf.blT.avg()
+                cf.blT.unshift(mf.mfi)
+            else
+                cf.blT.unshift(mf.mfi[mfL] > 0 
+                     ? mf.mfi[mfL] 
+                     : mf.mfi
+                     )
+
+        mf.mfi < 0 =>
+            if cf.blT.size() > 1
+                cf.blT.pop()
+            if cf.brT.size() > mfL
+                cf.brT.pop()
+            if mf.mfi < cf.blT.avg()
+                cf.brT.unshift(mf.mfi)
+            else
+                cf.brT.unshift(mf.mfi[mfL] < 0 
+                     ? mf.mfi[mfL] 
+                     : mf.mfi
+                     )
+
+// GAUSSIAN KERNEL SMOOTHING FUNCTIONS
+ema_gk(data, alpha, len) =>
+    ema = 0.0
+    ema := alpha * data + (1 - alpha) * nz(ema[1])
+
+stdev_gk(data, alpha, len) =>
+    ema = ema_gk(data, alpha, len)
+    squaredDeviation = math.pow(data - ema, 2)
+    smoothed = 0.0
+    smoothed := alpha * squaredDeviation + (1 - alpha) * nz(smoothed[1])
+    math.sqrt(smoothed)
+
+bandwidth_gk(sd, len) =>
+    math.pow((4 * math.pow(sd, 5) / (3 * len)), 1.0/5.0)
+
+gaussian_Kernel_Smoothing(data, b, len) =>
+    nu = 0.0
+    de = 0.0
+    for i = 0 to len - 1
+        weight = math.exp(-math.pow(data[len-1] - data[i], 2) / (2 * math.pow(b, 2)))
+        nu := nu + (weight * data[i])
+        de := de + weight
+    nu / de
+
+// T3 Moving Average (Tillson T3)
+t3_ma(src, length, vFactor) =>
+    e1 = ta.ema(src, length)
+    e2 = ta.ema(e1, length)
+    e3 = ta.ema(e2, length)
+    e4 = ta.ema(e3, length)
+    e5 = ta.ema(e4, length)
+    e6 = ta.ema(e5, length)
+    
+    c1 = -vFactor * vFactor * vFactor
+    c2 = 3 * vFactor * vFactor + 3 * vFactor * vFactor * vFactor
+    c3 = -6 * vFactor * vFactor - 3 * vFactor - 3 * vFactor * vFactor * vFactor
+    c4 = 1 + 3 * vFactor + vFactor * vFactor * vFactor + 3 * vFactor * vFactor
+    
+    c1 * e6 + c2 * e5 + c3 * e4 + c4 * e3
+
+// Zero-Lag EMA
+zema_ma(src, length) =>
+    ema1 = ta.ema(src, length)
+    ema2 = ta.ema(ema1, length)
+    difference = ema1 - ema2
+    ema1 + difference
+
+// Kaufman Adaptive Moving Average (KAMA)
+kama_ma(src, length) =>
+    xvnoise = math.abs(src - src[1])
+    nsignal = math.abs(src - src[length])
+    nnoise = math.sum(xvnoise, length)
+    nefratio = nnoise != 0 ? nsignal / nnoise : 0
+    
+    nfastend = 0.666
+    nslowend = 0.0645
+    nsmooth = math.pow(nefratio * (nfastend - nslowend) + nslowend, 2)
+    
+    nAMA = 0.0
+    nAMA := nz(nAMA[1]) + nsmooth * (src - nz(nAMA[1]))
+    nAMA
+
+method st(simple string src, float osc, simple int len) =>
+    float o = switch src
+        "SMA" => ta.sma(osc, len)
+        "EMA" => ta.ema(osc, len)
+        "WMA" => ta.wma(osc, len)
+        "HMA" => ta.hma(osc, len)
+        "RMA" => ta.rma(osc, len)
+        "VWMA" => ta.vwma(osc, len)
+        "T3" => t3_ma(osc, len, t3VolumeFactor)
+        "ZEMA" => zema_ma(osc, len)
+        "KAMA" => kama_ma(osc, len)
+        "GKEMA" => 
+            alpha = 2.0 / (len + 1)
+            logData = math.log(math.abs(osc) + 1e-10)  // Add small value to prevent log(0)
+            standardDev = stdev_gk(logData, alpha, len)
+            movingAvg = ema_gk(logData, alpha, len)
+            blc = bandwidth_gk(standardDev, len) * gkBandwidth
+            smoothed = gaussian_Kernel_Smoothing(movingAvg, blc, len)
+            math.exp(smoothed) * math.sign(osc)  // Restore original sign
+
+method css(color x, int inv) =>
+    color out = inv == 1 
+         ? color.new(x, tCSS) 
+         : color.new(x, 0 )
+
+method transp(color x, int t) =>
+    color.new(x, t)
+
+// SIGNAL STRENGTH CALCULATION
+calculateSignalStrength() =>
+    bullishConditions = 0
+    bearishConditions = 0
+    
+    // Condition 1: Main oscillator direction
+    if osc.sig > osc.sgD
+        bullishConditions += 1
+    else
+        bearishConditions += 1
+    
+    // Condition 2: Money flow direction
+    if mf.mfi > 0
+        bullishConditions += 1
+    else
+        bearishConditions += 1
+    
+    // Condition 3: Money flow strength vs average
+    if mf.mfi > cf.blT.avg()
+        bullishConditions += 1
+    if mf.mfi < cf.brT.avg()
+        bearishConditions += 1
+    
+    // Condition 4: Oscillator above/below zero
+    if osc.sig > 0
+        bullishConditions += 1
+    if osc.sig < 0
+        bearishConditions += 1
+    
+    // Condition 5: Extreme levels
+    if osc.sig > 30
+        bearishConditions += 1  // Overbought
+    if osc.sig < -30
+        bullishConditions += 1  // Oversold
+    
+    // Condition 6: Volume confirmation
+    vMA = ta.sma(volume, 7)
+    if volume > vMA * 1.5
+        if osc.sig > osc.sgD
+            bullishConditions += 1
+        else
+            bearishConditions += 1
+    
+    // Condition 7: Convergence
+    if osc.sig > 0 and mf.mfi > 0
+        bullishConditions += 1
+    if osc.sig < 0 and mf.mfi < 0
+        bearishConditions += 1
+    
+    // Calculate scores (1-10)
+    maxConditions = 7
+    bullishScore = math.round(bullishConditions * 10 / maxConditions)
+    bearishScore = math.round(bearishConditions * 10 / maxConditions)
+    
+    ss.bullishScore := bullishScore
+    ss.bearishScore := bearishScore
+
+getTablePosition() =>
+    switch tablePosition
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+
+getTableSize() =>
+    switch tableSize
+        "auto" => size.auto
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        "huge" => size.huge
+
+rv() =>
+    vMA = ta.sma(volume, 7)
+    rsi = ta.rsi(vMA, 7) - 50
+    
+    tMj = volume > vMA * ( rsF != 10 ? 1 + (rsF / 10) : 2) ? true : false
+    tMn = volume > vMA * ( rsF != 10 ? 0 + (rsF / 10) : 2) and not tMj ? true : false
+
+    mjBR = tMj and osc.sig > rsF and mf.mfi > cf.blT.avg() ? true : false
+    mjBL = tMj and osc.sig < -rsF and mf.mfi < cf.brT.avg() ? true : false
+
+    mnBR = tMn and osc.sig > 20 and osc.sig > osc.sgD and rsi > 20 ? true : false
+    mnBL = tMn and osc.sig < -20 and osc.sig < osc.sgD and rsi < -20 ? true : false
+
+    [mjBL, mjBR, mnBR, mnBL]
+
+osc(simple int len, simple int smt) =>
+    float hi = ta.highest( len)
+    float lo = ta.lowest ( len)
+    float av = ta.sma (hl2, len)
+
+    osc.sig := ta.ema(ta.linreg((close - math.avg(hi, lo, av)) / (hi - lo) * 100, len, 0), sL)
+    osc.sgD := sT.st(osc.sig, 2)
+    osc.cO := osc.sig > osc.sgD ? fCSS.css(1) : sCSS.css(1)
+
+mfi() =>
+    mf.mfi := ta.sma(ta.mfi(hl2, mfL) - 50, mfS)
+
+    mf.mfc := mf.mfi > 0 
+         ? mfBL 
+         : mfBR
+
+    bL = mf.mfi - 10
+    bR = mf.mfi + 10
+
+    mf.blMFI := mf.mfi > 0 and mf.mfi > cf.blT.avg() 
+         ? bL 
+         : 0
+    mf.brMFI := mf.mfi < 0 and mf.mfi < cf.brT.avg() 
+         ? bR 
+         : 0
+
+cDiv() =>
+    mx = math.max(osc.sig, osc.sgD, osc.sig[1], osc.sgD[1])
+    mn = math.min(osc.sig, osc.sgD, osc.sig[1], osc.sgD[1])
+
+    mxid = mx == osc.sig[1] or mx == osc.sgD[1] ? 1 : 0
+    mnid = mn == osc.sig[1] or mn == osc.sgD[1] ? 1 : 0
+
+    switch
+        osc.sig > dvT =>
+            if ta.crossunder(osc.sig, osc.sgD)
+                switch
+                    na(div.src) =>
+                        div.n := bar_index - mxid
+                        div.src := math.max(open[mxid], close[mxid])
+                        div.p := mx
+
+                    not na(div.src) =>
+                        if math.max(open[mxid], close[mxid]) > div.src and not(osc.sig[mxid] > div.p)
+                            line.new(x1 = div.n, x2 = bar_index - mxid, y1 = div.p, y2 = mx, color = brDv)
+                            div.n := na
+                            div.src := na
+                            div.p := na
+                        else
+                            div.n := bar_index - mxid
+                            div.src := math.max(open[mxid], close[mxid])
+                            div.p := mx
+        osc.sig < -dvT =>
+            if ta.crossover (osc.sig, osc.sgD)
+                switch
+                    na(div.src) =>
+                        div.n := bar_index - mnid
+                        div.src := math.min(open[mnid], close[mnid])
+                        div.p := mn
+
+                    not na(div.src) =>
+                        if math.min(open[mnid], close[mnid]) < div.src and not(osc.sig[mnid] < div.p)
+                            line.new(x1 = div.n, x2 = bar_index - mnid, y1 = div.p, y2 = mn, color = blDv)
+                            div.n := na
+                            div.src := na
+                            div.p := na
+                        else
+                            div.n := bar_index - mnid
+                            div.src := math.min(open[mnid], close[mnid])
+                            div.p := mn
+
+osc(mL, sL)
+mfi()
+mfT()
+calculateSignalStrength()
+
+if sDiv
+    cDiv()
+
+[mjBL, mjBR, mnBR, mnBL] = rv()
+
+// REVERSAL SIGNAL
+plotshape(mjBL and rsS ? -65 : na, location = location.absolute, color = rsBL, size = size.tiny, style = shape.triangleup)
+plotshape(mjBR and rsS ? 65 : na, location = location.absolute, color = rsBR, size = size.tiny, style = shape.triangledown)
+
+plot(mnBL and rsS ? -65 : na, color = rsBL, linewidth = 1, style = plot.style_circles)
+plot(mnBR and rsS ? 65 : na, color = rsBR, linewidth = 1, style = plot.style_circles)
+
+// HYPER WAVE
+plot(ta.crossover (osc.sig, osc.sgD) and dW ? math.min(osc.sig, osc.sgD) : na, style = plot.style_circles, linewidth = 2, color = osc.cO.css(0), offset = 0)
+plot(ta.crossunder(osc.sig, osc.sgD) and dW ? math.max(osc.sig, osc.sgD) : na, style = plot.style_circles, linewidth = 2, color = osc.cO.css(0), offset = 0)
+
+pO = plot(dW ? osc.sig : na, color = osc.cO.css(0) )
+iO = plot(dW ? osc.sgD : na, color = osc.cO.css(1), display = display.none)
+bL = plot(0 , color = color.black )
+
+fill(pO, iO, color = dW ? osc.cO : na)
+
+//SMART MONEY FLOW
+pmf = plot(Smf ? mf.mfi : na, color = mf.mfc )
+blT = plot(mf.blMFI > 0 and mf.mfi > 0 ? mf.blMFI : 0 , color = na, display = display.none)
+brT = plot(mf.brMFI < 0 and mf.mfi < 0 ? mf.brMFI : 0 , color = na, display = display.none)
+
+fill(bL, pmf, mf.mfc.transp(Smf ? 50 : 100))
+fill(bL, blT, mf.mfc.transp(Smf ? 0 : 100))
+fill(bL, brT, mf.mfc.transp(Smf ? 0 : 100))
+
+cf.up := color.rgb(54, 58, 69, 60)
+cf.dn := color.rgb(54, 58, 69, 60)
+
+switch
+    osc.sig > 0 and mf.mfi > 0 => cf.up := cnBL
+    osc.sig < 0 and mf.mfi < 0 => cf.dn := cnBR
+    => 
+        cf.dn := cnBR.transp(60)
+        cf.up := cnBL.transp(60)
+
+tLv = plot( 55, color = sCNB ? cf.up : na)
+bLv = plot(-55, color = sCNB ? cf.dn : na)
+
+tfL = plot( 50, display = display.none)
+dfL = plot(-50, display = display.none)
+
+fill(tLv, tfL, color = sCNB ? cf.up : na)
+fill(bLv, dfL, color = sCNB ? cf.dn : na)
+
+plot(mf.mfi > 0 and Smf ? cf.blT.avg() : na, color = mfBL, style = plot.style_linebr)
+plot(mf.mfi < 0 and Smf ? cf.brT.avg() : na, color = mfBR, style = plot.style_linebr)
+
+//CONFLUENCE METER
+if barstate.islast
+    line.new(x1 = last_bar_index, x2 = bar_index - 1, y1 = 20, y2 = 20, color = chart.fg_color.transp(50), style = line.style_dashed, extend = extend.right)
+    line.new(x1 = last_bar_index, x2 = bar_index - 1, y1 = -20, y2 = -20, color = chart.fg_color.transp(50), style = line.style_dashed, extend = extend.right)
+
+    if sCNF
+
+        var line[] ln = array.new<line>()
+        for j in ln
+            j.delete()
+        ln.clear()
+
+        var label lb = na
+        lb.delete()
+        lb := na
+
+        for i = 0 to 21
+            int id = switch i
+                0 => 55
+                1 => 50
+                2 => 45
+                3 => 40
+                4 => 35
+                5 => 30
+                6 => 25
+                7 => 20
+                8 => 15
+                9 => 10
+                10 => 5
+                11 => 0
+                12 => -5
+                13 => -10
+                14 => -15
+                15 => -20
+                16 => -25
+                17 => -30
+                18 => -35
+                19 => -40
+                20 => -45
+                21 => -50
+                
+            ln.unshift(line.new(x1 = bar_index + 2, x2 = bar_index + 2, y1 = id, y2 = id - 5, color = color.from_gradient(id, -50, 55, cnBR, cnBL), width = 4))
+
+        cnfP = switch
+            osc.sig > 0 and mf.mfi > 0 and mf.mfi > cf.blT.avg() => 40
+            osc.sig < 0 and mf.mfi < 0 and mf.mfi < cf.brT.avg() => -40
+
+            osc.sig > 0 and mf.mfi > 0 => 20
+            osc.sig < 0 and mf.mfi < 0 => -20
+
+            osc.sig > 0 and mf.mfi < 0 => 0
+            osc.sig < 0 and mf.mfi > 0 => 0
+
+// SIGNAL STRENGTH TABLE
+if showSS and barstate.islast
+    var table strengthTable = table.new(getTablePosition(), 9, 3, bgcolor = tableDataBg, border_width = 1, border_color = tableBorderColor)
+    table.clear(strengthTable, 0, 0, 8, 2)
+    
+    // Calculate individual conditions
+    cond1_bull = osc.sig > osc.sgD
+    cond1_bear = osc.sig < osc.sgD
+    cond2_bull = mf.mfi > 0
+    cond2_bear = mf.mfi < 0
+    cond3_bull = mf.mfi > cf.blT.avg()
+    cond3_bear = mf.mfi < cf.brT.avg()
+    cond4_bull = osc.sig > 0
+    cond4_bear = osc.sig < 0
+    cond5_bull = osc.sig < -30  // Oversold
+    cond5_bear = osc.sig > 30   // Overbought
+    vMA = ta.sma(volume, 7)
+    cond6_bull = volume > vMA * 1.5 and osc.sig > osc.sgD
+    cond6_bear = volume > vMA * 1.5 and osc.sig < osc.sgD
+    cond7_bull = osc.sig > 0 and mf.mfi > 0
+    cond7_bear = osc.sig < 0 and mf.mfi < 0
+    
+    tableTextSize = getTableSize()
+    
+    // Headers
+    table.cell(strengthTable, 0, 0, "", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 1, 0, "OSC↑", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Oscillator above signal line")
+    table.cell(strengthTable, 2, 0, "MF+", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Money Flow positive")
+    table.cell(strengthTable, 3, 0, "MF↑", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Money Flow above average")
+    table.cell(strengthTable, 4, 0, "OSC>0", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Oscillator above zero line")
+    table.cell(strengthTable, 5, 0, "OS/OB", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Oversold/Overbought levels")
+    table.cell(strengthTable, 6, 0, "Vol", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Volume confirmation")
+    table.cell(strengthTable, 7, 0, "Conv", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace, tooltip = "Convergence")
+    table.cell(strengthTable, 8, 0, "Score", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace)
+    
+    // Bullish row
+    table.cell(strengthTable, 0, 1, "Bull", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 1, 1, cond1_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond1_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 2, 1, cond2_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond2_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 3, 1, cond3_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond3_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 4, 1, cond4_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond4_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 5, 1, cond5_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond5_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 6, 1, cond6_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond6_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 7, 1, cond7_bull ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond7_bull ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 8, 1, str.tostring(ss.bullishScore), bgcolor = tableDataBg, text_color = tableDataText, text_size = tableTextSize, text_font_family = font.family_monospace)
+    
+    // Bearish row
+    table.cell(strengthTable, 0, 2, "Bear", bgcolor = tableHeaderBg, text_color = tableHeaderText, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 1, 2, cond1_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond1_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 2, 2, cond2_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond2_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 3, 2, cond3_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond3_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 4, 2, cond4_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond4_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 5, 2, cond5_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond5_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 6, 2, cond6_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond6_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 7, 2, cond7_bear ? "✓" : "✗", bgcolor = tableDataBg, text_color = cond7_bear ? tableCheckTrue : tableCheckFalse, text_size = tableTextSize, text_font_family = font.family_monospace)
+    table.cell(strengthTable, 8, 2, str.tostring(ss.bearishScore), bgcolor = tableDataBg, text_color = tableDataText, text_size = tableTextSize, text_font_family = font.family_monospace)

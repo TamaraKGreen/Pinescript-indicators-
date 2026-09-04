@@ -1,0 +1,974 @@
+//@version=5
+indicator("Statistical OHLC Projections", shorttitle="OHLC", overlay=true, max_lines_count=500, max_bars_back=5000, max_labels_count=500)
+
+//#region ———————————————————— Core Settings
+show1 = input(true, title="Show first timeframe", group="Timeframe Settings")
+tf1 = input.timeframe("480", title="First timeframe", options=["60", "240", "480", "720", "1D", "1W", "1M"], group="Timeframe Settings")
+nyMidnight = input.bool(false, title="Use NY midnight for TF1", 
+     tooltip="Applies to 4H, 8H, 12H, and Daily timeframes for TF1. For Daily: uses NY Midnight (00:00 EST) instead of futures session start (18:00 EST).", 
+     group="Timeframe Settings")
+show2 = input(false, title="Show second timeframe", group="Timeframe Settings")
+tf2 = input.timeframe("60", title="Second timeframe", options=["60", "240", "480", "720", "1D", "1W", "1M"], group="Timeframe Settings")
+nyMidnight2 = input.bool(false, title="Use NY midnight for TF2", 
+     tooltip="Applies to 4H, 8H, 12H, and Daily timeframes for TF2. For Daily: uses NY Midnight (00:00 EST) instead of futures session start (18:00 EST).", 
+     group="Timeframe Settings")
+datalookback = input.int(60, "Lookback Period", group="Timeframe Settings")
+displayMode = input.string("Both", "Display Mode", options=["Average", "Median", "Both"], group="Display Settings")
+styleOption = input.string("Dotted (┈)", "Line Style", options=["Solid (─)", "Dotted (┈)", "Dashed (╌)"], group="Visual Settings")
+deletePrev = input.bool(true, "Remove previous drawings", group="Visual Settings")
+
+// Max Range Settings
+showMaxRange = input(true, title="Show max range levels", group="Max Range Settings")
+maxRangeColor = input.color(color.new(color.purple, 0), "Max range (Average)", group="Max Range Settings")
+maxRangeMedianColor = input.color(color.new(color.teal, 0), "Max range (Median)", group="Max Range Settings")
+
+// Percentile Settings
+showPercentiles = input(true, title="Show percentile levels", group="Percentile Settings")
+percentile75 = input.float(75.0, title="Upper percentile", minval=50.1, maxval=99.9, step=0.1, group="Percentile Settings")
+percentile25 = input.float(25.0, title="Lower percentile", minval=0.1, maxval=49.9, step=0.1, group="Percentile Settings")
+percentileColor = input.color(color.new(color.blue, 0), "Percentile lines color", group="Percentile Settings")
+percentileStyle = input.string("Dashed (╌)", "Percentile line style", options=["Solid (─)", "Dotted (┈)", "Dashed (╌)"], group="Percentile Settings")
+
+openColor = input.color(color.red, "Open line", group="Color Settings")
+txtColor = input.color(color.black, "Text color", group="Color Settings")
+
+mhColor = input.color(color.new(#2a2e39, 0), "Manipulation high (Average)", group="Color Settings")
+mlColor = input.color(color.new(#2a2e39, 0), "Manipulation low (Average)", group="Color Settings")
+dhColor = input.color(color.new(#2a2e39, 0), "Distribution high (Average)", group="Color Settings")
+dlColor = input.color(color.new(#2a2e39, 0), "Distribution low (Average)", group="Color Settings")
+
+mhMedianColor = input.color(color.new(#2a2e39, 50), "Manipulation high (Median)", group="Color Settings")
+mlMedianColor = input.color(color.new(#2a2e39, 50), "Manipulation low (Median)", group="Color Settings")
+dhMedianColor = input.color(color.new(#2a2e39, 50), "Distribution high (Median)", group="Color Settings")
+dlMedianColor = input.color(color.new(#2a2e39, 50), "Distribution low (Median)", group="Color Settings")
+
+showTable = input(false, title="Show statistics table", group="Table Settings")
+bgColor1 = input.color(color.new(color.white, 100), "Table cell color", group="Table Settings")
+tablePosition = input.string("Top Right", "Table Position", options=["Top Right", "Bottom Right", "Middle Right", "Bottom Center", "Middle Left"], group="Table Settings")
+tableTextSize = input.string("Small", "Table Text Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group="Table Settings")
+
+
+premdisc = input(false, title="Enable premium/discount zones", group="Premium/Discount")
+premcolor = input.color(color.new(#ff1c1c, 90), "Premium zone color", group="Premium/Discount")
+disccolor = input.color(color.new(#1cff2f, 90), "Discount zone color", group="Premium/Discount")
+
+enAlertsMB = input(false, title="Alert on + manipulation hits (Average)", group="Alerts")
+enAlertsMS = input(false, title="Alert on - manipulation hits (Average)", group="Alerts")
+enAlertsDB = input(false, title="Alert on + distribution hits (Average)", group="Alerts")
+enAlertsDS = input(false, title="Alert on - distribution hits (Average)", group="Alerts")
+enAlertsMBMedian = input(false, title="Alert on + manipulation hits (Median)", group="Alerts")
+enAlertsMSMedian = input(false, title="Alert on - manipulation hits (Median)", group="Alerts")
+enAlertsDBMedian = input(false, title="Alert on + distribution hits (Median)", group="Alerts")
+enAlertsDSMedian = input(false, title="Alert on - distribution hits (Median)", group="Alerts")
+
+lineStyle = styleOption == "Dotted (┈)" ? line.style_dotted : styleOption == "Dashed (╌)" ? line.style_dashed : line.style_solid
+percentileLineStyle = percentileStyle == "Dotted (┈)" ? line.style_dotted : percentileStyle == "Dashed (╌)" ? line.style_dashed : line.style_solid
+
+//#endregion
+
+//#region ———————————————————— Functions and Calculations
+gettablePos(pos) =>
+    switch pos
+        "Top Right" => position.top_right
+        "Bottom Right" => position.bottom_right
+        "Middle Right" => position.middle_right
+        "Bottom Center" => position.bottom_center
+        "Middle Left" => position.bottom_left
+
+get_table_text_size(size) =>
+    switch size
+        "Auto" => size.auto
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+
+getHourEST(timestamp) =>
+    hour(timestamp, "America/New_York")
+
+get4HSlotEST(timestamp) =>
+    math.floor(hour(timestamp, "America/New_York") / 4)
+
+get8HSlotEST(timestamp) =>
+    math.floor(hour(timestamp, "America/New_York") / 8)
+
+get12HSlotEST(timestamp) =>
+    math.floor(hour(timestamp, "America/New_York") / 12)
+
+getDayOfWeek(timestamp) =>
+    dayofweek(timestamp, "America/New_York")
+
+// Custom function to check if timestamp is at 00:00 EST
+isNYMidnightSession(timestamp) =>
+    h = hour(timestamp, "America/New_York")
+    m = minute(timestamp, "America/New_York")
+    h == 0 and m == 0
+
+// Custom function to check if timestamp is at 18:00 EST (futures session start)
+isFuturesSessionStart(timestamp) =>
+    h = hour(timestamp, "America/New_York")
+    m = minute(timestamp, "America/New_York")
+    h == 18 and m == 0
+
+// Get NY midnight timestamp for a given date
+getNYMidnightTimestamp(timestamp) =>
+    t_year = year(timestamp, "America/New_York")
+    t_month = month(timestamp, "America/New_York")
+    t_day = dayofmonth(timestamp, "America/New_York")
+    timestamp("America/New_York", t_year, t_month, t_day, 0, 0, 0)
+
+// Get futures session start timestamp (18:00 EST) for a given date
+getFuturesSessionTimestamp(timestamp) =>
+    t_year = year(timestamp, "America/New_York")
+    t_month = month(timestamp, "America/New_York")
+    t_day = dayofmonth(timestamp, "America/New_York")
+    // For futures, the daily session starts at 18:00 EST
+    // If current time is before 18:00, use previous day's 18:00
+    currentHour = hour(timestamp, "America/New_York")
+    if currentHour < 18
+        // Use previous day's 18:00
+        prevDay = timestamp - 86400000  // Subtract 24 hours
+        prev_year = year(prevDay, "America/New_York")
+        prev_month = month(prevDay, "America/New_York")
+        prev_day = dayofmonth(prevDay, "America/New_York")
+        timestamp("America/New_York", prev_year, prev_month, prev_day, 18, 0, 0)
+    else
+        // Use current day's 18:00
+        timestamp("America/New_York", t_year, t_month, t_day, 18, 0, 0)
+
+// NEW: Percentile calculation function
+array_percentile(arr, percentile) =>
+    if array.size(arr) == 0
+        na
+    else
+        sorted = array.copy(arr)
+        array.sort(sorted)
+        n = array.size(sorted)
+        index = (percentile / 100) * (n - 1)
+        lower_index = math.floor(index)
+        upper_index = math.ceil(index)
+        
+        if lower_index == upper_index
+            array.get(sorted, int(lower_index))
+        else
+            lower_value = array.get(sorted, int(lower_index))
+            upper_value = array.get(sorted, int(upper_index))
+            fraction = index - lower_index
+            lower_value + fraction * (upper_value - lower_value)
+
+// Fixed filter function for NY midnight and futures sessions
+filterArrayByCondition(arr, timestamps, conditionValue, lookback, timeframe, nyMidnightEnabled) =>
+    filtered = array.new_float(0)
+    count = 0
+    for i = 0 to array.size(timestamps) - 1
+        if count >= lookback
+            break
+        timestamp = array.get(timestamps, i)
+        conditionMet = false
+        
+        if timeframe == "1D" or timeframe == "1W" or timeframe == "1M"
+            // For daily, weekly, and monthly timeframes, always include all data regardless of NY midnight setting
+            conditionMet := true
+        else if nyMidnightEnabled and (timeframe == "240" or timeframe == "480" or timeframe == "720")
+            // For intraday NY midnight sessions, check if it matches the current session slot
+            currentHour = hour(timestamp, "America/New_York")
+            if timeframe == "240"
+                // 4H sessions: 0-4, 4-8, 8-12, 12-16, 16-20, 20-24
+                sessionSlot = math.floor(currentHour / 4)
+                currentSessionSlot = math.floor(hour(time, "America/New_York") / 4)
+                conditionMet := sessionSlot == currentSessionSlot
+            else if timeframe == "480"
+                // 8H sessions: 0-8, 8-16, 16-24
+                sessionSlot = math.floor(currentHour / 8)
+                currentSessionSlot = math.floor(hour(time, "America/New_York") / 8)
+                conditionMet := sessionSlot == currentSessionSlot
+            else if timeframe == "720"
+                // 12H sessions: 0-12, 12-24
+                sessionSlot = math.floor(currentHour / 12)
+                currentSessionSlot = math.floor(hour(time, "America/New_York") / 12)
+                conditionMet := sessionSlot == currentSessionSlot
+        else
+            // Regular timeframe filtering
+            conditionMet := timeframe == "60" ? getHourEST(timestamp) == conditionValue :
+                           timeframe == "240" ? get4HSlotEST(timestamp) == conditionValue :
+                           timeframe == "480" ? get8HSlotEST(timestamp) == conditionValue :
+                           timeframe == "720" ? get12HSlotEST(timestamp) == conditionValue :
+                           false
+        
+        if conditionMet
+            array.push(filtered, array.get(arr, i))
+            count += 1
+    filtered
+
+// Determine when a new session starts for NY midnight mode and futures mode
+isNewSession(timeframe, nyMidnightEnabled) =>
+    if nyMidnightEnabled and (timeframe == "240" or timeframe == "480" or timeframe == "720")
+        currentHour = hour(time, "America/New_York")
+        prevHour = hour(time[1], "America/New_York")
+        
+        if timeframe == "240"
+            // New 4H session every 4 hours: 0, 4, 8, 12, 16, 20
+            currentSession = math.floor(currentHour / 4)
+            prevSession = math.floor(prevHour / 4)
+            currentSession != prevSession or ta.change(time("1D"))
+        else if timeframe == "480"
+            // New 8H session every 8 hours: 0, 8, 16
+            currentSession = math.floor(currentHour / 8)
+            prevSession = math.floor(prevHour / 8)
+            currentSession != prevSession or ta.change(time("1D"))
+        else if timeframe == "720"
+            // New 12H session every 12 hours: 0, 12
+            currentSession = math.floor(currentHour / 12)
+            prevSession = math.floor(prevHour / 12)
+            currentSession != prevSession or ta.change(time("1D"))
+        else
+            false
+    else if nyMidnightEnabled and timeframe == "1D"
+        // Daily NY midnight mode - new session at NY midnight (00:00 EST)
+        currentDay = dayofmonth(time, "America/New_York")
+        prevDay = dayofmonth(time[1], "America/New_York")
+        currentDay != prevDay
+    else if timeframe == "1D"
+        // Daily futures mode - new session at futures open (18:00 EST)
+        currentHour = hour(time, "America/New_York")
+        prevHour = hour(time[1], "America/New_York")
+        // Check if we crossed 18:00 or if it's a new day
+        (currentHour >= 18 and prevHour < 18) or (currentHour < 18 and prevHour >= 18)
+    else if timeframe == "1W"
+        // Weekly timeframe - new session on Monday
+        ta.change(time("1W"))
+    else if timeframe == "1M"
+        // Monthly timeframe - new session on first day of month
+        ta.change(time("1M"))
+    else
+        // Regular timeframe change for 60min and non-NY midnight modes
+        ta.change(time(timeframe))
+
+newTime1 = isNewSession(tf1, nyMidnight)
+newTime2 = isNewSession(tf2, nyMidnight2)
+
+isNYMidnightSessionActive(timeframe, nyMidnightEnabled) =>
+    nyMidnightEnabled and (timeframe == "240" or timeframe == "480" or timeframe == "720")
+
+// Fixed candle time calculations
+getCurrentSessionStart(timeframe, nyMidnightEnabled) =>
+    if nyMidnightEnabled and (timeframe == "240" or timeframe == "480" or timeframe == "720")
+        currentHour = hour(time, "America/New_York")
+        sessionStartHour = 0  // Initialize the variable
+        if timeframe == "240"
+            // 4H sessions starting at: 0, 4, 8, 12, 16, 20
+            sessionStartHour := math.floor(currentHour / 4) * 4
+        else if timeframe == "480"
+            // 8H sessions starting at: 0, 8, 16
+            sessionStartHour := math.floor(currentHour / 8) * 8
+        else if timeframe == "720"
+            // 12H sessions starting at: 0, 12
+            sessionStartHour := math.floor(currentHour / 12) * 12
+        
+        t_year = year(time, "America/New_York")
+        t_month = month(time, "America/New_York")
+        t_day = dayofmonth(time, "America/New_York")
+        timestamp("America/New_York", t_year, t_month, t_day, sessionStartHour, 0, 0)
+    else if nyMidnightEnabled and timeframe == "1D"
+        // Daily NY midnight mode - start at NY midnight
+        t_year = year(time, "America/New_York")
+        t_month = month(time, "America/New_York")
+        t_day = dayofmonth(time, "America/New_York")
+        timestamp("America/New_York", t_year, t_month, t_day, 0, 0, 0)
+    else if timeframe == "1D"
+        // Daily futures mode - start at futures session open (18:00 EST)
+        getFuturesSessionTimestamp(time)
+    else
+        time(timeframe)
+
+getCurrentSessionEnd(timeframe, nyMidnightEnabled) =>
+    if nyMidnightEnabled and (timeframe == "240" or timeframe == "480" or timeframe == "720")
+        sessionStart = getCurrentSessionStart(timeframe, nyMidnightEnabled)
+        if timeframe == "240"
+            sessionStart + 14400000  // 4 hours in milliseconds
+        else if timeframe == "480"
+            sessionStart + 28800000  // 8 hours in milliseconds
+        else if timeframe == "720"
+            sessionStart + 43200000  // 12 hours in milliseconds
+        else
+            sessionStart + 14400000
+    else if nyMidnightEnabled and timeframe == "1D"
+        // Daily NY midnight mode - end at next NY midnight
+        sessionStart = getCurrentSessionStart(timeframe, nyMidnightEnabled)
+        sessionStart + 86400000  // 24 hours in milliseconds
+    else if timeframe == "1D"
+        // Daily futures mode - end at next futures session (next day's 18:00)
+        sessionStart = getCurrentSessionStart(timeframe, nyMidnightEnabled)
+        sessionStart + 86400000  // 24 hours in milliseconds
+    else
+        time_close(timeframe)
+
+int candleOpen = getCurrentSessionStart(tf1, nyMidnight)
+int candleClose = getCurrentSessionEnd(tf1, nyMidnight)
+
+int candleOpen2 = getCurrentSessionStart(tf2, nyMidnight2)
+int candleClose2 = getCurrentSessionEnd(tf2, nyMidnight2)
+
+getOHLC(_res) =>
+    [request.security(syminfo.tickerid, _res, open, barmerge.gaps_off, barmerge.lookahead_on),
+     request.security(syminfo.tickerid, _res, high, barmerge.gaps_off, barmerge.lookahead_on),
+     request.security(syminfo.tickerid, _res, low, barmerge.gaps_off, barmerge.lookahead_on),
+     request.security(syminfo.tickerid, _res, close, barmerge.gaps_off, barmerge.lookahead_on)]
+
+[open1, high1, low1, close1] = getOHLC(tf1)
+[open2, high2, low2, close2] = getOHLC(tf2)
+
+AverageManipulationWickLength(_open, _high, _low, _close) =>
+    _close > _open ? _open - _low : _high - _open
+
+AverageDistributionDistance(_open, _high, _low, _close) =>
+    _close > _open ? _high - _open : _open - _low
+
+// Function to calculate max range from open
+MaxRangeFromOpen(_open, _high, _low, _close) =>
+    math.max(math.abs(_high - _open), math.abs(_low - _open))
+
+// NEW: Function to calculate actual price range (high - low)
+ActualRange(_open, _high, _low, _close) =>
+    _high - _low
+
+// NEW: Functions to calculate range extensions from open
+HighRangeFromOpen(_open, _high, _low, _close) =>
+    _high - _open
+
+LowRangeFromOpen(_open, _high, _low, _close) =>
+    _open - _low
+
+var manipulationWickLength1 = array.new_float(0)
+var distributionDistance1 = array.new_float(0)
+var maxRangeFromOpen1 = array.new_float(0)
+var timestamps1 = array.new_int(0)
+var filteredManipulation1 = array.new_float(0)
+var filteredDistribution1 = array.new_float(0)
+var filteredMaxRange1 = array.new_float(0)
+var manipulationWickLength2 = array.new_float(0)
+var distributionDistance2 = array.new_float(0)
+var maxRangeFromOpen2 = array.new_float(0)
+var timestamps2 = array.new_int(0)
+var filteredManipulation2 = array.new_float(0)
+var filteredDistribution2 = array.new_float(0)
+var filteredMaxRange2 = array.new_float(0)
+
+// NEW: Arrays for range-based percentile calculations
+var actualRanges1 = array.new_float(0)
+var highRangesFromOpen1 = array.new_float(0)
+var lowRangesFromOpen1 = array.new_float(0)
+var filteredActualRanges1 = array.new_float(0)
+var filteredHighRanges1 = array.new_float(0)
+var filteredLowRanges1 = array.new_float(0)
+var actualRanges2 = array.new_float(0)
+var highRangesFromOpen2 = array.new_float(0)
+var lowRangesFromOpen2 = array.new_float(0)
+var filteredActualRanges2 = array.new_float(0)
+var filteredHighRanges2 = array.new_float(0)
+var filteredLowRanges2 = array.new_float(0)
+var float manipulation_high1 = na
+var float manipulation_low1 = na
+var float distribution_high1 = na
+var float distribution_low1 = na
+var float median_manipulation_high1 = na
+var float median_manipulation_low1 = na
+var float median_distribution_high1 = na
+var float median_distribution_low1 = na
+var float openlevel = na
+var float manipulation_high2 = na
+var float manipulation_low2 = na
+var float distribution_high2 = na
+var float distribution_low2 = na
+var float median_manipulation_high2 = na
+var float median_manipulation_low2 = na
+var float median_distribution_high2 = na
+var float median_distribution_low2 = na
+
+// Max range variables
+var float max_range_high1 = na
+var float max_range_low1 = na
+var float median_max_range_high1 = na
+var float median_max_range_low1 = na
+var float max_range_high2 = na
+var float max_range_low2 = na
+var float median_max_range_high2 = na
+var float median_max_range_low2 = na
+
+// NEW: Percentile variables for TF1 - Range-based
+var float percentile_high_range_upper1 = na
+var float percentile_low_range_upper1 = na
+var float percentile_high_range_lower1 = na
+var float percentile_low_range_lower1 = na
+
+// NEW: Percentile variables for TF2 - Range-based
+var float percentile_high_range_upper2 = na
+var float percentile_low_range_upper2 = na
+var float percentile_high_range_lower2 = na
+var float percentile_low_range_lower2 = na
+
+// Fixed data collection logic
+if newTime1
+    array.push(manipulationWickLength1, AverageManipulationWickLength(open1, high1, low1, close1))
+    array.push(distributionDistance1, AverageDistributionDistance(open1, high1, low1, close1))
+    array.push(maxRangeFromOpen1, MaxRangeFromOpen(open1, high1, low1, close1))
+    // NEW: Collect range data for percentiles
+    array.push(actualRanges1, ActualRange(open1, high1, low1, close1))
+    array.push(highRangesFromOpen1, HighRangeFromOpen(open1, high1, low1, close1))
+    array.push(lowRangesFromOpen1, LowRangeFromOpen(open1, high1, low1, close1))
+    timestamp1 = getCurrentSessionStart(tf1, nyMidnight)
+    array.push(timestamps1, timestamp1)
+
+if newTime2
+    array.push(manipulationWickLength2, AverageManipulationWickLength(open2, high2, low2, close2))
+    array.push(distributionDistance2, AverageDistributionDistance(open2, high2, low2, close2))
+    array.push(maxRangeFromOpen2, MaxRangeFromOpen(open2, high2, low2, close2))
+    // NEW: Collect range data for percentiles
+    array.push(actualRanges2, ActualRange(open2, high2, low2, close2))
+    array.push(highRangesFromOpen2, HighRangeFromOpen(open2, high2, low2, close2))
+    array.push(lowRangesFromOpen2, LowRangeFromOpen(open2, high2, low2, close2))
+    timestamp2 = getCurrentSessionStart(tf2, nyMidnight2)
+    array.push(timestamps2, timestamp2)
+
+// Use current bar's open for NY midnight sessions or daily/weekly/monthly
+getCurrentOpenPrice(tf, nyMidnightEnabled) =>
+    if nyMidnightEnabled and (tf == "240" or tf == "480" or tf == "720" or tf == "1D")
+        open  // Use current bar's open for NY midnight sessions
+    else if tf == "1D" or tf == "1W" or tf == "1M"
+        open  // Use current bar's open for higher timeframes
+    else
+        // For regular sessions, use the already fetched open values
+        tf == "60" ? open1 : tf == "240" ? open1 : tf == "480" ? open1 : tf == "720" ? open1 : open
+
+currentOpen1 = getCurrentOpenPrice(tf1, nyMidnight)
+currentOpen2 = getCurrentOpenPrice(tf2, nyMidnight2)
+
+// Fixed level calculation logic
+if show1 and array.size(manipulationWickLength1) > datalookback + 1
+    conditionValue = 0  // Default value
+    if tf1 != "1D" and tf1 != "1W" and tf1 != "1M" and not isNYMidnightSessionActive(tf1, nyMidnight)
+        conditionValue := tf1 == "60" ? getHourEST(time(tf1)) :
+                         tf1 == "240" ? get4HSlotEST(time(tf1)) :
+                         tf1 == "480" ? get8HSlotEST(time(tf1)) :
+                         tf1 == "720" ? get12HSlotEST(time(tf1)) :
+                         0
+    
+    filteredManipulation1 := filterArrayByCondition(manipulationWickLength1, timestamps1, conditionValue, datalookback, tf1, nyMidnight)
+    filteredDistribution1 := filterArrayByCondition(distributionDistance1, timestamps1, conditionValue, datalookback, tf1, nyMidnight)
+    filteredMaxRange1 := filterArrayByCondition(maxRangeFromOpen1, timestamps1, conditionValue, datalookback, tf1, nyMidnight)
+    // NEW: Filter range arrays for percentiles
+    filteredActualRanges1 := filterArrayByCondition(actualRanges1, timestamps1, conditionValue, datalookback, tf1, nyMidnight)
+    filteredHighRanges1 := filterArrayByCondition(highRangesFromOpen1, timestamps1, conditionValue, datalookback, tf1, nyMidnight)
+    filteredLowRanges1 := filterArrayByCondition(lowRangesFromOpen1, timestamps1, conditionValue, datalookback, tf1, nyMidnight)
+    
+    avgManipulationWickLength1 = array.size(filteredManipulation1) > 0 ? array.avg(filteredManipulation1) : na
+    avgDistributionDistance1 = array.size(filteredDistribution1) > 0 ? array.avg(filteredDistribution1) : na
+    avgMaxRange1 = array.size(filteredMaxRange1) > 0 ? array.avg(filteredMaxRange1) : na
+    medianManipulationWickLength1 = array.size(filteredManipulation1) > 0 ? array.median(filteredManipulation1) : na
+    medianDistributionDistance1 = array.size(filteredDistribution1) > 0 ? array.median(filteredDistribution1) : na
+    medianMaxRange1 = array.size(filteredMaxRange1) > 0 ? array.median(filteredMaxRange1) : na
+    
+    // NEW: Calculate range-based percentiles for TF1
+    if showPercentiles
+        percentileHighRangeUpper1 = array.size(filteredHighRanges1) > 0 ? array_percentile(filteredHighRanges1, percentile75) : na
+        percentileHighRangeLower1 = array.size(filteredHighRanges1) > 0 ? array_percentile(filteredHighRanges1, percentile25) : na
+        percentileLowRangeUpper1 = array.size(filteredLowRanges1) > 0 ? array_percentile(filteredLowRanges1, percentile75) : na
+        percentileLowRangeLower1 = array.size(filteredLowRanges1) > 0 ? array_percentile(filteredLowRanges1, percentile25) : na
+        
+        if not na(percentileHighRangeUpper1)
+            percentile_high_range_upper1 := currentOpen1 + percentileHighRangeUpper1
+        if not na(percentileHighRangeLower1)
+            percentile_high_range_lower1 := currentOpen1 + percentileHighRangeLower1
+        if not na(percentileLowRangeUpper1)
+            percentile_low_range_upper1 := currentOpen1 - percentileLowRangeUpper1
+        if not na(percentileLowRangeLower1)
+            percentile_low_range_lower1 := currentOpen1 - percentileLowRangeLower1
+    
+    if not na(avgManipulationWickLength1) and not na(avgDistributionDistance1)
+        manipulation_high1 := currentOpen1 + avgManipulationWickLength1
+        manipulation_low1 := currentOpen1 - avgManipulationWickLength1
+        distribution_high1 := currentOpen1 + avgDistributionDistance1 + avgManipulationWickLength1
+        distribution_low1 := currentOpen1 - avgDistributionDistance1 - avgManipulationWickLength1
+        median_manipulation_high1 := currentOpen1 + medianManipulationWickLength1
+        median_manipulation_low1 := currentOpen1 - medianManipulationWickLength1
+        median_distribution_high1 := currentOpen1 + medianDistributionDistance1 + medianManipulationWickLength1
+        median_distribution_low1 := currentOpen1 - medianDistributionDistance1 - medianManipulationWickLength1
+        openlevel := currentOpen1
+        
+        // Max range levels
+        if not na(avgMaxRange1)
+            max_range_high1 := currentOpen1 + avgMaxRange1
+            max_range_low1 := currentOpen1 - avgMaxRange1
+        if not na(medianMaxRange1)
+            median_max_range_high1 := currentOpen1 + medianMaxRange1
+            median_max_range_low1 := currentOpen1 - medianMaxRange1
+
+if show2 and array.size(manipulationWickLength2) > datalookback + 1
+    conditionValue = 0  // Default value
+    if tf2 != "1D" and tf2 != "1W" and tf2 != "1M" and not isNYMidnightSessionActive(tf2, nyMidnight2)
+        conditionValue := tf2 == "60" ? getHourEST(time(tf2)) :
+                         tf2 == "240" ? get4HSlotEST(time(tf2)) :
+                         tf2 == "480" ? get8HSlotEST(time(tf2)) :
+                         tf2 == "720" ? get12HSlotEST(time(tf2)) :
+                         0
+    
+    filteredManipulation2 := filterArrayByCondition(manipulationWickLength2, timestamps2, conditionValue, datalookback, tf2, nyMidnight2)
+    filteredDistribution2 := filterArrayByCondition(distributionDistance2, timestamps2, conditionValue, datalookback, tf2, nyMidnight2)
+    filteredMaxRange2 := filterArrayByCondition(maxRangeFromOpen2, timestamps2, conditionValue, datalookback, tf2, nyMidnight2)
+    // NEW: Filter range arrays for percentiles
+    filteredActualRanges2 := filterArrayByCondition(actualRanges2, timestamps2, conditionValue, datalookback, tf2, nyMidnight2)
+    filteredHighRanges2 := filterArrayByCondition(highRangesFromOpen2, timestamps2, conditionValue, datalookback, tf2, nyMidnight2)
+    filteredLowRanges2 := filterArrayByCondition(lowRangesFromOpen2, timestamps2, conditionValue, datalookback, tf2, nyMidnight2)
+    
+    avgManipulationWickLength2 = array.size(filteredManipulation2) > 0 ? array.avg(filteredManipulation2) : na
+    avgDistributionDistance2 = array.size(filteredDistribution2) > 0 ? array.avg(filteredDistribution2) : na
+    avgMaxRange2 = array.size(filteredMaxRange2) > 0 ? array.avg(filteredMaxRange2) : na
+    medianManipulationWickLength2 = array.size(filteredManipulation2) > 0 ? array.median(filteredManipulation2) : na
+    medianDistributionDistance2 = array.size(filteredDistribution2) > 0 ? array.median(filteredDistribution2) : na
+    medianMaxRange2 = array.size(filteredMaxRange2) > 0 ? array.median(filteredMaxRange2) : na
+    
+    // NEW: Calculate range-based percentiles for TF2
+    if showPercentiles
+        percentileHighRangeUpper2 = array.size(filteredHighRanges2) > 0 ? array_percentile(filteredHighRanges2, percentile75) : na
+        percentileHighRangeLower2 = array.size(filteredHighRanges2) > 0 ? array_percentile(filteredHighRanges2, percentile25) : na
+        percentileLowRangeUpper2 = array.size(filteredLowRanges2) > 0 ? array_percentile(filteredLowRanges2, percentile75) : na
+        percentileLowRangeLower2 = array.size(filteredLowRanges2) > 0 ? array_percentile(filteredLowRanges2, percentile25) : na
+        
+        if not na(percentileHighRangeUpper2)
+            percentile_high_range_upper2 := currentOpen2 + percentileHighRangeUpper2
+        if not na(percentileHighRangeLower2)
+            percentile_high_range_lower2 := currentOpen2 + percentileHighRangeLower2
+        if not na(percentileLowRangeUpper2)
+            percentile_low_range_upper2 := currentOpen2 - percentileLowRangeUpper2
+        if not na(percentileLowRangeLower2)
+            percentile_low_range_lower2 := currentOpen2 - percentileLowRangeLower2
+    
+    if not na(avgManipulationWickLength2) and not na(avgDistributionDistance2)
+        manipulation_high2 := currentOpen2 + avgManipulationWickLength2
+        manipulation_low2 := currentOpen2 - avgManipulationWickLength2
+        distribution_high2 := currentOpen2 + avgDistributionDistance2 + avgManipulationWickLength2
+        distribution_low2 := currentOpen2 - avgDistributionDistance2 - avgManipulationWickLength2
+        median_manipulation_high2 := currentOpen2 + medianManipulationWickLength2
+        median_manipulation_low2 := currentOpen2 - medianManipulationWickLength2
+        median_distribution_high2 := currentOpen2 + medianDistributionDistance2 + medianManipulationWickLength2
+        median_distribution_low2 := currentOpen2 - medianDistributionDistance2 - medianManipulationWickLength2
+        
+        // Max range levels
+        if not na(avgMaxRange2)
+            max_range_high2 := currentOpen2 + avgMaxRange2
+            max_range_low2 := currentOpen2 - avgMaxRange2
+        if not na(medianMaxRange2)
+            median_max_range_high2 := currentOpen2 + medianMaxRange2
+            median_max_range_low2 := currentOpen2 - medianMaxRange2
+
+//#endregion
+
+//#region ———————————————————— Alerts
+if enAlertsMB
+    mlh = ta.crossover(manipulation_low1, close)
+    if mlh
+        alert("Manipulation low (Average) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsMS
+    mhh = ta.crossover(close, manipulation_high1)
+    if mhh
+        alert("Manipulation high (Average) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsDB
+    dhh = ta.crossover(close, distribution_high1)
+    if dhh
+        alert("Distribution high (Average) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsDS
+    dlh = ta.crossover(distribution_low1, close)
+    if dlh
+        alert("Distribution low (Average) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsMBMedian
+    mlh_median = ta.crossover(median_manipulation_low1, close)
+    if mlh_median
+        alert("Manipulation low (Median) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsMSMedian
+    mhh_median = ta.crossover(close, median_manipulation_high1)
+    if mhh_median
+        alert("Manipulation high (Median) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsDBMedian
+    dhh_median = ta.crossover(close, median_distribution_high1)
+    if dhh_median
+        alert("Distribution high (Median) hit on " + tf1, alert.freq_once_per_bar)
+if enAlertsDSMedian
+    dlh_median = ta.crossover(median_distribution_low1, close)
+    if dlh_median
+        alert("Distribution low (Median) hit on " + tf1, alert.freq_once_per_bar)
+
+//#endregion
+
+//#region ———————————————————— Drawings
+if show1 and not na(manipulation_high1)
+    var line phline1 = na
+    var line plline1 = na
+    var line mhline1 = na
+    var line mlline1 = na
+    var line openline1 = na
+    var line ph_median_line1 = na
+    var line pl_median_line1 = na
+    var line mh_median_line1 = na
+    var line ml_median_line1 = na
+    var label phlabel1 = na
+    var label pllabel1 = na
+    var label mhlabel1 = na
+    var label mllabel1 = na
+    var label ph_median_label1 = na
+    var label pl_median_label1 = na
+    var label mh_median_label1 = na
+    var label ml_median_label1 = na
+    var box topbox = na
+    var box bottombox = na
+    
+    // Max range lines and labels
+    var line max_range_high_line1 = na
+    var line max_range_low_line1 = na
+    var line median_max_range_high_line1 = na
+    var line median_max_range_low_line1 = na
+    var label max_range_high_label1 = na
+    var label max_range_low_label1 = na
+    var label median_max_range_high_label1 = na
+    var label median_max_range_low_label1 = na
+
+    // NEW: Percentile lines and labels for TF1 - Range-based
+    var line percentile_high_range_upper_line1 = na
+    var line percentile_high_range_lower_line1 = na
+    var line percentile_low_range_upper_line1 = na
+    var line percentile_low_range_lower_line1 = na
+    var label percentile_high_range_upper_label1 = na
+    var label percentile_high_range_lower_label1 = na
+    var label percentile_low_range_upper_label1 = na
+    var label percentile_low_range_lower_label1 = na
+
+    shouldUpdate = newTime1
+    
+    if shouldUpdate
+        if deletePrev
+            line.delete(phline1[1])
+            line.delete(plline1[1])
+            line.delete(mhline1[1])
+            line.delete(mlline1[1])
+            line.delete(openline1[1])
+            line.delete(ph_median_line1[1])
+            line.delete(pl_median_line1[1])
+            line.delete(mh_median_line1[1])
+            line.delete(ml_median_line1[1])
+            label.delete(phlabel1[1])
+            label.delete(pllabel1[1])
+            label.delete(mhlabel1[1])
+            label.delete(mllabel1[1])
+            label.delete(ph_median_label1[1])
+            label.delete(pl_median_label1[1])
+            label.delete(mh_median_label1[1])
+            label.delete(ml_median_label1[1])
+            // Delete max range elements
+            if showMaxRange
+                line.delete(max_range_high_line1[1])
+                line.delete(max_range_low_line1[1])
+                line.delete(median_max_range_high_line1[1])
+                line.delete(median_max_range_low_line1[1])
+                label.delete(max_range_high_label1[1])
+                label.delete(max_range_low_label1[1])
+                label.delete(median_max_range_high_label1[1])
+                label.delete(median_max_range_low_label1[1])
+            // NEW: Delete percentile elements
+            if showPercentiles
+                line.delete(percentile_high_range_upper_line1[1])
+                line.delete(percentile_high_range_lower_line1[1])
+                line.delete(percentile_low_range_upper_line1[1])
+                line.delete(percentile_low_range_lower_line1[1])
+                label.delete(percentile_high_range_upper_label1[1])
+                label.delete(percentile_high_range_lower_label1[1])
+                label.delete(percentile_low_range_upper_label1[1])
+                label.delete(percentile_low_range_lower_label1[1])
+            if premdisc
+                box.delete(topbox[1])
+                box.delete(bottombox[1])
+
+        if premdisc
+            if displayMode == "Average" or displayMode == "Both"
+                topbox := box.new(candleOpen, distribution_high1, candleClose, manipulation_high1, xloc=xloc.bar_time, bgcolor=premcolor, border_color=color.new(#2a2e39, 100))
+                bottombox := box.new(candleOpen, manipulation_low1, candleClose, distribution_low1, xloc=xloc.bar_time, bgcolor=disccolor, border_color=color.new(#2a2e39, 100))
+            else if displayMode == "Median"
+                topbox := box.new(candleOpen, median_distribution_high1, candleClose, median_manipulation_high1, xloc=xloc.bar_time, bgcolor=premcolor, border_color=color.new(#2a2e39, 100))
+                bottombox := box.new(candleOpen, median_manipulation_low1, candleClose, median_distribution_low1, xloc=xloc.bar_time, bgcolor=disccolor, border_color=color.new(#2a2e39, 100))
+
+        openline1 := line.new(candleOpen, openlevel, candleClose, openlevel, xloc=xloc.bar_time, color=openColor, style=lineStyle, width=1)
+        
+        // Max range lines
+        if showMaxRange
+            if displayMode == "Average" or displayMode == "Both"
+                if not na(max_range_high1)
+                    max_range_high_line1 := line.new(candleOpen, max_range_high1, candleClose, max_range_high1, xloc=xloc.bar_time, color=maxRangeColor, style=lineStyle, width=1)
+                    max_range_low_line1 := line.new(candleOpen, max_range_low1, candleClose, max_range_low1, xloc=xloc.bar_time, color=maxRangeColor, style=lineStyle, width=1)
+                    max_range_high_label1 := label.new(candleClose, max_range_high1, text=tf1+" Max Range (Avg): "+str.tostring(max_range_high1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(max_range_high1, "#.00"))
+                    max_range_low_label1 := label.new(candleClose, max_range_low1, text=tf1+" Max Range (Avg): "+str.tostring(max_range_low1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(max_range_low1, "#.00"))
+            if displayMode == "Median" or displayMode == "Both"
+                if not na(median_max_range_high1)
+                    median_max_range_high_line1 := line.new(candleOpen, median_max_range_high1, candleClose, median_max_range_high1, xloc=xloc.bar_time, color=maxRangeMedianColor, style=lineStyle, width=1)
+                    median_max_range_low_line1 := line.new(candleOpen, median_max_range_low1, candleClose, median_max_range_low1, xloc=xloc.bar_time, color=maxRangeMedianColor, style=lineStyle, width=1)
+                    median_max_range_high_label1 := label.new(candleClose, median_max_range_high1, text=tf1+" Max Range (Med): "+str.tostring(median_max_range_high1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_max_range_high1, "#.00"))
+                    median_max_range_low_label1 := label.new(candleClose, median_max_range_low1, text=tf1+" Max Range (Med): "+str.tostring(median_max_range_low1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_max_range_low1, "#.00"))
+        
+        // NEW: Percentile lines for TF1 - Range-based (both upper and lower percentiles)
+        if showPercentiles
+            // High range percentiles
+            if not na(percentile_high_range_upper1)
+                percentile_high_range_upper_line1 := line.new(candleOpen, percentile_high_range_upper1, candleClose, percentile_high_range_upper1, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_high_range_upper_label1 := label.new(candleClose, percentile_high_range_upper1, text=tf1+" High P"+str.tostring(percentile75, "#")+": "+str.tostring(percentile_high_range_upper1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_high_range_upper1, "#.00"))
+            if not na(percentile_high_range_lower1)
+                percentile_high_range_lower_line1 := line.new(candleOpen, percentile_high_range_lower1, candleClose, percentile_high_range_lower1, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_high_range_lower_label1 := label.new(candleClose, percentile_high_range_lower1, text=tf1+" High P"+str.tostring(percentile25, "#")+": "+str.tostring(percentile_high_range_lower1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_high_range_lower1, "#.00"))
+            
+            // Low range percentiles
+            if not na(percentile_low_range_upper1)
+                percentile_low_range_upper_line1 := line.new(candleOpen, percentile_low_range_upper1, candleClose, percentile_low_range_upper1, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_low_range_upper_label1 := label.new(candleClose, percentile_low_range_upper1, text=tf1+" Low P"+str.tostring(percentile75, "#")+": "+str.tostring(percentile_low_range_upper1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_low_range_upper1, "#.00"))
+            if not na(percentile_low_range_lower1)
+                percentile_low_range_lower_line1 := line.new(candleOpen, percentile_low_range_lower1, candleClose, percentile_low_range_lower1, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_low_range_lower_label1 := label.new(candleClose, percentile_low_range_lower1, text=tf1+" Low P"+str.tostring(percentile25, "#")+": "+str.tostring(percentile_low_range_lower1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_low_range_lower1, "#.00"))
+
+        
+        if displayMode == "Average" or displayMode == "Both"
+            phline1 := line.new(candleOpen, distribution_high1, candleClose, distribution_high1, xloc=xloc.bar_time, color=dhColor, style=lineStyle, width=1)
+            plline1 := line.new(candleOpen, distribution_low1, candleClose, distribution_low1, xloc=xloc.bar_time, color=dlColor, style=lineStyle, width=1)
+            mhline1 := line.new(candleOpen, manipulation_high1, candleClose, manipulation_high1, xloc=xloc.bar_time, color=mhColor, style=lineStyle, width=1)
+            mlline1 := line.new(candleOpen, manipulation_low1, candleClose, manipulation_low1, xloc=xloc.bar_time, color=mlColor, style=lineStyle, width=1)
+            phlabel1 := label.new(candleClose, distribution_high1, text=tf1+" + Dist TF1: "+str.tostring(distribution_high1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(distribution_high1, "#.00"))
+            pllabel1 := label.new(candleClose, distribution_low1, text=tf1+" - Dist TF1: "+str.tostring(distribution_low1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(distribution_low1, "#.00"))
+            mhlabel1 := label.new(candleClose, manipulation_high1, text=tf1+" - Manip TF1: "+str.tostring(manipulation_high1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(manipulation_high1, "#.00"))
+            mllabel1 := label.new(candleClose, manipulation_low1, text=tf1+" + Manip TF1: "+str.tostring(manipulation_low1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(manipulation_low1, "#.00"))
+        if displayMode == "Median" or displayMode == "Both"
+            ph_median_line1 := line.new(candleOpen, median_distribution_high1, candleClose, median_distribution_high1, xloc=xloc.bar_time, color=dhMedianColor, style=lineStyle, width=1)
+            pl_median_line1 := line.new(candleOpen, median_distribution_low1, candleClose, median_distribution_low1, xloc=xloc.bar_time, color=dlMedianColor, style=lineStyle, width=1)
+            mh_median_line1 := line.new(candleOpen, median_manipulation_high1, candleClose, median_manipulation_high1, xloc=xloc.bar_time, color=mhMedianColor, style=lineStyle, width=1)
+            ml_median_line1 := line.new(candleOpen, median_manipulation_low1, candleClose, median_manipulation_low1, xloc=xloc.bar_time, color=mlMedianColor, style=lineStyle, width=1)
+            ph_median_label1 := label.new(candleClose, median_distribution_high1, text=tf1+" + Dist (median) TF1: "+str.tostring(median_distribution_high1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_distribution_high1, "#.00"))
+            pl_median_label1 := label.new(candleClose, median_distribution_low1, text=tf1+" - Dist (median) TF1: "+str.tostring(median_distribution_low1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_distribution_low1, "#.00"))
+            mh_median_label1 := label.new(candleClose, median_manipulation_high1, text=tf1+" - Manip (median) TF1: "+str.tostring(median_manipulation_high1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_manipulation_high1, "#.00"))
+            ml_median_label1 := label.new(candleClose, median_manipulation_low1, text=tf1+" + Manip (median) TF1: "+str.tostring(median_manipulation_low1, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_manipulation_low1, "#.00"))
+
+if show2 and not na(manipulation_high2)
+    var line phline2 = na
+    var line plline2 = na
+    var line mhline2 = na
+    var line mlline2 = na
+    var line openline2 = na
+    var line ph_median_line2 = na
+    var line pl_median_line2 = na
+    var line mh_median_line2 = na
+    var line ml_median_line2 = na
+    var label phlabel2 = na
+    var label pllabel2 = na
+    var label mhlabel2 = na
+    var label mllabel2 = na
+    var label ph_median_label2 = na
+    var label pl_median_label2 = na
+    var label mh_median_label2 = na
+    var label ml_median_label2 = na
+    var box topbox2 = na
+    var box bottombox2 = na
+    
+    // Max range lines and labels for TF2
+    var line max_range_high_line2 = na
+    var line max_range_low_line2 = na
+    var line median_max_range_high_line2 = na
+    var line median_max_range_low_line2 = na
+    var label max_range_high_label2 = na
+    var label max_range_low_label2 = na
+    var label median_max_range_high_label2 = na
+    var label median_max_range_low_label2 = na
+    
+    // NEW: Percentile lines and labels for TF2 - Range-based
+    var line percentile_high_range_upper_line2 = na
+    var line percentile_high_range_lower_line2 = na
+    var line percentile_low_range_upper_line2 = na
+    var line percentile_low_range_lower_line2 = na
+    var label percentile_high_range_upper_label2 = na
+    var label percentile_high_range_lower_label2 = na
+    var label percentile_low_range_upper_label2 = na
+    var label percentile_low_range_lower_label2 = na
+    
+    shouldUpdate2 = newTime2
+    
+    if shouldUpdate2
+        if deletePrev
+            line.delete(phline2[1])
+            line.delete(plline2[1])
+            line.delete(mhline2[1])
+            line.delete(mlline2[1])
+            line.delete(openline2[1])
+            line.delete(ph_median_line2[1])
+            line.delete(pl_median_line2[1])
+            line.delete(mh_median_line2[1])
+            line.delete(ml_median_line2[1])
+            label.delete(phlabel2[1])
+            label.delete(pllabel2[1])
+            label.delete(mhlabel2[1])
+            label.delete(mllabel2[1])
+            label.delete(ph_median_label2[1])
+            label.delete(pl_median_label2[1])
+            label.delete(mh_median_label2[1])
+            label.delete(ml_median_label2[1])
+            // Delete max range elements for TF2
+            if showMaxRange
+                line.delete(max_range_high_line2[1])
+                line.delete(max_range_low_line2[1])
+                line.delete(median_max_range_high_line2[1])
+                line.delete(median_max_range_low_line2[1])
+                label.delete(max_range_high_label2[1])
+                label.delete(max_range_low_label2[1])
+                label.delete(median_max_range_high_label2[1])
+                label.delete(median_max_range_low_label2[1])
+            // NEW: Delete percentile elements for TF2
+            if showPercentiles
+                line.delete(percentile_high_range_upper_line2[1])
+                line.delete(percentile_high_range_lower_line2[1])
+                line.delete(percentile_low_range_upper_line2[1])
+                line.delete(percentile_low_range_lower_line2[1])
+                label.delete(percentile_high_range_upper_label2[1])
+                label.delete(percentile_high_range_lower_label2[1])
+                label.delete(percentile_low_range_upper_label2[1])
+                label.delete(percentile_low_range_lower_label2[1])
+            if premdisc
+                box.delete(topbox2[1])
+                box.delete(bottombox2[1])
+        if premdisc
+            if displayMode == "Average" or displayMode == "Both"
+                topbox2 := box.new(candleOpen2, distribution_high2, candleClose2, manipulation_high2, xloc=xloc.bar_time, bgcolor=premcolor, border_color=color.new(#2a2e39, 100))
+                bottombox2 := box.new(candleOpen2, manipulation_low2, candleClose2, distribution_low2, xloc=xloc.bar_time, bgcolor=disccolor, border_color=color.new(#2a2e39, 100))
+            else if displayMode == "Median"
+                topbox2 := box.new(candleOpen2, median_distribution_high2, candleClose2, median_manipulation_high2, xloc=xloc.bar_time, bgcolor=premcolor, border_color=color.new(#2a2e39, 100))
+                bottombox2 := box.new(candleOpen2, median_manipulation_low2, candleClose2, median_distribution_low2, xloc=xloc.bar_time, bgcolor=disccolor, border_color=color.new(#2a2e39, 100))
+        openline2 := line.new(candleOpen2, currentOpen2, candleClose2, currentOpen2, xloc=xloc.bar_time, color=openColor, style=lineStyle, width=1)
+        
+        // Max range lines for TF2
+        if showMaxRange
+            if displayMode == "Average" or displayMode == "Both"
+                if not na(max_range_high2)
+                    max_range_high_line2 := line.new(candleOpen2, max_range_high2, candleClose2, max_range_high2, xloc=xloc.bar_time, color=maxRangeColor, style=lineStyle, width=2)
+                    max_range_low_line2 := line.new(candleOpen2, max_range_low2, candleClose2, max_range_low2, xloc=xloc.bar_time, color=maxRangeColor, style=lineStyle, width=2)
+                    max_range_high_label2 := label.new(candleClose2, max_range_high2, text=tf2+" Max Range (Avg): "+str.tostring(max_range_high2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(max_range_high2, "#.00"))
+                    max_range_low_label2 := label.new(candleClose2, max_range_low2, text=tf2+" Max Range (Avg): "+str.tostring(max_range_low2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(max_range_low2, "#.00"))
+            if displayMode == "Median" or displayMode == "Both"
+                if not na(median_max_range_high2)
+                    median_max_range_high_line2 := line.new(candleOpen2, median_max_range_high2, candleClose2, median_max_range_high2, xloc=xloc.bar_time, color=maxRangeMedianColor, style=lineStyle, width=2)
+                    median_max_range_low_line2 := line.new(candleOpen2, median_max_range_low2, candleClose2, median_max_range_low2, xloc=xloc.bar_time, color=maxRangeMedianColor, style=lineStyle, width=2)
+                    median_max_range_high_label2 := label.new(candleClose2, median_max_range_high2, text=tf2+" Max Range (Med): "+str.tostring(median_max_range_high2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_max_range_high2, "#.00"))
+                    median_max_range_low_label2 := label.new(candleClose2, median_max_range_low2, text=tf2+" Max Range (Med): "+str.tostring(median_max_range_low2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_max_range_low2, "#.00"))
+        
+        // NEW: Percentile lines for TF2 - Range-based (both upper and lower percentiles)
+        if showPercentiles
+            // High range percentiles
+            if not na(percentile_high_range_upper2)
+                percentile_high_range_upper_line2 := line.new(candleOpen2, percentile_high_range_upper2, candleClose2, percentile_high_range_upper2, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_high_range_upper_label2 := label.new(candleClose2, percentile_high_range_upper2, text=tf2+" High P"+str.tostring(percentile75, "#")+": "+str.tostring(percentile_high_range_upper2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_high_range_upper2, "#.00"))
+            if not na(percentile_high_range_lower2)
+                percentile_high_range_lower_line2 := line.new(candleOpen2, percentile_high_range_lower2, candleClose2, percentile_high_range_lower2, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_high_range_lower_label2 := label.new(candleClose2, percentile_high_range_lower2, text=tf2+" High P"+str.tostring(percentile25, "#")+": "+str.tostring(percentile_high_range_lower2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_high_range_lower2, "#.00"))
+            
+            // Low range percentiles
+            if not na(percentile_low_range_upper2)
+                percentile_low_range_upper_line2 := line.new(candleOpen2, percentile_low_range_upper2, candleClose2, percentile_low_range_upper2, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_low_range_upper_label2 := label.new(candleClose2, percentile_low_range_upper2, text=tf2+" Low P"+str.tostring(percentile75, "#")+": "+str.tostring(percentile_low_range_upper2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_low_range_upper2, "#.00"))
+            if not na(percentile_low_range_lower2)
+                percentile_low_range_lower_line2 := line.new(candleOpen2, percentile_low_range_lower2, candleClose2, percentile_low_range_lower2, xloc=xloc.bar_time, color=percentileColor, style=percentileLineStyle, width=1)
+                percentile_low_range_lower_label2 := label.new(candleClose2, percentile_low_range_lower2, text=tf2+" Low P"+str.tostring(percentile25, "#")+": "+str.tostring(percentile_low_range_lower2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(percentile_low_range_lower2, "#.00"))
+        
+        if displayMode == "Average" or displayMode == "Both"
+            phline2 := line.new(candleOpen2, distribution_high2, candleClose2, distribution_high2, xloc=xloc.bar_time, color=dhColor, style=lineStyle, width=1)
+            plline2 := line.new(candleOpen2, distribution_low2, candleClose2, distribution_low2, xloc=xloc.bar_time, color=dlColor, style=lineStyle, width=1)
+            mhline2 := line.new(candleOpen2, manipulation_high2, candleClose2, manipulation_high2, xloc=xloc.bar_time, color=mhColor, style=lineStyle, width=1)
+            mlline2 := line.new(candleOpen2, manipulation_low2, candleClose2, manipulation_low2, xloc=xloc.bar_time, color=mlColor, style=lineStyle, width=1)
+            phlabel2 := label.new(candleClose2, distribution_high2, text=tf2+" + Dist TF2: "+str.tostring(distribution_high2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(distribution_high2, "#.00"))
+            pllabel2 := label.new(candleClose2, distribution_low2, text=tf2+" - Dist TF2: "+str.tostring(distribution_low2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(distribution_low2, "#.00"))
+            mhlabel2 := label.new(candleClose2, manipulation_high2, text=tf2+" - Manip TF2: "+str.tostring(manipulation_high2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(manipulation_high2, "#.00"))
+            mllabel2 := label.new(candleClose2, manipulation_low2, text=tf2+" + Manip TF2: "+str.tostring(manipulation_low2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(manipulation_low2, "#.00"))
+        if displayMode == "Median" or displayMode == "Both"
+            ph_median_line2 := line.new(candleOpen2, median_distribution_high2, candleClose2, median_distribution_high2, xloc=xloc.bar_time, color=dhMedianColor, style=lineStyle, width=1)
+            pl_median_line2 := line.new(candleOpen2, median_distribution_low2, candleClose2, median_distribution_low2, xloc=xloc.bar_time, color=dlMedianColor, style=lineStyle, width=1)
+            mh_median_line2 := line.new(candleOpen2, median_manipulation_high2, candleClose2, median_manipulation_high2, xloc=xloc.bar_time, color=mhMedianColor, style=lineStyle, width=1)
+            ml_median_line2 := line.new(candleOpen2, median_manipulation_low2, candleClose2, median_manipulation_low2, xloc=xloc.bar_time, color=mlMedianColor, style=lineStyle, width=1)
+            ph_median_label2 := label.new(candleClose2, median_distribution_high2, text=tf2+" + Dist (median) TF2: "+str.tostring(median_distribution_high2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_distribution_high2, "#.00"))
+            pl_median_label2 := label.new(candleClose2, median_distribution_low2, text=tf2+" - Dist (median) TF2: "+str.tostring(median_distribution_low2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_distribution_low2, "#.00"))
+            mh_median_label2 := label.new(candleClose2, median_manipulation_high2, text=tf2+" - Manip (median) TF2: "+str.tostring(median_manipulation_high2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_manipulation_high2, "#.00"))
+            ml_median_label2 := label.new(candleClose2, median_manipulation_low2, text=tf2+" + Manip (median) TF2: "+str.tostring(median_manipulation_low2, "#.00"), xloc=xloc.bar_time, color=color.new(#000000, 100), textcolor=txtColor, size=size.small, style=label.style_label_left, text_font_family=font.family_monospace, tooltip=str.tostring(median_manipulation_low2, "#.00"))
+
+//#endregion
+
+//#region ———————————————————— Tables
+hasValidData = show1 and array.size(manipulationWickLength1) > datalookback + 1 and not na(manipulation_high1)
+manipAmt = array.size(filteredManipulation1) > 0 ? array.size(filteredManipulation1) : 0
+
+if showTable and hasValidData
+    tableHeight = displayMode == "Both" ? (showMaxRange ? (showPercentiles ? 17 : 9) : (showPercentiles ? 13 : 9)) : (showMaxRange ? (showPercentiles ? 13 : 5) : (showPercentiles ? 9 : 5))
+    var table tbl = table.new(gettablePos(tablePosition), 2, tableHeight, border_width=1, frame_color=chart.fg_color, frame_width=1)
+    
+    table.clear(tbl, 0, 0, 1, tableHeight - 1)
+    
+    table.cell(tbl, 0, 0, "", bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize))
+    table.cell(tbl, 1, 0, text=tf1+" ("+str.tostring(manipAmt)+")", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+    
+    currentRow = 1
+    
+    if displayMode == "Average" or displayMode == "Both"
+        table.cell(tbl, 0, currentRow, text="+ D (Avg)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 0, currentRow + 1, text="- M (Avg)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 0, currentRow + 2, text="+ M (Avg)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 0, currentRow + 3, text="- D (Avg)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow, text=str.tostring(distribution_high1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow + 1, text=str.tostring(manipulation_high1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow + 2, text=str.tostring(manipulation_low1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow + 3, text=str.tostring(distribution_low1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        currentRow += 4
+    
+    if displayMode == "Median" or displayMode == "Both"
+        table.cell(tbl, 0, currentRow, text="+ D (Med)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 0, currentRow + 1, text="- M (Med)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 0, currentRow + 2, text="+ M (Med)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 0, currentRow + 3, text="- D (Med)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow, text=str.tostring(median_distribution_high1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow + 1, text=str.tostring(median_manipulation_high1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow + 2, text=str.tostring(median_manipulation_low1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        table.cell(tbl, 1, currentRow + 3, text=str.tostring(median_distribution_low1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+        currentRow += 4
+    
+    // Max range table entries
+    if showMaxRange
+        if displayMode == "Average" or displayMode == "Both"
+            if not na(max_range_high1)
+                table.cell(tbl, 0, currentRow, text="+ MR (Avg)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                table.cell(tbl, 0, currentRow + 1, text="- MR (Avg)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                table.cell(tbl, 1, currentRow, text=str.tostring(max_range_high1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                table.cell(tbl, 1, currentRow + 1, text=str.tostring(max_range_low1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                currentRow += 2
+        if displayMode == "Median" or displayMode == "Both"
+            if not na(median_max_range_high1)
+                table.cell(tbl, 0, currentRow, text="+ MR (Med)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                table.cell(tbl, 0, currentRow + 1, text="- MR (Med)", text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                table.cell(tbl, 1, currentRow, text=str.tostring(median_max_range_high1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                table.cell(tbl, 1, currentRow + 1, text=str.tostring(median_max_range_low1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+                currentRow += 2
+    
+    // NEW: Range-based percentile table entries
+    if showPercentiles
+        if not na(percentile_high_range_upper1)
+            table.cell(tbl, 0, currentRow, text="Open - High Percentile "+str.tostring(percentile75, "#"), text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            table.cell(tbl, 1, currentRow, text=str.tostring(percentile_high_range_upper1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            currentRow += 1
+        if not na(percentile_high_range_lower1)
+            table.cell(tbl, 0, currentRow, text="Open - High Percentile "+str.tostring(percentile25, "#"), text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            table.cell(tbl, 1, currentRow, text=str.tostring(percentile_high_range_lower1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            currentRow += 1
+        
+        if not na(percentile_low_range_upper1)
+            table.cell(tbl, 0, currentRow, text="Open - Low Percentile "+str.tostring(percentile75, "#"), text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            table.cell(tbl, 1, currentRow, text=str.tostring(percentile_low_range_upper1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            currentRow += 1
+        if not na(percentile_low_range_lower1)
+            table.cell(tbl, 0, currentRow, text="Open - Low Percentile "+str.tostring(percentile25, "#"), text_color=chart.bg_color, bgcolor=chart.fg_color, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+            table.cell(tbl, 1, currentRow, text=str.tostring(percentile_low_range_lower1, "#.000"), text_color=chart.fg_color, bgcolor=bgColor1, text_size=get_table_text_size(tableTextSize), text_font_family=font.family_monospace)
+
+//#endregion

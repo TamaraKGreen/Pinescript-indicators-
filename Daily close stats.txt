@@ -1,0 +1,459 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Daily close statistics", "DS", true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+//---------------------------------------------- Previous days high/low/50% levels ------------------------------------
+
+// Input to control visibility
+showPreviousDayData = input(true, title="Show Previous Day Levels", group = "========== Previous Day Data ==========")
+
+// Colors
+prev_day_high_col = input.color(color.rgb(162, 0, 255), 'Previous day high colour', group = "========== Previous Day Data ==========")
+prev_day_low_col = input.color(color.rgb(17, 0, 255), 'Previous day low colour', group = "========== Previous Day Data ==========")
+prev_day_mid_col = input.color(color.teal, 'Previous day 50% colour', group = "========== Previous Day Data ==========")
+
+
+// Function to calculate the 50% level
+calculateFibLevel(high, low) =>
+    (high + low) / 2
+
+// Get previous day and week data
+prevHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prevLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+
+// Calculate levels
+previousDayFibLevel = calculateFibLevel(prevHigh, prevLow)
+
+// Plot combined daily and weekly levels
+plot(showPreviousDayData ? previousDayFibLevel : na, title='Prev day 50% Level', color=prev_day_mid_col, linewidth=1, style=plot.style_circles)
+plot(showPreviousDayData ? prevHigh : na, title='Prev day high Level', color=prev_day_high_col, linewidth=1, style=plot.style_circles)
+plot(showPreviousDayData ? prevLow : na, title='Prev day low Level', color=prev_day_low_col, linewidth=1, style=plot.style_circles)
+
+//---------------------------------------------- Previous week high/low/50% levels ------------------------------------
+
+// Input to control visibility
+showPreviousWeekData = input(true, title="Show Previous Week Levels", group = "========== Previous Week Data ==========")
+
+// Colors
+prev_week_high_col = input.color(color.rgb(162, 0, 255), 'Previous week high colour', group = "========== Previous Week Data ==========")
+prev_week_low_col = input.color(color.rgb(17, 0, 255), 'Previous week low colour', group = "========== Previous Week Data ==========")
+prev_week_mid_col = input.color(color.teal, 'Previous week 50% colour', group = "========== Previous Week Data ==========")
+
+// Get previous week data
+prevWHigh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+prevWLow = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+
+// Calculate levels
+previousWeekFibLevel = calculateFibLevel(prevWHigh, prevWLow)
+
+// Plot combined daily and weekly levels
+plot(showPreviousWeekData ? previousWeekFibLevel : na, title='Prev week 50% Level', color=prev_week_mid_col, linewidth=1, style=plot.style_cross)
+plot(showPreviousWeekData ? prevWHigh : na, title='Prev week high Level', color=prev_week_high_col, linewidth=1, style=plot.style_cross)
+plot(showPreviousWeekData ? prevWLow : na, title='Prev week low Level', color=prev_week_low_col, linewidth=1, style=plot.style_cross)
+
+// -------------------------------------------------- Trading sessions --------------------------------------------------
+
+var g_SESS = "========= Trading sessions =========="
+//Session A
+show_sesa = input(true, '', inline = 'sesa', group = g_SESS)
+sesa_txt = input('New York', '', inline = 'sesa', group = g_SESS)
+sesa_ses = input.session('1300-2200', '', inline = 'sesa', group = g_SESS)
+sesa_css = input.color(color.rgb(255, 0, 55), '', inline = 'sesa', group = g_SESS)
+sesa_range = input(true, 'Range', inline = 'sesa_overlays', group = g_SESS)
+sesa_maxmin = input(true, 'Max/Min', inline = 'sesa_overlays', group = g_SESS)
+
+//Session B
+show_sesb = input(true, '', inline = 'sesb', group = g_SESS)
+sesb_txt = input('London', '', inline = 'sesb', group = g_SESS)
+sesb_ses = input.session('0700-1245', '', inline = 'sesb', group = g_SESS)
+sesb_css = input.color(color.rgb(33, 87, 243), '', inline = 'sesb', group = g_SESS)
+sesb_range = input(true, 'Range', inline = 'sesb_overlays', group = g_SESS)
+sesb_maxmin = input(true, 'Max/Min', inline = 'sesb_overlays', group = g_SESS)
+
+//Session C
+show_sesc = input(true, '', inline = 'sesc', group = g_SESS)
+sesc_txt = input('Asia', '', inline = 'sesc', group = g_SESS)
+sesc_ses = input.session('0000-0700', '', inline = 'sesc', group = g_SESS)
+sesc_css = input.color(color.rgb(255, 152, 0), '', inline = 'sesc', group = g_SESS)
+sesc_range = input(true, 'Range', inline = 'sesc_overlays', group = g_SESS)
+sesc_maxmin = input(true, 'Max/Min', inline = 'sesc_overlays', group = g_SESS)
+
+//Timezones
+tz_incr = input.int(0, 'UTC (+/-)', group = g_SESS)
+use_exchange = input(false, 'Use Exchange Timezone', group = g_SESS)
+
+//Ranges Options
+bg_transp = input.float(90, 'Range Area Transparency', group = g_SESS)
+show_outline = input(true, 'Range Outline', group = g_SESS)
+show_txt = input(true, 'Range Label', group = g_SESS)
+
+//-----------------------------------------------------------------------------}
+//Functions
+//-----------------------------------------------------------------------------{
+n = bar_index
+
+//Set session range
+get_range(session, session_name, session_css)=>
+    var t = 0 
+    var max = high
+    var min = low
+    var box bx = na
+    var label lbl = na 
+    
+    if session > session[1]
+        t := time
+        max := high
+        min := low
+
+        bx := box.new(n, max, n, min
+          , bgcolor = color.new(session_css, bg_transp)
+          , border_color = show_outline ? session_css : na
+          , border_style = line.style_dotted)
+
+        if show_txt
+            lbl := label.new(t, max, session_name
+              , xloc = xloc.bar_time
+              , textcolor = session_css
+              , style = label.style_label_down
+              , color = color.new(color.white, 100)
+              , size = size.tiny)
+
+    if session and session == session[1]
+        max := math.max(high, max)
+        min := math.min(low, min)
+
+        box.set_top(bx, max)
+        box.set_rightbottom(bx, n, min)
+
+        if show_txt
+            label.set_xy(lbl, int(math.avg(t, time)), max)
+    
+    [session ? na : max, session ? na : min]
+
+//-----------------------------------------------------------------------------}
+//days_covered
+//-----------------------------------------------------------------------------{
+tf = timeframe.period
+
+var tz = use_exchange ? syminfo.timezone :
+  str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
+
+is_sesa = math.sign(nz(time(tf, sesa_ses, tz)))
+is_sesb = math.sign(nz(time(tf, sesb_ses, tz)))
+is_sesc = math.sign(nz(time(tf, sesc_ses, tz)))
+is_sesd = math.sign(nz(time(tf, sesc_ses, tz)))
+is_sese = math.sign(nz(time(tf, sesc_ses, tz)))
+
+//-----------------------------------------------------------------------------}
+//Overlays
+//-----------------------------------------------------------------------------{
+var float max_sesa = na
+var float min_sesa = na
+var float max_sesb = na
+var float min_sesb = na
+var float max_sesc = na
+var float min_sesc = na
+var float max_sesd = na
+var float min_sesd = na
+var float max_sese = na
+var float min_sese = na
+
+//Ranges
+if show_sesa and sesa_range
+    [max, min] = get_range(is_sesa, sesa_txt, sesa_css)
+    max_sesa := max
+    min_sesa := min
+
+if show_sesb and sesb_range
+    [max, min] = get_range(is_sesb, sesb_txt, sesb_css)
+    max_sesb := max
+    min_sesb := min
+
+if show_sesc and sesc_range
+    [max, min] = get_range(is_sesc, sesc_txt, sesc_css)
+    max_sesc := max
+    min_sesc := min
+
+//-----------------------------------------------------------------------------}
+//Plots
+//-----------------------------------------------------------------------------{
+
+//Plot max/min
+plot(sesa_maxmin ? max_sesa : na, 'Session A Maximum', sesa_css, 1, plot.style_linebr)
+plot(sesa_maxmin ? min_sesa : na, 'Session A Minimum', sesa_css, 1, plot.style_linebr)
+
+
+plot(sesb_maxmin ? max_sesb : na, 'Session B Maximum', sesb_css, 1, plot.style_linebr)
+plot(sesb_maxmin ? min_sesb : na, 'Session B Minimum', sesb_css, 1, plot.style_linebr)
+
+plot(sesc_maxmin ? max_sesc : na, 'Session C Maximum', sesc_css, 1, plot.style_linebr)
+plot(sesc_maxmin ? min_sesc : na, 'Session C Minimum', sesc_css, 1, plot.style_linebr)
+
+sesa_fib_levels = input(true, 'Show NY 50% Level', inline = 'sesa_overlays', group = g_SESS) // New input for Fibonacci levels
+sesb_fib_levels = input(true, 'Show London 50% Level', inline = 'sesb_overlays', group = g_SESS) // New input for Fibonacci levels
+sesc_fib_levels = input(true, 'Show Asian 50% Level', inline = 'sesc_overlays', group = g_SESS) // New input for Fibonacci levels
+
+
+sesa_fib_midpoint = calculateFibLevel(max_sesa, min_sesa)
+sesb_fib_midpoint = calculateFibLevel(max_sesb, min_sesb)
+sesc_fib_midpoint = calculateFibLevel(max_sesc, min_sesc)
+
+plot(sesa_fib_levels ? sesa_fib_midpoint : na, 'Session A 50% level', sesa_css, 1, plot.style_linebr)
+plot(sesb_fib_levels ? sesb_fib_midpoint : na, 'Session B 50% level', sesb_css, 1, plot.style_linebr)
+plot(sesc_fib_levels ? sesc_fib_midpoint : na, 'Session C 50% level', sesc_css, 1, plot.style_linebr)
+
+//--------------------------------------------------- Time based open -----------------------------------------------------
+
+var g_TIME = "====== Time Based Open ======"
+
+iMTime    = input.session ('0000-0001:1234567', "Session", group=g_TIME)
+iMStyle   = input.string  ("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_TIME)
+iMColor   = input.color   (color.teal, "Color", group=g_TIME)
+iMLabel   = input.bool    (false, "Show first time based level", group=g_TIME)
+iMTime2    = input.session ('0800-0801:1234567', "Session", group=g_TIME)
+iMStyle2   = input.string  ("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_TIME)
+iMColor2   = input.color   (color.purple, "Color", group=g_TIME)
+iMLabel2   = input.bool    (false, "Show second time based level", group=g_TIME)
+
+tMidnight = time          ("1", iMTime)
+t0800     = time          ("1", iMTime2)
+
+_MStyle   = iMStyle  ==    "Solid" ? line.style_solid : iMStyle == "Dotted" ? line.style_dotted : line.style_dashed
+_MStyle2  = iMStyle2 ==    "Solid" ? line.style_solid : iMStyle == "Dotted" ? line.style_dotted : line.style_dashed
+
+
+var line lne = na
+var openMidnight  = 0.0
+var line lne2 = na
+var open0800  = 0.0
+
+if tMidnight
+    if not tMidnight[1]
+        openMidnight  := open
+    else
+        openMidnight := math.max(open, openMidnight)
+if openMidnight != openMidnight[1] and iMLabel
+    if barstate.isconfirmed
+        line.set_x2(lne, tMidnight)
+        lne := line.new(tMidnight, openMidnight, last_bar_time + 14400000/2, openMidnight, xloc.bar_time, extend.none, iMColor, _MStyle, 1)
+
+if t0800
+    if not t0800[1]
+        open0800  := open
+    else
+        open0800 := math.max(open, open0800)
+if open0800 != open0800[1] and iMLabel2
+    if barstate.isconfirmed
+        line.set_x2(lne2, t0800)
+        lne2 := line.new(t0800, open0800, last_bar_time + 14400000/2, open0800, xloc.bar_time, extend.none, iMColor2, _MStyle2, 1)
+
+// -------------------------------------------------- Filters for stats --------------------------------------------------
+var g_SET = "====== Filters for stats ======"
+// Filtered statistics count only if filter_level_1 is higher than filter_level_2
+
+filter_1 = input.string("Asia high", title="Filter level 1 - the level to be higher than Filter level 2", options=["Midnight open", "8am open", "New York high", "New York low", "New York 50%", "Asia high", "Asia low", "Asia 50%", "London high", "London low", "London 50%", "Previous day low", "Previous day high","Previous day 50%", "Previous week high", "Previous week low", "Previous week 50%", "Weekly IB high", "weekly IB low", "Weekly IB 50%"], tooltip = 'Additional statistics are included in data table based on the relationship between filter 1 and filter 2. The logic tracks the count & % of deviation hits IF filter level 1 is greater than/above filter level 2',group = g_SET)
+filter_2 = input.string("London high", title="Filter level 2 - the level to be lower than Filter level 1", options= ["Midnight open", "8am open", "New York high", "New York low", "New York 50%", "Asia high", "Asia low", "Asia 50%", "London high", "London low", "London 50%", "Previous day low", "Previous day high","Previous day 50%","Previous week high", "Previous week low", "Previous week 50%", "Weekly IB high", "weekly IB low", "Weekly IB 50%"], tooltip = 'Additional statistics are included in data table based on the relationship between filter 1 and filter 2. The logic tracks the count & % of deviation hits IF filter level 1 is greater than/above filter level 2',group = g_SET)
+
+// Functions to Calculate Fibonacci Levels
+get_filter_level(level) =>
+    switch level
+        "New York high" => max_sesa
+        "New York low" => min_sesa
+        "New York 50%" => sesa_fib_midpoint
+        "Midnight open" => openMidnight
+        "8am open" => open0800
+        "Asia high" => max_sesc
+        "Asia low" => min_sesc
+        "Asia 50%" => sesc_fib_midpoint
+        "London high" => max_sesb
+        "London low" => min_sesb
+        "London 50%" => sesb_fib_midpoint
+        "Previous day low" => prevLow
+        "Previous day high" => prevHigh
+        "Previous day 50%" => previousDayFibLevel
+        "Previous week high" => prevWHigh
+        "Previous week low" => prevWLow
+        "Previous week 50%" => previousWeekFibLevel
+
+
+
+filter_level_1 = get_filter_level(filter_1)
+filter_level_2 = get_filter_level(filter_2)
+
+var g_DRW = "========== Drawings =========="
+show_data       = input.bool(true, "Stats table", tooltip = "Shows statistics on how often price exceeds n number of standard deviations from the range", group = g_DRW)
+vert_lines      = input.bool(false, "Session delineations", tooltip = "Draws vertical lines delineating the session beginning and ending times", group = g_DRW)
+horiz_lines     = input.bool(false, "Deviation line extensions - first range", tooltip = "Extends the projections out in time", group = g_DRW)
+
+var g_TABLE = "========== Tables =========="
+table_position      = input.string('Bottom Right', "Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group = g_TABLE)
+table_size          = input.string('Small', "Text Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group = g_TABLE)
+tbl_color           = input.color(color.white, "Table Colour", group = g_TABLE)
+table_text          = input.color(color.black, "Table Text", group = g_TABLE)
+table_frame         = input.color(color.black, "Table Frame", group = g_TABLE)
+table_border        = input.color(color.black, "Table Border", group = g_TABLE)
+table_border_width  = input.int(1, "Table Border Width", group = g_TABLE)
+table_frame_width   = input.int(2, "Table Frame Width", group = g_TABLE)
+
+// -------------------------------------------------- Functions --------------------------------------------------
+
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+// -------------------------------------------------- Functions --------------------------------------------------------------
+
+// -------------------------------------------------- Constants & Variables --------------------------------------------------
+// Detect new day change
+newDay = ta.change(time("D"))
+
+// Struct for tracking retracement stats
+var int count_sessions = 0
+
+// Increment session count at the start of each new day
+if newDay
+    count_sessions += 1
+
+// Boolean tracking conditions
+var bool passed_p1 = false
+var bool passed_p2 = false
+var bool passed_p3 = false
+var bool passed_p4 = false
+
+// Count variables
+var int count_a1 = 0
+var int count_a2 = 0
+var int count_a3 = 0
+var int count_a4 = 0
+var int count_a5 = 0
+var int count_a6 = 0
+var int count_a7 = 0
+var int count_a8 = 0
+var int count_filter = 0
+
+// -------------------------------------------------- Core Logic ------------------------------------------------
+
+// Green day: Close higher than Open
+if newDay
+    passed_p1 := close > open
+    passed_p2 := close > open0800
+    passed_p3 := close < open
+    passed_p4 := close < open0800
+
+// Count occurrences
+if passed_p1 
+    count_a1 += 1  // Green days (Daily Open to Close)
+if passed_p2 
+    count_a2 += 1  // Green days (NY Open to Close)
+if passed_p3 
+    count_a3 += 1  // Red days (Daily Open to Close)
+if passed_p4 
+    count_a4 += 1  // Red days (NY Open to Close)
+
+// Count filter sessions
+if newDay
+    if filter_level_1 > filter_level_2
+        count_filter += 1
+
+// Filtered counts
+if filter_level_1 > filter_level_2 and passed_p1
+    count_a5 += 1  // Green filtered (Daily Open to Close)
+if filter_level_1 > filter_level_2 and passed_p2
+    count_a6 += 1  // Green filtered (NY Open to Close)
+if filter_level_1 > filter_level_2 and passed_p3
+    count_a7 += 1  // Red filtered (Daily Open to Close)
+if filter_level_1 > filter_level_2 and passed_p4
+    count_a8 += 1  // Red filtered (NY Open to Close)
+
+// Reset boolean conditions for the next bar
+passed_p1 := false
+passed_p2 := false
+passed_p3 := false
+passed_p4 := false
+
+// -------------------------------------------------- Data Table --------------------------------------------------
+
+// Session labels for Tables
+filter_label = str.tostring(filter_1)
+filter_label_2 = str.tostring(filter_2)
+
+if show_data
+    var stats = table.new(get_table_position(table_position),20, 20, bgcolor = tbl_color, frame_color = table_frame, frame_width = table_frame_width, border_color = table_border, border_width = table_border_width)
+
+    if barstate.islast
+        ts = get_table_text_size(table_size)
+
+// Column headers
+        table.cell(stats, 1, 0, "Daily close statistic", text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 0, "Value", text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 0, "% of Total", text_size = ts, text_color = table_text)
+
+        // Total Sessions
+        table.cell(stats, 1, 1, "Total Sessions", text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 1, str.tostring(count_sessions), text_size = ts, text_color = table_text)
+
+        // Green Days (Daily Open to Close)
+        table.cell(stats, 1, 2, "Green Days (Open to Close)", text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 2, str.tostring(count_a1), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 2, count_sessions > 0 ? str.tostring(math.round(100 * count_a1 / count_sessions)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Green Days (NY Open to Close)
+        table.cell(stats, 1, 3, "Green Days (NY Open to Close)", text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 3, str.tostring(count_a2), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 3, count_sessions > 0 ? str.tostring(math.round(100 * count_a2 / count_sessions)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Red Days (Daily Open to Close)
+        table.cell(stats, 1, 4, "Red Days (Open to Close)", text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 4, str.tostring(count_a3), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 4, count_sessions > 0 ? str.tostring(math.round(100 * count_a3 / count_sessions)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Red Days (NY Open to Close)
+        table.cell(stats, 1, 5, "Red Days (NY Open to Close)", text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 5, str.tostring(count_a4), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 5, count_sessions > 0 ? str.tostring(math.round(100 * count_a4 / count_sessions)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Filtered Sessions
+        table.cell(stats, 1, 6, "Total days when\n" + filter_label + " > " + filter_label_2, text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 6, str.tostring(count_filter), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 6, count_sessions > 0 ? str.tostring(math.round(100 * count_filter / count_sessions)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Green Days Filtered (Daily Open to Close)
+        table.cell(stats, 1, 7,"Green days (Daily open to daily close) when\n" + filter_label + " > " + filter_label_2, text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 7, str.tostring(count_a5), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 7, count_filter > 0 ? str.tostring(math.round(100 * count_a5 / count_filter)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Green Days Filtered (NY Open to Close)
+        table.cell(stats, 1, 8, "Green days (NY Open to daily close) when\n" + filter_label + " > " + filter_label_2, text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 8, str.tostring(count_a6), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 8, count_filter > 0 ? str.tostring(math.round(100 * count_a6 / count_filter)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Red Days Filtered (Daily Open to Close)
+        table.cell(stats, 1, 9, "Red days (Daily open to daily close) when\n" + filter_label + " > " + filter_label_2, text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 9, str.tostring(count_a7), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 9, count_filter > 0 ? str.tostring(math.round(100 * count_a7 / count_filter)) + "%" : "0%", text_size = ts, text_color = table_text)
+
+        // Red Days Filtered (NY Open to Close)
+        table.cell(stats, 1, 10, "Red days (NY Open to daily close) when\n" + filter_label + " > " + filter_label_2, text_size = ts, text_color = table_text)
+        table.cell(stats, 2, 10, str.tostring(count_a8), text_size = ts, text_color = table_text)
+        table.cell(stats, 3, 10, count_filter > 0 ? str.tostring(math.round(100 * count_a8 / count_filter)) + "%" : "0%", text_size = ts, text_color = table_text)// -------------------------------------------------- Core Logic 2 -------------------------------------------------
+
+
+

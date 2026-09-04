@@ -1,0 +1,109 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Inside bar/outside bar - stats", shorttitle = 'IB/OB', overlay = true)
+
+get_ib_table_pos(string pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+    result
+
+
+get_ib_size(string size) =>
+    result = switch size
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+        'Auto' => size.auto
+    result
+
+ib_tbl_txt = input.string("small", title="Text Size", options=["tiny", "small", "normal", "large"], group = 'IB stats table - settings')
+ib_tbl_pos = get_ib_table_pos(input.string("Bottom Center", "Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group = 'IB stats table - settings'))
+text_color = input.color(color.white, title="Text colour", group = 'IB stats table - settings')
+bg_color = input.color(color.rgb(50, 50, 50), title="Text colour", group = 'IB stats table - settings')
+bd_color = input.color(color.teal, title="Text colour", group = 'IB stats table - settings')
+
+
+var count_up = 0
+var count_dn = 0
+var count_up_ob = 0
+var count_dn_ob = 0
+var ib_up = 0
+var ib_dn = 0
+var ob_up = 0
+var ob_dn = 0
+
+inside_up = false
+inside_dn = false
+outside_up = false
+outside_dn = false
+
+// Inside bar logic
+if high <= high[1] and low >= low[1]
+    if close > open
+        ib_up += 1
+        inside_up := true
+    else if close < open
+        ib_dn += 1
+        inside_dn := true
+
+// Outside bar logic
+if high > high[1] and low < low[1]
+    if close > open
+        ob_up += 1
+        outside_up := true
+    else if close < open
+        ob_dn += 1
+        outside_dn := true
+
+// Track counts for inside bars being taken
+if inside_up[1] and high > high[1]
+    count_up += 1
+if inside_dn[1] and low < low[1]
+    count_dn += 1
+
+// Track counts for outside bars being taken
+if outside_up[1] and high > high[1]
+    count_up_ob += 1
+if outside_dn[1] and low < low[1]
+    count_dn_ob += 1
+
+// Table to display statistics
+if barstate.islast
+    var tbl = table.new(ib_tbl_pos, 10, 10, bg_color, bd_color, 2, bd_color, 1)
+    tbl.cell(1,0, "Count", text_color = text_color)
+    tbl.cell(2,0, "Taken", text_color = text_color)
+    tbl.cell(3,0, "%", text_color = text_color)
+
+    tbl.cell(0,1, "Inside up", text_color = text_color)
+    tbl.cell(0,2, "Inside down", text_color = text_color)
+    tbl.cell(0,3, "Outside up", text_color = text_color)
+    tbl.cell(0,4, "Outside down", text_color = text_color)
+
+    tbl.cell(1,1, str.tostring(ib_up), text_color = text_color)
+    tbl.cell(2,1, str.tostring(count_up), text_color = text_color)
+    tbl.cell(3,1, str.tostring(math.round(count_up/ib_up * 100,1)), text_color = text_color)
+
+    tbl.cell(1,2, str.tostring(ib_dn), text_color = text_color)
+    tbl.cell(2,2, str.tostring(count_dn), text_color = text_color)
+    tbl.cell(3,2, str.tostring(math.round(count_dn/ib_dn * 100,1)), text_color = text_color)
+
+    tbl.cell(1,3, str.tostring(ob_up), text_color = text_color)
+    tbl.cell(2,3, str.tostring(count_up_ob), text_color = text_color)
+    tbl.cell(3,3, str.tostring(math.round(count_up_ob/ob_up * 100,1)), text_color = text_color)
+
+    tbl.cell(1,4, str.tostring(ob_dn), text_color = text_color)
+    tbl.cell(2,4, str.tostring(count_dn_ob), text_color = text_color)
+    tbl.cell(3,4, str.tostring(math.round(count_dn_ob/ob_dn * 100,1)), text_color = text_color)
+

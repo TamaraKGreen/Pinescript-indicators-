@@ -1,0 +1,296 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Leptokurtic Directional Bias", shorttitle="LDB", overlay=true)
+
+// === GROUP DECLARATIONS ===
+var g_KURTOSIS = "========= Kurtosis Settings =========="
+var g_MA = "========= Moving Average Source Settings =========="
+var g_ATR = "========= ATR Source Settings =========="
+var g_VOLUME = "========= Volume Source Settings =========="
+var g_CLOSE = "========= Close Source Settings =========="
+var g_BB = "========= Bollinger Bands Trend Stop Settings =========="
+var g_BIAS = "========= Bias Calculation Settings =========="
+var g_SESS = "========= Trading Sessions =========="
+var g_COLORS = "========= Display Colors =========="
+var g_TABLES = "========= Tables =========="
+
+// === KURTOSIS INPUTS ===
+kurtosis_length = input.int(14, title="Kurtosis Length", minval=4, maxval=500, group=g_KURTOSIS)
+source_type = input.string("atr", title="Source Type", options=["ma", "atr", "volume", "close", "bb_trend_stop"], group=g_KURTOSIS)
+
+// === MOVING AVERAGE SOURCE INPUTS ===
+ma_type = input.string("EMA", title="MA Type", options=["SMA", "EMA", "WMA", "RMA", "HMA", "DEMA", "TEMA", "VWMA", "ALMA"], group=g_MA)
+ma_length = input.int(14, title="MA Length", minval=1, maxval=200, group=g_MA)
+
+// === ATR SOURCE INPUTS ===
+atr_length = input.int(14, title="ATR Length", minval=1, maxval=200, group=g_ATR)
+
+// === VOLUME SOURCE INPUTS ===
+volume_length = input.int(14, title="Volume SMA Length", minval=1, maxval=200, group=g_VOLUME)
+
+// === CLOSE SOURCE INPUTS ===
+close_length = input.int(14, title="Close SMA Length", minval=1, maxval=200, group=g_CLOSE)
+
+// === BOLLINGER BANDS TREND STOP INPUTS ===
+bb_tf = input.timeframe("", title="Resolution", group=g_BB)
+bb_length = input.int(20, title="Period", minval=1, group=g_BB)
+bb_deviation = input.int(2, title="Standard Deviation", minval=1, group=g_BB)
+bb_money_risk = input.float(1.0, title="Money Risk", minval=0.1, step=0.1, group=g_BB)
+
+// === BIAS CALCULATION INPUTS ===
+bias_mode = input.string("mean_reversion", title="Bias Mode", options=["mean_reversion", "momentum", "volatility_only"], group=g_BIAS)
+rsi_length = input.int(14, title="RSI Length (for Mean Reversion)", minval=2, maxval=100, group=g_BIAS)
+trend_ema_length = input.int(20, title="Trend EMA Length (for Momentum)", minval=5, maxval=100, group=g_BIAS)
+
+// === TRADING SESSIONS ===
+ib_session = input.session("0830-0930", title="Initial Balance Period", group=g_SESS)
+break_tracking_session = input.session("0930-1600", title="Break Tracking Session", group=g_SESS)
+
+// === COLOR INPUTS ===
+bullish_reversion_bg_color = input.color(color.new(color.green, 85), title="Bullish Reversion Background", group=g_COLORS)
+bearish_reversion_bg_color = input.color(color.new(color.red, 85), title="Bearish Reversion Background", group=g_COLORS)
+bullish_momentum_bg_color = input.color(color.new(color.lime, 80), title="Bullish Momentum Background", group=g_COLORS)
+bearish_momentum_bg_color = input.color(color.new(color.orange, 80), title="Bearish Momentum Background", group=g_COLORS)
+high_volatility_bg_color = input.color(color.new(color.yellow, 75), title="High Volatility Background", group=g_COLORS)
+bullish_reversion_shape_color = input.color(color.green, title="Bullish Reversion Shape", group=g_COLORS)
+bearish_reversion_shape_color = input.color(color.red, title="Bearish Reversion Shape", group=g_COLORS)
+bullish_momentum_shape_color = input.color(color.lime, title="Bullish Momentum Shape", group=g_COLORS)
+bearish_momentum_shape_color = input.color(color.orange, title="Bearish Momentum Shape", group=g_COLORS)
+kurtosis_plot_color = input.color(color.blue, title="Kurtosis Plot", group=g_COLORS)
+leptokurtic_threshold_color = input.color(color.red, title="Leptokurtic Threshold Line", group=g_COLORS)
+
+// === TABLE INPUTS ===
+table_position = input.string("top_right", title="Table Position", options=["top_right", "top_left", "bottom_right", "bottom_left", "middle_right", "middle_left"], group=g_TABLES)
+table_text_size = input.string("small", title="Table Text Size", options=["tiny", "small", "normal"], group=g_TABLES)
+table_header_bg_color = input.color(color.new(color.black, 20), title="Header Background Color", group=g_TABLES)
+table_header_text_color = input.color(color.white, title="Header Text Color", group=g_TABLES)
+table_cell_bg_color = input.color(color.white, title="Cell Background Color", group=g_TABLES)
+table_cell_text_color = input.color(color.new(color.black, 20), title="Cell Text Color", group=g_TABLES)
+
+// === MOVING AVERAGE CALCULATION ===
+ma(type, src, len) =>
+    float result = na
+    if type == "SMA"
+        result := ta.sma(src, len)
+    else if type == "EMA"
+        result := ta.ema(src, len)
+    else if type == "WMA"
+        result := ta.wma(src, len)
+    else if type == "RMA"
+        result := ta.rma(src, len)
+    else if type == "HMA"
+        result := ta.hma(src, len)
+    else if type == "DEMA"
+        e = ta.ema(src, len)
+        result := 2 * e - ta.ema(e, len)
+    else if type == "TEMA"
+        e = ta.ema(src, len)
+        result := 3 * (e - ta.ema(e, len)) + ta.ema(ta.ema(e, len), len)
+    else if type == "VWMA"
+        result := ta.vwma(src, len)
+    else if type == "ALMA"
+        result := ta.alma(src, len, 6, 0.85)
+    result
+
+// === BOLLINGER BANDS TREND STOP CALCULATION ===
+htf_close = request.security(syminfo.tickerid, bb_tf, close)
+htf_high = request.security(syminfo.tickerid, bb_tf, high)
+htf_low = request.security(syminfo.tickerid, bb_tf, low)
+htf_avg = request.security(syminfo.tickerid, bb_tf, ta.sma(close, bb_length))
+htf_dev = request.security(syminfo.tickerid, bb_tf, ta.stdev(close, bb_length)) * bb_deviation
+htf_smax = htf_avg + htf_dev
+htf_smin = htf_avg - htf_dev
+
+var trend = 0
+if (htf_close > htf_smax[1])
+    trend := 1
+else if (htf_close < htf_smin[1])
+    trend := -1
+
+if (trend > 0 and htf_smin < htf_smin[1])
+    htf_smin := htf_smin[1]
+if (trend < 0 and htf_smax > htf_smax[1])
+    htf_smax := htf_smax[1]
+
+htf_bsmax = htf_smax + 0.5 * (bb_money_risk - 1) * (htf_smax - htf_smin)
+htf_bsmin = htf_smin - 0.5 * (bb_money_risk - 1) * (htf_smax - htf_smin)
+
+if (trend > 0 and htf_bsmin < htf_bsmin[1])
+    htf_bsmin := htf_bsmin[1]
+if (trend < 0 and htf_bsmax > htf_bsmax[1])
+    htf_bsmax := htf_bsmax[1]
+
+var float bb_trend_stop = na
+if (trend > 0)
+    bb_trend_stop := htf_bsmin
+if (trend < 0)
+    bb_trend_stop := htf_bsmax
+
+// === SOURCE CALCULATION ===
+source_data = switch source_type
+    "ma" => ma(ma_type, close, ma_length)
+    "atr" => ta.atr(atr_length)
+    "volume" => ta.sma(volume, volume_length)
+    "close" => ta.sma(close, close_length)
+    "bb_trend_stop" => bb_trend_stop
+    => close
+
+// === KURTOSIS CALCULATION ===
+kurtosis(src, len) =>
+    mean = ta.sma(src, len)
+    variance = ta.sma(math.pow(src - mean, 2), len)
+    fourth_moment = ta.sma(math.pow(src - mean, 4), len)
+    kurt = variance != 0 ? fourth_moment / math.pow(variance, 2) : na
+    kurt
+
+kurtosis_value = kurtosis(source_data, kurtosis_length)
+is_leptokurtic = kurtosis_value > 3
+
+// === DIRECTIONAL BIAS LOGIC ===
+rsi = ta.rsi(close, rsi_length)
+trend_ema = ta.ema(close, trend_ema_length)
+price_above_trend = close > trend_ema
+recent_momentum = ta.change(close, 3)
+
+// Determine bias
+bias_signal = switch bias_mode
+    "mean_reversion" => 
+        if is_leptokurtic and rsi > 70
+            "bearish_reversion"
+        else if is_leptokurtic and rsi < 30
+            "bullish_reversion"
+        else
+            "neutral"
+    "momentum" => 
+        if is_leptokurtic and price_above_trend and recent_momentum > 0
+            "bullish_momentum"
+        else if is_leptokurtic and not price_above_trend and recent_momentum < 0
+            "bearish_momentum"
+        else
+            "neutral"
+    "volatility_only" => 
+        if is_leptokurtic
+            "high_volatility"
+        else
+            "normal"
+    => "neutral"
+
+// === VISUAL ELEMENTS ===
+// Background colors
+bg_color = switch bias_signal
+    "bullish_reversion" => bullish_reversion_bg_color
+    "bearish_reversion" => bearish_reversion_bg_color
+    "bullish_momentum" => bullish_momentum_bg_color
+    "bearish_momentum" => bearish_momentum_bg_color
+    "high_volatility" => high_volatility_bg_color
+    => na
+
+bgcolor(bg_color, title="Bias Background")
+
+// Shape signals
+plotshape(bias_signal == "bullish_reversion", title="Bullish Reversion", 
+         location=location.belowbar, style=shape.triangleup, color=bullish_reversion_shape_color, size=size.normal)
+plotshape(bias_signal == "bearish_reversion", title="Bearish Reversion", 
+         location=location.abovebar, style=shape.triangledown, color=bearish_reversion_shape_color, size=size.normal)
+plotshape(bias_signal == "bullish_momentum", title="Bullish Momentum", 
+         location=location.belowbar, style=shape.arrowup, color=bullish_momentum_shape_color, size=size.normal)
+plotshape(bias_signal == "bearish_momentum", title="Bearish Momentum", 
+         location=location.abovebar, style=shape.arrowdown, color=bearish_momentum_shape_color, size=size.normal)
+
+// Kurtosis plot in separate pane
+plot(kurtosis_value, title="Kurtosis", color=kurtosis_plot_color, linewidth=2)
+hline(3, title="Leptokurtic Threshold", color=leptokurtic_threshold_color, linestyle=hline.style_dashed)
+
+// === INFO TABLE ===
+if barstate.islast
+    // Convert user-selected text size to Pine Script size
+    text_size = switch table_text_size
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        => size.small
+
+    // Convert user-selected position to Pine Script position
+    table_pos = switch table_position
+        "top_right" => position.top_right
+        "top_left" => position.top_left
+        "bottom_right" => position.bottom_right
+        "bottom_left" => position.bottom_left
+        "middle_right" => position.middle_right
+        "middle_left" => position.middle_left
+        => position.top_right
+
+    // Create table with 3 columns (Label, Value, Status) and 8 rows
+    var table info_table = table.new(table_pos, 3, 8, bgcolor=table_cell_bg_color, border_width=1)
+    
+    // Header row
+    table.cell(info_table, 0, 0, "LDB", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 0, "", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 0, "", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // Kurtosis row
+    table.cell(info_table, 0, 1, "Kurtosis", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 1, str.tostring(kurtosis_value, "#.##"), text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 1, is_leptokurtic ? "LEPTO" : "NORMAL", 
+               text_color=is_leptokurtic ? leptokurtic_threshold_color : bullish_reversion_shape_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // Mode row
+    table.cell(info_table, 0, 2, "Mode", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 2, bias_mode, text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 2, "", text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // Signal row
+    table.cell(info_table, 0, 3, "Signal", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 3, bias_signal, text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    signal_color = switch bias_signal
+        "bullish_reversion" => bullish_reversion_shape_color
+        "bullish_momentum" => bullish_momentum_shape_color
+        "bearish_reversion" => bearish_reversion_shape_color
+        "bearish_momentum" => bearish_momentum_shape_color
+        "high_volatility" => high_volatility_bg_color
+        => color.rgb(172, 172, 172)
+    table.cell(info_table, 2, 3, "", bgcolor=signal_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // Source row
+    table.cell(info_table, 0, 4, "Source", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 4, source_type, text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 4, "", text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // Source Parameter row
+    source_param_label = switch source_type
+        "ma" => "MA Type"
+        "bb_trend_stop" => "BB Timeframe"
+        => ""
+    source_param_value = switch source_type
+        "ma" => ma_type
+        "bb_trend_stop" => bb_tf == "" ? "Current" : bb_tf
+        => ""
+    table.cell(info_table, 0, 5, source_param_label, text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 5, source_param_value, text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 5, "", text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // Source Length row
+    source_length_label = switch source_type
+        "ma" => "MA Length"
+        "atr" => "ATR Length"
+        "volume" => "Vol Length"
+        "close" => "Close Length"
+        "bb_trend_stop" => "BB Period"
+        => ""
+    source_length_value = switch source_type
+        "ma" => str.tostring(ma_length)
+        "atr" => str.tostring(atr_length)
+        "volume" => str.tostring(volume_length)
+        "close" => str.tostring(close_length)
+        "bb_trend_stop" => str.tostring(bb_length)
+        => ""
+    table.cell(info_table, 0, 6, source_length_label, text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 6, source_length_value, text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 6, "", text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    
+    // RSI Length row
+    table.cell(info_table, 0, 7, "RSI Length", text_color=table_header_text_color, bgcolor=table_header_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 1, 7, str.tostring(rsi_length), text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)
+    table.cell(info_table, 2, 7, "", text_color=table_cell_text_color, bgcolor=table_cell_bg_color, text_size=text_size, text_font_family=font.family_monospace)

@@ -1,0 +1,382 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+
+indicator("HMM Enhanced: Regime Probability", shorttitle="HMM Enhanced", overlay=true)
+
+// ==========================================
+// --- SETTINGS ---
+// ==========================================
+group_trend = "1. Adaptive Trend Engine"
+group_adx   = "2. ADX Settings"
+group_trans = "3. Transition Matrix"
+group_learn = "4. Adaptive Learning"
+group_hmm   = "5. HMM Settings"
+group_vis   = "6. Visuals"
+
+// Trend engine
+source    = input.source(hlc3,   "Source",           group=group_trend)
+length    = input.int(20,        "Adaptive Length",  group=group_trend, minval=2,
+     tooltip="Fast MA length. Slow MA uses 2x this. Affects how quickly the trend basis responds.")
+smoothing = input.int(20,        "Smoothing",        group=group_trend, minval=1,
+     tooltip="Smoothing period for ATR band calculation.")
+multiplier= input.float(1.0,     "Band Multiplier",  group=group_trend, minval=0.1, step=0.1,
+     tooltip="Width of the ATR band around the basis. Higher = fewer trend flips.")
+bandtype  = input.string("True Range",  "Band Type",        group=group_trend,
+     options=["ATR","True Range","StDev"],
+     tooltip="Method for calculating the band width around the basis.")
+macalc    = input.string("WMA", "MA Type",          group=group_trend,
+     options=["EMA","SMA","WMA","HMA","RMA","SSMA"],
+     tooltip="Moving average type")
+usemm     = input.bool(false,     "Use Min/Max Ratchet", group=group_trend,
+     tooltip="When on, the trailing level only moves in the trend's favour. Prevents whipsaw flips.")
+
+// Plot options
+show_basis = input.bool(true,  "Show Basis (Dual MA Midline)", group=group_vis,
+     tooltip="Plots the smoothed dual-MA midline on the price chart.")
+show_trail = input.bool(true,  "Show Trailing Level",          group=group_vis,
+     tooltip="Plots the ratcheting ATR trailing stop level.")
+basis_width = input.int(2, "Basis Line Width", group=group_vis, minval=1, maxval=4)
+trail_width = input.int(1, "Trail Line Width", group=group_vis, minval=1, maxval=4)
+
+// ADX
+adx_len   = input.int(14, "DMI Length",    group=group_adx, minval=1,
+     tooltip="Lookback for DI+ and DI- calculation. 14 is standard.")
+adx_smooth= input.int(14, "ADX Smoothing", group=group_adx, minval=1,
+     tooltip="Smoothing period for ADX line. 14 is standard.")
+zscore_len= input.int(50, "Z-Score Lookback", group=group_adx, minval=10,
+     tooltip="Window for z-scoring the ADX and basis slope. Longer = more stable baseline.")
+
+// Transition matrix
+p_stay_bull = input.float(0.80, "P(Bull | Bull)", step=0.05, maxval=0.99, group=group_trans,
+     tooltip="Probability of staying in Bull regime. Higher = slower to exit bull calls.")
+p_stay_bear = input.float(0.80, "P(Bear | Bear)", step=0.05, maxval=0.99, group=group_trans)
+p_stay_chop = input.float(0.60, "P(Chop | Chop)", step=0.05, maxval=0.99, group=group_trans,
+     tooltip="Lower default reflects chop's tendency to resolve into a trend.")
+
+// Learning
+use_learning = input.bool(true,  "Enable Adaptive Learning", group=group_learn,
+     tooltip="Updates emission parameters from bars where one regime has >50% posterior.")
+learn_rate   = input.float(0.05, "Learning Rate", minval=0.01, maxval=0.3, step=0.01, group=group_learn,
+     tooltip="Speed of adaptation. 0.05 = slow/stable. 0.15 = faster but noisier.")
+learn_floor  = input.float(0.3,  "Min Emission Std Dev", minval=0.1, maxval=1.5, step=0.05, group=group_learn,
+     tooltip="Prevents emission std from collapsing to zero.")
+
+// HMM
+emission_temp = input.float(2.0, "Emission Temperature", minval=1.0, maxval=8.0, step=0.5, group=group_hmm,
+     tooltip="Controls how decisive regime calls are. Lower = sharper. Default 2.0 gives 50-65% for clear signals.")
+
+// Visuals
+color_smooth = input.float(0.4,   "Color Transition Speed", minval=0.05, maxval=1.0, step=0.05, group=group_vis)
+c_bull_start = input.color(color.teal, "Bull Weak",   group=group_vis)
+c_bull_end   = input.color(color.lime, "Bull Strong", group=group_vis)
+c_bear_start = input.color(color.red, "Bear Weak",   group=group_vis)
+c_bear_end   = input.color(color.orange, "Bear Strong", group=group_vis)
+c_chop_start = input.color(color.aqua, "Chop Weak",   group=group_vis)
+c_chop_end   = input.color(color.blue, "Chop Strong", group=group_vis)
+
+// Table
+table_pos  = input.string("Top Right", "Table Position", group=group_vis,
+     options=["Top Right","Top Left","Top Center","Bottom Right","Bottom Left","Bottom Center","Middle Right","Middle Left"])
+table_size = input.string("Small", "Table Text Size", group=group_vis,
+     options=["Tiny","Small","Normal","Large"])
+
+// ==========================================
+// --- ADAPTIVE TREND ENGINE (Crak) ---
+// ==========================================
+supersmoother(_src, _len) =>
+    _a1 = math.exp(-math.sqrt(2.0) * math.pi / _len)
+    _b1 = 2.0 * _a1 * math.cos(math.sqrt(2.0) * math.pi / _len)
+    _c3 = -_a1 * _a1
+    _c2 = _b1
+    _c1 = 1.0 - _c2 - _c3
+    _ss = 0.0
+    _ss := _c1 * _src + _c2 * nz(_ss[1], nz(_src[1], _src)) + _c3 * nz(_ss[2], nz(_src[2], _src))
+    _ss
+
+f_ma(_src, _len) =>
+    switch macalc
+        "EMA"  => ta.ema(_src, _len)
+        "SMA"  => ta.sma(_src, _len)
+        "WMA"  => ta.wma(_src, _len)
+        "HMA"  => ta.hma(_src, _len)
+        "RMA"  => ta.rma(_src, _len)
+        =>        supersmoother(_src, _len)
+
+f_trend(_len, _smooth, _multi) =>
+    float _price = source
+    float _fast  = f_ma(_price, _len)
+    float _slow  = f_ma(_price, _len * 2)
+    float _basis = (_fast + _slow) / 2.0
+
+    float _vol = switch bandtype
+        "True Range" => ta.sma(math.max(high - low, math.abs(high - close[1]), math.abs(low - close[1])), _smooth)
+        "StDev"      => ta.stdev(_price, _len)
+        =>              ta.atr(14)
+
+    float _sm    = f_ma(_vol, _smooth)
+    float _upper = _basis + _sm * _multi
+    float _lower = _basis - _sm * _multi
+
+    var float _level = na
+    var int   _trend = na
+
+    if na(_level)
+        _trend := close > _basis ? 1 : -1
+        _level := _trend == 1 ? _lower : _upper
+
+    if _trend == 1
+        if close < _level
+            _trend := -1
+            _level := _upper
+        else
+            _level := usemm ? math.max(nz(_level[1], _lower), _lower) : _lower
+    else
+        if close > _level
+            _trend := 1
+            _level := _lower
+        else
+            _level := usemm ? math.min(nz(_level[1], _upper), _upper) : _upper
+
+    [_basis, _trend, _level]
+
+[basis, trend_dir, trail_level] = f_trend(length, smoothing, multiplier)
+
+// ==========================================
+// --- FEATURES ---
+// ==========================================
+float atr14      = ta.atr(14)
+float raw_tpos   = atr14 > 0 ? (close - trail_level) / atr14 : 0.0
+float tpos_mean  = ta.sma(raw_tpos, zscore_len)
+float tpos_std   = ta.stdev(raw_tpos, zscore_len)
+float obs_tpos   = tpos_std > 0 ? (raw_tpos - tpos_mean) / tpos_std : 0.0
+
+float raw_slope  = atr14 > 0 ? (basis - basis[length]) / atr14 : 0.0
+float slope_mean = ta.sma(raw_slope, zscore_len)
+float slope_std  = ta.stdev(raw_slope, zscore_len)
+float obs_slope  = slope_std > 0 ? (raw_slope - slope_mean) / slope_std : 0.0
+
+[_diplus, _diminus, _adx] = ta.dmi(adx_len, adx_smooth)
+float adx_mean   = ta.sma(_adx, zscore_len)
+float adx_std    = ta.stdev(_adx, zscore_len)
+float obs_adx    = adx_std > 0 ? (_adx - adx_mean) / adx_std : 0.0
+
+// ==========================================
+// --- EMISSION PARAMETERS ---
+// ==========================================
+var float mu_bull_tpos  = 0.0
+var float mu_bull_slope = 0.0
+var float mu_bull_adx   = 0.0
+var float mu_bear_tpos  = 0.0
+var float mu_bear_slope = 0.0
+var float mu_bear_adx   = 0.0
+var float mu_chop_tpos  = 0.0
+var float mu_chop_slope = 0.0
+var float mu_chop_adx   = 0.0
+var float sig_bull      = 1.0
+var float sig_bear      = 1.0
+var float sig_chop      = 1.0
+var bool  hmm_init      = false
+
+if not hmm_init
+    hmm_init       := true
+    mu_bull_tpos   := 1.0
+    mu_bull_slope  := 0.7
+    mu_bull_adx    := 0.5
+    mu_bear_tpos   := -1.0
+    mu_bear_slope  := -0.7
+    mu_bear_adx    := 0.5
+    mu_chop_tpos   := 0.0
+    mu_chop_slope  := 0.0
+    mu_chop_adx    := -0.5
+
+// ==========================================
+// --- GAUSSIAN PDF ---
+// ==========================================
+f_pdf(_x, _mu, _sigma) =>
+    _s = math.max(_sigma, 0.01)
+    (1.0 / (math.sqrt(2.0 * math.pi) * _s)) * math.exp(-math.pow(_x - _mu, 2.0) / (2.0 * _s * _s))
+
+// ==========================================
+// --- EMISSION LIKELIHOODS WITH TEMPERATURE ---
+// ==========================================
+float temp_inv = 1.0 / emission_temp
+
+float raw_bull = f_pdf(obs_tpos,  mu_bull_tpos,  sig_bull) *
+                 f_pdf(obs_slope, mu_bull_slope, sig_bull) *
+                 f_pdf(obs_adx,   mu_bull_adx,   sig_bull)
+
+float raw_bear = f_pdf(obs_tpos,  mu_bear_tpos,  sig_bear) *
+                 f_pdf(obs_slope, mu_bear_slope, sig_bear) *
+                 f_pdf(obs_adx,   mu_bear_adx,   sig_bear)
+
+float raw_chop = f_pdf(obs_tpos,  mu_chop_tpos,  sig_chop) *
+                 f_pdf(obs_slope, mu_chop_slope, sig_chop) *
+                 f_pdf(obs_adx,   mu_chop_adx,   sig_chop)
+
+float like_bull = math.pow(math.max(raw_bull, 1e-30), temp_inv)
+float like_bear = math.pow(math.max(raw_bear, 1e-30), temp_inv)
+float like_chop = math.pow(math.max(raw_chop, 1e-30), temp_inv)
+
+// ==========================================
+// --- BAYESIAN HMM FORWARD UPDATE ---
+// ==========================================
+float trans_bull_bear = (1.0 - p_stay_bull) * 0.2
+float trans_bull_chop = (1.0 - p_stay_bull) * 0.8
+float trans_bear_bull = (1.0 - p_stay_bear) * 0.2
+float trans_bear_chop = (1.0 - p_stay_bear) * 0.8
+float trans_chop_bull = (1.0 - p_stay_chop) * 0.5
+float trans_chop_bear = (1.0 - p_stay_chop) * 0.5
+
+var float prob_bull = 1.0 / 3.0
+var float prob_bear = 1.0 / 3.0
+var float prob_chop = 1.0 / 3.0
+
+float prior_bull = (prob_bull * p_stay_bull)    + (prob_bear * trans_bear_bull) + (prob_chop * trans_chop_bull)
+float prior_bear = (prob_bull * trans_bull_bear) + (prob_bear * p_stay_bear)    + (prob_chop * trans_chop_bear)
+float prior_chop = (prob_bull * trans_bull_chop) + (prob_bear * trans_bear_chop) + (prob_chop * p_stay_chop)
+
+float post_bull  = prior_bull * like_bull
+float post_bear  = prior_bear * like_bear
+float post_chop  = prior_chop * like_chop
+float total_post = post_bull + post_bear + post_chop
+
+if total_post > 0
+    prob_bull := post_bull / total_post
+    prob_bear := post_bear / total_post
+    prob_chop := post_chop / total_post
+
+float pct_bull = prob_bull * 100
+float pct_bear = prob_bear * 100
+float pct_chop = prob_chop * 100
+
+// ==========================================
+// --- ADAPTIVE LEARNING ---
+// ==========================================
+if use_learning
+    if prob_bull > 0.5
+        mu_bull_tpos  := mu_bull_tpos  + learn_rate * (obs_tpos  - mu_bull_tpos)
+        mu_bull_slope := mu_bull_slope + learn_rate * (obs_slope - mu_bull_slope)
+        mu_bull_adx   := mu_bull_adx   + learn_rate * (obs_adx   - mu_bull_adx)
+        float res_bull = (math.abs(obs_tpos - mu_bull_tpos) + math.abs(obs_slope - mu_bull_slope) + math.abs(obs_adx - mu_bull_adx)) / 3.0
+        sig_bull      := math.max(learn_floor, sig_bull + learn_rate * (res_bull - sig_bull))
+
+    if prob_bear > 0.5
+        mu_bear_tpos  := mu_bear_tpos  + learn_rate * (obs_tpos  - mu_bear_tpos)
+        mu_bear_slope := mu_bear_slope + learn_rate * (obs_slope - mu_bear_slope)
+        mu_bear_adx   := mu_bear_adx   + learn_rate * (obs_adx   - mu_bear_adx)
+        float res_bear = (math.abs(obs_tpos - mu_bear_tpos) + math.abs(obs_slope - mu_bear_slope) + math.abs(obs_adx - mu_bear_adx)) / 3.0
+        sig_bear      := math.max(learn_floor, sig_bear + learn_rate * (res_bear - sig_bear))
+
+    if prob_chop > 0.5
+        mu_chop_tpos  := mu_chop_tpos  + learn_rate * (obs_tpos  - mu_chop_tpos)
+        mu_chop_slope := mu_chop_slope + learn_rate * (obs_slope - mu_chop_slope)
+        mu_chop_adx   := mu_chop_adx   + learn_rate * (obs_adx   - mu_chop_adx)
+        float res_chop = (math.abs(obs_tpos - mu_chop_tpos) + math.abs(obs_slope - mu_chop_slope) + math.abs(obs_adx - mu_chop_adx)) / 3.0
+        sig_chop      := math.max(learn_floor, sig_chop + learn_rate * (res_chop - sig_chop))
+
+// ==========================================
+// --- DOMINANT STATE ---
+// ==========================================
+int dom_state = pct_bull > pct_bear and pct_bull > pct_chop ? 1 :
+                 pct_bear > pct_bull and pct_bear > pct_chop ? -1 : 0
+
+// ==========================================
+// --- BAR COLORING ---
+// ==========================================
+color target_col = dom_state == 1  ? color.from_gradient(pct_bull, 33, 100, c_bull_start, c_bull_end) :
+                   dom_state == -1 ? color.from_gradient(pct_bear, 33, 100, c_bear_start, c_bear_end) :
+                                     color.from_gradient(pct_chop, 33, 100, c_chop_start, c_chop_end)
+
+var float s_r  = na
+var float s_g  = na
+var float s_bc = na
+if na(s_r)
+    s_r  := color.r(target_col)
+    s_g  := color.g(target_col)
+    s_bc := color.b(target_col)
+else
+    s_r  := s_r  + (color.r(target_col) - s_r)  * color_smooth
+    s_g  := s_g  + (color.g(target_col) - s_g)  * color_smooth
+    s_bc := s_bc + (color.b(target_col) - s_bc) * color_smooth
+
+color bar_col = color.rgb(s_r, s_g, s_bc)
+barcolor(bar_col)
+
+// ==========================================
+// --- OVERLAY PLOTS ---
+// ==========================================
+// Basis colour tracks the regime so you can read it at a glance
+color basis_col = dom_state == 1  ? color.new(c_bull_end, 0) : dom_state == -1 ? color.new(c_bear_end, 0) : color.new(c_chop_end, 0)
+
+// Trail level: circle dots, coloured by regime direction
+color trail_col = trend_dir == 1 ? color.new(c_bull_end, 20) : color.new(c_bear_end, 20)
+
+plot(show_basis ? basis       : na, "Basis",          color=basis_col, linewidth=basis_width)
+plot(show_trail ? trail_level : na, "Trailing Level", color=trail_col, linewidth=trail_width, style=plot.style_circles)
+
+// ==========================================
+// --- DASHBOARD ---
+// ==========================================
+// Resolve table position input → Pine constant
+var string _tpos = table_pos
+string _pos_const = _tpos == "Top Left"       ? position.top_left     :
+                     _tpos == "Top Center"      ? position.top_center   :
+                     _tpos == "Bottom Right"    ? position.bottom_right :
+                     _tpos == "Bottom Left"     ? position.bottom_left  :
+                     _tpos == "Bottom Center"   ? position.bottom_center :
+                     _tpos == "Middle Right"    ? position.middle_right :
+                     _tpos == "Middle Left"     ? position.middle_left  :
+                     position.top_right
+
+// Resolve text size input → Pine constant
+var string _tsz = table_size
+string _sz_label = _tsz == "Tiny"   ? size.tiny   :
+                   _tsz == "Normal" ? size.normal  :
+                   _tsz == "Large"  ? size.large   :
+                   size.small
+// Regime label is one step larger than body text for visual hierarchy
+string _sz_head  = _tsz == "Tiny"   ? size.small  :
+                   _tsz == "Normal" ? size.large   :
+                   _tsz == "Large"  ? size.huge    :
+                   size.normal
+
+var table dash = table.new(_pos_const, 2, 6,
+     bgcolor=color.black, border_width=1, border_color=color.new(color.gray, 85))
+
+if barstate.islast
+    string state_txt = dom_state ==  1 ? "BULLISH" : dom_state == -1 ? "BEARISH" : "CHOP"
+    float  conf      = math.max(pct_bull, pct_bear, pct_chop)
+    string conf_txt  = conf > 65 ? "HIGH" : conf > 50 ? "MED" : "LOW"
+    color  conf_col  = conf > 65 ? c_bull_end : conf > 50 ? c_chop_end : c_bear_end
+
+    table.cell(dash, 0, 0, "REGIME",     text_color=color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+    table.cell(dash, 1, 0, state_txt,    text_color=bar_col,    text_size=_sz_head,  text_halign=text.align_left, text_font_family=font.family_monospace)
+
+    table.cell(dash, 0, 1, "CONFIDENCE", text_color=color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+    table.cell(dash, 1, 1, str.tostring(conf, "#.#") + "%  " + conf_txt, text_color=conf_col, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+
+    table.cell(dash, 0, 2, "P(BULL)",    text_color=color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+    table.cell(dash, 1, 2, str.tostring(pct_bull, "#.#") + "%", text_color=c_bull_end, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+
+    table.cell(dash, 0, 3, "P(BEAR)",    text_color=color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+    table.cell(dash, 1, 3, str.tostring(pct_bear, "#.#") + "%", text_color=c_bear_end, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+
+    table.cell(dash, 0, 4, "P(CHOP)",    text_color=color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+    table.cell(dash, 1, 4, str.tostring(pct_chop, "#.#") + "%", text_color=c_chop_end, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+
+    table.cell(dash, 0, 5, "sig B/Br/C", text_color=color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+    table.cell(dash, 1, 5, str.tostring(sig_bull, "#.##") + "/" + str.tostring(sig_bear, "#.##") + "/" + str.tostring(sig_chop, "#.##") + "  " + (use_learning ? "LRN" : "FIX"),
+               text_color=use_learning ? c_bull_end : color.gray, text_size=_sz_label, text_halign=text.align_left, text_font_family=font.family_monospace)
+
+// ==========================================
+// --- ALERTS ---
+// ==========================================
+bool bull_start = dom_state ==  1 and dom_state[1] != 1
+bool bear_start = dom_state == -1 and dom_state[1] != -1
+bool chop_start = dom_state ==  0 and dom_state[1] != 0
+
+alertcondition(bull_start, title="HMM: Regime → BULLISH", message="HMM regime shifted to BULLISH. Trend following long conditions active.")
+alertcondition(bear_start, title="HMM: Regime → BEARISH", message="HMM regime shifted to BEARISH. Trend following short conditions active.")
+alertcondition(chop_start, title="HMM: Regime → CHOP",    message="HMM regime shifted to CHOP. Avoid trend trades, consider mean reversion or flat.")

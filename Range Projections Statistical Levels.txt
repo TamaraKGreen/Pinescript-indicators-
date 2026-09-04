@@ -1,0 +1,352 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+// © notprofessorgreen
+
+//@version=5
+// © notprofessorgreen
+
+//@version=5
+indicator("Range Projections [Statistical Levels]", "Range Projections [Statistical Levels]", true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// -------------------------------------------------- Inputs --------------------------------------------------
+var g_SET = "Settings"
+session_type = input.string("Globex Open", "Session Type", options = ["Globex Open", "London Open", "NY Futures Open", "NY RTH Open"], tooltip = "Select which session to analyze with hardcoded times", group = g_SET)
+
+var g_LEVELS = "Show Statistical Levels"
+use_25th = input.bool(true, "25th Percentile", group = g_LEVELS)
+use_median = input.bool(true, "Median (50th)", group = g_LEVELS)  
+use_mean = input.bool(true, "Mean", group = g_LEVELS)
+use_75th = input.bool(true, "75th Percentile", group = g_LEVELS)
+use_85th = input.bool(true, "85th Percentile", group = g_LEVELS)
+use_95th = input.bool(true, "95th Percentile", group = g_LEVELS)
+
+var g_DRW = "Drawings"
+horiz_lines = input.bool(true, "Level Projection Lines", group = g_DRW)
+
+var g_LEVELS_STY = "Statistical Levels Styling"
+use_gradient = input.bool(true, "Use Gradient Colors", tooltip = "Colors boxes from light to dark based on percentile level", group = g_LEVELS_STY)
+base_color = input.color(color.teal, "Level Box Color", tooltip = "Color for level boxes (gradient when enabled, solid when disabled)", group = g_LEVELS_STY)
+line_color = input.color(color.gray, "Level Line Color", tooltip = "Color for level lines", group = g_LEVELS_STY)
+line_style = input.string('Dotted', "Level Line Style", options = ['Solid', 'Dotted', 'Dashed'], tooltip = "Style for level lines", group = g_LEVELS_STY)
+
+var g_OPEN_STY = "Session Open Line Styling"
+open_line_color = input.color(color.gray, "Open Line Color", tooltip = "Color for session open line", group = g_OPEN_STY)
+open_line_style = input.string('Dotted', "Open Line Style", options = ['Solid', 'Dotted', 'Dashed'], tooltip = "Style for session open line", group = g_OPEN_STY)
+
+var g_LABELS_STY = "Label Styling"
+show_labels = input.bool(true, "Show Level Labels", group = g_LABELS_STY)
+label_color = input.color(#ffffff00, "Label Background Color", group = g_LABELS_STY)
+label_text_color = input.color(color.black, "Label Text Color", group = g_LABELS_STY)
+label_size = input.string('Normal', "Label Size", options = ['Tiny', 'Small', 'Normal', 'Large', 'Huge'], group = g_LABELS_STY)
+
+// -------------------------------------------------- Session Times & Statistical Data --------------------------------------------------
+// Hardcoded session times (EST)
+session_time = switch session_type
+    "Globex Open" => "1800-1900"      // 6-7pm EST
+    "London Open" => "0200-0300"      // 2-3am EST  
+    "NY Futures Open" => "0800-0900"  // 8-9am EST
+    "NY RTH Open" => "0930-1030"      // 9:30-10:30am EST
+
+// Statistical levels by day of week [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
+// GLOBEX OPEN (6-7PM EST) LEVELS
+globex_25th_up = array.from(0.04, 0.01, 0.01, 0.01, 0.01, 0.0, 0.0)
+globex_25th_down = array.from(0.04, 0.01, 0.01, 0.01, 0.01, 0.0, 0.0)
+globex_median_up = array.from(0.10, 0.03, 0.03, 0.03, 0.03, 0.0, 0.0)
+globex_median_down = array.from(0.10, 0.03, 0.03, 0.03, 0.04, 0.0, 0.0)
+globex_mean_up = array.from(0.16, 0.06, 0.07, 0.07, 0.06, 0.0, 0.0)
+globex_mean_down = array.from(0.16, 0.06, 0.07, 0.07, 0.08, 0.0, 0.0)
+globex_75th_up = array.from(0.19, 0.07, 0.08, 0.07, 0.07, 0.0, 0.0)
+globex_75th_down = array.from(0.19, 0.07, 0.08, 0.08, 0.08, 0.0, 0.0)
+globex_85th_up = array.from(0.27, 0.10, 0.12, 0.11, 0.10, 0.0, 0.0)
+globex_85th_down = array.from(0.31, 0.10, 0.12, 0.12, 0.14, 0.0, 0.0)
+globex_95th_up = array.from(0.55, 0.24, 0.29, 0.20, 0.19, 0.0, 0.0)
+globex_95th_down = array.from(0.61, 0.23, 0.23, 0.25, 0.29, 0.0, 0.0)
+
+// LONDON OPEN (2-3AM EST) LEVELS  
+london_25th_up = array.from(0.0, 0.02, 0.02, 0.02, 0.02, 0.02, 0.0)
+london_25th_down = array.from(0.0, 0.02, 0.02, 0.02, 0.02, 0.02, 0.0)
+london_median_up = array.from(0.0, 0.04, 0.05, 0.05, 0.05, 0.04, 0.0)
+london_median_down = array.from(0.0, 0.04, 0.04, 0.05, 0.05, 0.05, 0.0)
+london_mean_up = array.from(0.0, 0.08, 0.08, 0.09, 0.08, 0.08, 0.0)
+london_mean_down = array.from(0.0, 0.08, 0.07, 0.08, 0.08, 0.08, 0.0)
+london_75th_up = array.from(0.0, 0.10, 0.10, 0.10, 0.10, 0.10, 0.0)
+london_75th_down = array.from(0.0, 0.10, 0.10, 0.10, 0.10, 0.11, 0.0)
+london_85th_up = array.from(0.0, 0.14, 0.14, 0.15, 0.14, 0.14, 0.0)
+london_85th_down = array.from(0.0, 0.13, 0.13, 0.14, 0.15, 0.15, 0.0)
+london_95th_up = array.from(0.0, 0.28, 0.27, 0.30, 0.28, 0.29, 0.0)
+london_95th_down = array.from(0.0, 0.27, 0.25, 0.26, 0.28, 0.25, 0.0)
+
+// NY FUTURES OPEN (8-9AM EST) LEVELS
+ny_futures_25th_up = array.from(0.0, 0.03, 0.02, 0.03, 0.04, 0.03, 0.0)
+ny_futures_25th_down = array.from(0.0, 0.03, 0.03, 0.03, 0.03, 0.03, 0.0)
+ny_futures_median_up = array.from(0.0, 0.07, 0.07, 0.07, 0.08, 0.08, 0.0)
+ny_futures_median_down = array.from(0.0, 0.06, 0.08, 0.07, 0.08, 0.08, 0.0)
+ny_futures_mean_up = array.from(0.0, 0.12, 0.11, 0.10, 0.13, 0.14, 0.0)
+ny_futures_mean_down = array.from(0.0, 0.10, 0.12, 0.12, 0.13, 0.13, 0.0)
+ny_futures_75th_up = array.from(0.0, 0.13, 0.13, 0.14, 0.16, 0.16, 0.0)
+ny_futures_75th_down = array.from(0.0, 0.13, 0.16, 0.14, 0.15, 0.15, 0.0)
+ny_futures_85th_up = array.from(0.0, 0.18, 0.18, 0.19, 0.24, 0.23, 0.0)
+ny_futures_85th_down = array.from(0.0, 0.19, 0.21, 0.21, 0.22, 0.22, 0.0)
+ny_futures_95th_up = array.from(0.0, 0.32, 0.32, 0.34, 0.43, 0.47, 0.0)
+ny_futures_95th_down = array.from(0.0, 0.35, 0.40, 0.40, 0.48, 0.44, 0.0)
+
+// NY RTH OPEN (9:30-10:30AM EST) LEVELS
+ny_rth_25th_up = array.from(0.0, 0.04, 0.04, 0.04, 0.06, 0.06, 0.0)
+ny_rth_25th_down = array.from(0.0, 0.04, 0.05, 0.05, 0.05, 0.05, 0.0)
+ny_rth_median_up = array.from(0.0, 0.09, 0.11, 0.11, 0.13, 0.15, 0.0)
+ny_rth_median_down = array.from(0.0, 0.09, 0.12, 0.11, 0.12, 0.14, 0.0)
+ny_rth_mean_up = array.from(0.0, 0.17, 0.18, 0.19, 0.21, 0.21, 0.0)
+ny_rth_mean_down = array.from(0.0, 0.18, 0.20, 0.19, 0.22, 0.24, 0.0)
+ny_rth_75th_up = array.from(0.0, 0.21, 0.23, 0.24, 0.25, 0.27, 0.0)
+ny_rth_75th_down = array.from(0.0, 0.20, 0.25, 0.22, 0.25, 0.29, 0.0)
+ny_rth_85th_up = array.from(0.0, 0.31, 0.33, 0.32, 0.38, 0.37, 0.0)
+ny_rth_85th_down = array.from(0.0, 0.30, 0.36, 0.33, 0.39, 0.44, 0.0)
+ny_rth_95th_up = array.from(0.0, 0.55, 0.61, 0.67, 0.67, 0.68, 0.0)
+ny_rth_95th_down = array.from(0.0, 0.63, 0.58, 0.60, 0.74, 0.84, 0.0)
+
+// -------------------------------------------------- Variables --------------------------------------------------
+t = not na(time("", session_time, "America/New_York"))
+var array<box> proj_boxes = array.new<box>()
+var array<line> proj_lines = array.new<line>()
+var line session_open_line = na
+var int start = 0
+var float session_open = na
+var float session_high = na
+var float session_low = na
+var int session_end_bar = 0
+
+// -------------------------------------------------- Functions --------------------------------------------------
+get_label_size(size_str) =>
+    switch size_str
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+        => size.normal
+
+get_line_style(style_str) =>
+    switch style_str
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+        => line.style_dotted
+
+get_gradient_color(level_index, total_levels) =>
+    if use_gradient
+        transparency = int(80 - (level_index * 10))
+        transparency := math.max(10, math.min(90, transparency))
+        color.new(base_color, transparency)
+    else
+        color.new(base_color, 70)
+
+label_text_size = get_label_size(label_size)
+level_line_style = get_line_style(line_style)
+open_line_style_converted = get_line_style(open_line_style)
+
+// Calculate approximate session duration in bars
+get_session_end_bar(start_bar) =>
+    // Get session duration in minutes (all sessions are 1 hour)
+    session_duration_minutes = 60
+    // Get chart timeframe in minutes
+    timeframe_minutes = timeframe.in_seconds() / 60
+    // Calculate number of bars in session
+    bars_in_session = math.round(session_duration_minutes / timeframe_minutes)
+    // Return estimated end bar
+    start_bar + bars_in_session
+
+get_levels_for_session_and_day() =>
+    day_of_week = dayofweek(time)
+    day_index = day_of_week - 1
+    
+    levels_up = array.new<float>()
+    levels_down = array.new<float>() 
+    level_labels = array.new<string>()
+    
+    if session_type == "Globex Open"
+        if use_25th
+            array.push(levels_up, array.get(globex_25th_up, day_index) / 100)
+            array.push(levels_down, array.get(globex_25th_down, day_index) / 100)
+            array.push(level_labels, "25%")
+        if use_median
+            array.push(levels_up, array.get(globex_median_up, day_index) / 100)
+            array.push(levels_down, array.get(globex_median_down, day_index) / 100)
+            array.push(level_labels, "50%")
+        if use_mean
+            array.push(levels_up, array.get(globex_mean_up, day_index) / 100)
+            array.push(levels_down, array.get(globex_mean_down, day_index) / 100)
+            array.push(level_labels, "Mean")
+        if use_75th
+            array.push(levels_up, array.get(globex_75th_up, day_index) / 100)
+            array.push(levels_down, array.get(globex_75th_down, day_index) / 100)
+            array.push(level_labels, "75%")
+        if use_85th
+            array.push(levels_up, array.get(globex_85th_up, day_index) / 100)
+            array.push(levels_down, array.get(globex_85th_down, day_index) / 100)
+            array.push(level_labels, "85%")
+        if use_95th
+            array.push(levels_up, array.get(globex_95th_up, day_index) / 100)
+            array.push(levels_down, array.get(globex_95th_down, day_index) / 100)
+            array.push(level_labels, "95%")
+    
+    else if session_type == "London Open"
+        if use_25th
+            array.push(levels_up, array.get(london_25th_up, day_index) / 100)
+            array.push(levels_down, array.get(london_25th_down, day_index) / 100)
+            array.push(level_labels, "25%")
+        if use_median
+            array.push(levels_up, array.get(london_median_up, day_index) / 100)
+            array.push(levels_down, array.get(london_median_down, day_index) / 100)
+            array.push(level_labels, "50%")
+        if use_mean
+            array.push(levels_up, array.get(london_mean_up, day_index) / 100)
+            array.push(levels_down, array.get(london_mean_down, day_index) / 100)
+            array.push(level_labels, "Mean")
+        if use_75th
+            array.push(levels_up, array.get(london_75th_up, day_index) / 100)
+            array.push(levels_down, array.get(london_75th_down, day_index) / 100)
+            array.push(level_labels, "75%")
+        if use_85th
+            array.push(levels_up, array.get(london_85th_up, day_index) / 100)
+            array.push(levels_down, array.get(london_85th_down, day_index) / 100)
+            array.push(level_labels, "85%")
+        if use_95th
+            array.push(levels_up, array.get(london_95th_up, day_index) / 100)
+            array.push(levels_down, array.get(london_95th_down, day_index) / 100)
+            array.push(level_labels, "95%")
+    
+    else if session_type == "NY Futures Open"
+        if use_25th
+            array.push(levels_up, array.get(ny_futures_25th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_futures_25th_down, day_index) / 100)
+            array.push(level_labels, "25%")
+        if use_median
+            array.push(levels_up, array.get(ny_futures_median_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_futures_median_down, day_index) / 100)
+            array.push(level_labels, "50%")
+        if use_mean
+            array.push(levels_up, array.get(ny_futures_mean_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_futures_mean_down, day_index) / 100)
+            array.push(level_labels, "Mean")
+        if use_75th
+            array.push(levels_up, array.get(ny_futures_75th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_futures_75th_down, day_index) / 100)
+            array.push(level_labels, "75%")
+        if use_85th
+            array.push(levels_up, array.get(ny_futures_85th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_futures_85th_down, day_index) / 100)
+            array.push(level_labels, "85%")
+        if use_95th
+            array.push(levels_up, array.get(ny_futures_95th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_futures_95th_down, day_index) / 100)
+            array.push(level_labels, "95%")
+    
+    else if session_type == "NY RTH Open"
+        if use_25th
+            array.push(levels_up, array.get(ny_rth_25th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_rth_25th_down, day_index) / 100)
+            array.push(level_labels, "25%")
+        if use_median
+            array.push(levels_up, array.get(ny_rth_median_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_rth_median_down, day_index) / 100)
+            array.push(level_labels, "50%")
+        if use_mean
+            array.push(levels_up, array.get(ny_rth_mean_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_rth_mean_down, day_index) / 100)
+            array.push(level_labels, "Mean")
+        if use_75th
+            array.push(levels_up, array.get(ny_rth_75th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_rth_75th_down, day_index) / 100)
+            array.push(level_labels, "75%")
+        if use_85th
+            array.push(levels_up, array.get(ny_rth_85th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_rth_85th_down, day_index) / 100)
+            array.push(level_labels, "85%")
+        if use_95th
+            array.push(levels_up, array.get(ny_rth_95th_up, day_index) / 100)
+            array.push(levels_down, array.get(ny_rth_95th_down, day_index) / 100)
+            array.push(level_labels, "95%")
+    
+    [levels_up, levels_down, level_labels]
+
+// -------------------------------------------------- Core Logic --------------------------------------------------
+if t and not t[1]
+    // Session start
+    start := bar_index
+    session_open := open
+    session_high := high
+    session_low := low
+    session_end_bar := get_session_end_bar(bar_index)
+    
+    // Clear previous drawings
+    array.clear(proj_boxes)
+    array.clear(proj_lines)
+    
+    // Create projection levels at session open
+    [levels_up, levels_down, level_labels] = get_levels_for_session_and_day()
+    
+    if session_open > 0 and array.size(levels_up) > 0
+        // Create session open line
+        session_open_line := line.new(start, session_open, session_end_bar, session_open, color = open_line_color, style = open_line_style_converted, width = 1)
+        
+        // Create level boxes and lines
+        for i = 0 to array.size(levels_up) - 1
+            level_up_pct = array.get(levels_up, i)
+            level_down_pct = array.get(levels_down, i)
+            label_text = array.get(level_labels, i)
+            
+            if level_up_pct > 0
+                // Calculate level prices
+                upper_level = session_open * (1 + level_up_pct)
+                lower_level = session_open * (1 - level_down_pct)
+                
+                // Create boxes (stacked approach - only between levels)
+                var box upper_box = na
+                var box lower_box = na
+                box_color = get_gradient_color(i, array.size(levels_up))
+                
+                if i == 0
+                    // For first level, create boxes from session open to first level
+                    upper_box := box.new(start, upper_level, session_end_bar, session_open, border_color = color.new(box_color, 100), bgcolor = box_color)
+                    lower_box := box.new(start, session_open, session_end_bar, lower_level, border_color = color.new(box_color, 100), bgcolor = box_color)
+                else
+                    // For subsequent levels, create boxes between previous level and current level
+                    prev_upper = session_open * (1 + array.get(levels_up, i-1))
+                    prev_lower = session_open * (1 - array.get(levels_down, i-1))
+                    upper_box := box.new(start, upper_level, session_end_bar, prev_upper, border_color = color.new(box_color, 100), bgcolor = box_color)
+                    lower_box := box.new(start, prev_lower, session_end_bar, lower_level, border_color = color.new(box_color, 100), bgcolor = box_color)
+                
+                array.push(proj_boxes, upper_box)
+                array.push(proj_boxes, lower_box)
+                
+                // Create labels
+                if show_labels
+                    label.new(session_end_bar, upper_level, label_text, textcolor = label_text_color, color = label_color, style = label.style_label_center, size = label_text_size)
+                    label.new(session_end_bar, lower_level, "-" + label_text, textcolor = label_text_color, color = label_color, style = label.style_label_center, size = label_text_size)
+                
+                // Create level lines
+                if horiz_lines
+                    upper_line = line.new(start, upper_level, session_end_bar, upper_level, color = line_color, style = level_line_style, width = 1)
+                    lower_line = line.new(start, lower_level, session_end_bar, lower_level, color = line_color, style = level_line_style, width = 1)
+                    array.push(proj_lines, upper_line)
+                    array.push(proj_lines, lower_line)
+
+else if t
+    // During session - track session high/low for potential future use
+    if high > session_high
+        session_high := high
+    if low < session_low
+        session_low := low
+
+else if not t and t[1]
+    // Session end - clean up
+    for b in proj_boxes
+        box.delete(b)
+    for l in proj_lines
+        line.delete(l)
+    array.clear(proj_boxes)
+    array.clear(proj_lines)
+    session_open := na
+    session_high := na
+    session_low := na
+    session_end_bar := 0

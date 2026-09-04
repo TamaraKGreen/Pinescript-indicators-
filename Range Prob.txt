@@ -1,0 +1,616 @@
+// Range Probability  -  NQ
+
+//@version=6
+indicator("Range Probability  -  NQ", overlay = true,
+     max_boxes_count = 500, max_labels_count = 500)
+
+// ---------------------------------------------------------------- inputs ----
+g1 = "Range"
+tfSel   = input.string("60", "Range size (minutes)", options = ["15", "30", "60", "120", "240"], group = g1)
+anchorH = input.int(18, "Session anchor hour (ET)", minval = 0, maxval = 23, group = g1,
+     tooltip = "Ranges are measured from this hour in New York time. 18:00 matches the study.")
+keepN   = input.int(20, "Ranges to keep on chart", minval = 1, maxval = 400, group = g1)
+
+g2 = "Box"
+showBox  = input.bool(true,  "Draw range boxes", group = g2)
+colLive  = input.color(color.new(#787b86, 75), "Forming", group = g2)
+colUp    = input.color(color.new(#26a69a, 80), "Closed above previous high", group = g2)
+colDn    = input.color(color.new(#ef5350, 80), "Closed below previous low", group = g2)
+colIn    = input.color(color.new(#787b86, 90), "Closed inside", group = g2)
+g5 = "Levels"
+showHML   = input.bool(true,  "High / mid / low lines from the previous range", group = g5)
+extendN   = input.int(0, "Extend them this many ranges ahead", minval = 0, maxval = 50, group = g5,
+     tooltip = "0 stops the lines at the end of the current range. Each step adds one more range width to the right.")
+showHMLlb = input.bool(true,  "Label them", group = g5)
+showPrev  = input.bool(true,  "Outline the previous range", group = g5)
+showGrid  = input.bool(false, "Open-position levels (0.0 - 1.0)", group = g5)
+showBand  = input.bool(true,  "Shade the bucket the range opened in", group = g5)
+colHML    = input.color(#4a4d55, "High / low colour", group = g5)
+colMidL   = input.color(color.new(#787b86, 25), "Mid colour", group = g5)
+colHMLlb  = input.color(color.new(#787b86, 20), "Label colour", group = g5)
+wHL       = input.int(1, "High / low thickness", minval = 1, maxval = 5, group = g5)
+wMid      = input.int(1, "Mid thickness", minval = 1, maxval = 5, group = g5)
+wGrid     = input.int(1, "Open-position level thickness", minval = 1, maxval = 5, group = g5)
+colGrid   = input.color(color.new(#787b86, 65), "Open-position level colour", group = g5)
+colBand   = input.color(color.new(#787b86, 88), "Bucket shading", group = g5,
+     tooltip = "Shades the tenth of the previous range that this range opened in. It is the bucket the probability is read from, not a signal.")
+
+g3 = "Table"
+showTbl    = input.bool(true, "Show table", group = g3)
+tblPos     = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"], group = g3)
+tblSize    = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = g3)
+showDetail = input.bool(true, "Show test outcome and sample size", group = g3)
+
+g4 = "Signals"
+showMarker = input.bool(true,  "Label the chart when a cell qualifies", group = g4)
+useAlerts  = input.bool(false, "Fire an alert when a cell qualifies", group = g4)
+showOthers = input.bool(true,  "Scan the other range sizes for live signals", group = g4)
+
+g6 = "Live tracker"
+showLive = input.bool(true, "Track how the calls are doing on this chart", group = g6)
+trackN   = input.int(100, "Calls to keep in the window", minval = 10, maxval = 1000, group = g6,
+     tooltip = "Scores every call the indicator made on the loaded history, most recent first. Compare against the historical claim to see drift.")
+showDebug  = input.bool(false, "Show lookup diagnostics in the table", group = g4)
+
+// ------------------------------------------------------------ lookup data ---
+D15 = "00008U0710670554000009U0800840584200151D0850940715100153D0720770513600301D0810770524000302D08107105144"
+  + "00303D0720700504000308U0710840504100309U0770810554100459U0830930624601001D0820750716001002D07806505060"
+  + "01003D0710730594201009U0760700594301151D0870810774701153D0710740553701158U0740800504301159U08308005036"
+  + "01301D0810790844801303D0720680563901308U0730590674801309U0820810695001451D0830760695101452D08007805146"
+  + "01453D0720730544101458U0740690624801459U0790900623702001D0800820956202002D0780680715302008U07006007360"
+  + "02009U0810640945702151D0860840623802152D0820830614102153D0720800613502158U0740820554002159U08409107140"
+  + "02301D0870870754502302D0820710594302308U0740760543902309U0780800804302451D0850910934802452D08007406949"
+  + "02453D0720720593902458U0710690634402459U0820830754703001D0780761106803002D0770560916903009U07306612265"
+  + "03151D0850860914803152D0820860604003153D0730700593703158U0770860683803159U082083080470315aU08908106444"
+  + "03301D0870920744703302D0800810623803308U0740800613903309U082091066360330aU0880910564003451D08609008049"
+  + "03452D0790890714203453D0760710774603458U0730780623903459U0850850714404001D0830780895004002D07907608848"
+  + "04008U0720620834604009U0830800754804151D0850920845104152D0820870614104153D0700810593504158U07308705634"
+  + "04159U082088083450415aU0880890614704301D0850910684704302D0810800694304303D0710750553404309U08307409147"
+  + "04451D0870900874804452D0820830593704453D0700790714204458U0730800724804459U0820890824805001D08409106143"
+  + "05002D0770840714205003D0720660744505008U0760780654005009U0780810964405152D0780820694305153D07105907241"
+  + "05158U0730670573805159U0860840975105301D0860890654305302D0800810744505303D0700690644005308U07507405436"
+  + "05309U081078085430530aU0890900565405451D0830880774705452D0820760624205458U0710710634505459U08208609448"
+  + "0545aU0870960584606001D0850860785206002D0810880634306003D0700730673506008U0710610573806009U08107009649"
+  + "06151D0850830774806152D0810830875106158U0710850714606159U0840860724306301D0820810705306302D08107607042"
+  + "06303D0710700784206308U0700680644406309U0820880874906451D0860880684606452D0800900594106453D07107505533"
+  + "06458U0710660624206459U0800870774307001D0840770805107002D0750690764607008U0730650674507009U08007610155"
+  + "0700aU0870850565207151D0850910684607152D0810840704507158U0750770694007159U0800890904307301D08409008348"
+  + "07302D0780820764807308U0760630755107309U0810770944607451D0840890664307452D0790820795207453D07207106543"
+  + "07458U0710750804607459U079079093470745aU0880840574908001D0860830624608002D0790710875308008U07107008147"
+  + "08009U0770780924708151D0830900744608152D0810810694008153D0740670703808158U0730800684808159U08108009448"
+  + "0815aU0890920594808301D0820770554308302D0800690865408303D0720630946308308U0710630864908309U07407609953"
+  + "08451D0850950704908452D0790900664308458U0740780653908459U0820910904309001D0850900684409002D08008606941"
+  + "09003D0740810633709008U0720700663709009U082078075430900aU0870880504409151D0850830784909152D07807505240"
+  + "09153D0710720714309159U078079105540915aU0870850675209301D0730651047209309U071064149780930aU07706510973"
+  + "09451D0850960764609452D0820890854709453D0710770714409458U0710860734409459U081091105530945aU08909609948"
+  + "10001D0880950795410002D0810840704410008U0720700694310009U084082107481000aU0880950915010151D08408608746"
+  + "10152D0820850744410153D0740710614010158U0750700643910159U081091078411015aU0910900834810301D08408907548"
+  + "10302D0810880634510308U0750690814710309U083087109511030aU0870890684510451D0850950805110452D08008606848"
+  + "10453D0740710724910458U0720740584110459U083075095471045aU0890920854111001D0870880894911002D08007307038"
+  + "11003D0730730623911008U0750750654711009U085084092541100aU0880930995411151D0870830684611152D08108106041"
+  + "11153D0740750755011158U0750740925011159U081088120521115aU0900950824611301D0860840784611302D07808907345"
+  + "11303D0720700834611308U0770790834611309U083076092441130aU0890920855011451D0850940794511452D08307107351"
+  + "11453D0740630684211458U0720840714311459U081085092511145aU0890880804812001D0840870754612002D08008105937"
+  + "12003D0720680563912008U0740670724012009U081077089471200aU0860820824612151D0860880655012152D08308606841"
+  + "12153D0710790604112158U0760760654312159U084084089451215aU0880930905312301D0840870655012302D08108106747"
+  + "12303D0720710613812308U0760760724212309U082085102471230aU0890870775212451D0850820634812452D08108106844"
+  + "12458U0750810794012459U078084085431245aU0870940704513002D0770680694313003D0710700744713008U07306606945"
+  + "13009U078075094471300aU0870890765313151D0870870744713152D0800900814713158U0730760785313159U07808109144"
+  + "1315aU0890920805713301D0840900835713302D0810870543613308U0700670795213309U082090092461330aU08808507146"
+  + "13451D0840880795013452D0800870724413453D0710800624013458U0730790815213459U082084085451345aU08809107547"
+  + "14001D0850790765214002D0790750784814008U0730620885614009U079076109571400aU0880830604914151D08509407647"
+  + "14152D0800810674314158U0730740644214159U081090077421415aU0900920804814301D0850800583914302D07807906344"
+  + "14303D0710620785014308U0710740714614309U080081089481430aU0860860664214451D0860760614714452D08207106743"
+  + "14458U0740740664314459U081082108501445aU0870890734615001D0850880815115002D0790830715015008U07107107744"
+  + "15009U080073106571500aU0850880604415151D0850860724915152D0800850714615158U0730750714315159U07808908044"
+  + "1515aU0900870704315301D0850940684815302D0800800704515303D0700750745015308U0740770754715309U08107511053"
+  + "1530aU0880850895915451D0830780915215452D0760760935115458U0730621025515459U082070094521545aU08508508855"
+  + "16001D0870951074916002D0800900573616008U076087054391600aU0920961225316451D0860870574216458U07306705133"
+  + "16459U0830860964218159U0830950553218303D0730690593918308U0740760544318309U0790770513218459U08308206446"
+  + "19002D0760750504919008U0740710534319009U0800730734619151D0850890634719152D0790790504519153D07208005340"
+  + "19159U0850830673919301D0860850594619308U0740760554119309U0790820654119451D0830850765219452D08108006150"
+  + "19458U0730770544219459U0810780724820001D0810750875620002D0760650645120008U0740620745320009U07806506350"
+  + "20151D0860910694620152D0830870684620153D0740780634120158U0750840603820159U0820900734220301D08309308650"
+  + "20302D0810790513920303D0710640603820308U0730750503620309U0810790694120451D0850900875820452D07908906053"
+  + "20453D0710770664420458U0720750604120459U0810830693921002D0790840593621008U0770680684821009U08208705636"
+  + "21151D0840820815321152D0790790524221158U0750730503721159U0810860744721301D0840790814821302D08007805749"
+  + "21308U0720680583821309U0830810824421451D0840910875821452D0800870624821453D0710700663721458U07608205337"
+  + "21459U0820860653722002D0820770624722003D0720820714222008U0740710614422009U0830840844722151D08709605944"
+  + "22152D0820790523622153D0700650583722158U0740800523622159U0830890623722308U0740760503722309U08208107149"
+  + "22453D0700800563922459U0830820644123003D0740760543923008U0730730615023009U0790860513523153D07107306646"
+  + "23159U0830820524023451D0840860564123459U08308705437"
+
+D30 = "00008U0710740503600009U0810800854400302D0780860514000309U0810850704201002D0780720635201008U07106807148"
+  + "01009U0800740725101301D0850910664501302D0770840564101308U0740750604201309U0840840764502001D08307007456"
+  + "02002D0760760685302003D0700690865702008U0730600906402009U083073087540200aU0870770595902301D08608705940"
+  + "02302D0800790624302303D0740780704102308U0760650664102309U0820920754103001D0800661016803002D07506210562"
+  + "03009U074077124660300aU0810850696303301D0880930734603302D0800840593503308U0750790543703309U08209007137"
+  + "0330aU0880930673904001D0870860835104002D0780760914704003D0710690724404008U0720770654304009U08207708346"
+  + "0400aU0880850514904301D0870930674704308U0760830694204309U079080081420430aU0890960644405001D08509405640"
+  + "05002D0790820784305008U0720800603405009U081090081420500aU0870930604705302D0790880744305303D07207607042"
+  + "05308U0750780613905309U082084089420530aU0880880645006001D0850790664606002D0780870764806003D07007306335"
+  + "06008U0740690714306009U081075089480600aU0870810565006301D0840760654706302D0790820714106308U07306807044"
+  + "06309U0810830844407001D0820790745107002D0760660613707008U0750660704507009U084084080450700aU08509008158"
+  + "07301D0840970754707302D0750850654607303D0710650704407308U0700690734207309U084082098490730aU08708807445"
+  + "08001D0860810765208002D0780750885108008U0710710764408009U081084083470800aU0880800725108301D08508606147"
+  + "08302D0790770845808303D0710651035508308U0700730935008309U079077083460830aU0860800564609001D08308807451"
+  + "09002D0770880764509008U0740780733809009U080084076420900aU0870890675109301D0730571107709309U07006714276"
+  + "0930aU0760701228110002D0820940623510003D0730770663610008U0750740543310009U084086099421000aU08909711049"
+  + "10301D0860940634510302D0780870644410303D0720740684110308U0760760995010309U082086102461030aU08709507748"
+  + "11001D0870920744811002D0790910824711003D0710760694011008U0770790945111009U086080092471100aU08909510051"
+  + "11301D0870890744911302D0770820694411303D0720650624311308U0780730814411309U083086096461130aU09009308746"
+  + "12001D0840880694212002D0780850603712003D0750760604612008U0750830774912009U082086101501200aU08908809651"
+  + "12301D0860850585012302D0770850684212308U0770780744612309U083089097411230aU0890890804813002D07708107849"
+  + "13003D0700760855313008U0750740754313009U081072099511300aU0890910774413301D0870910765413302D07908607045"
+  + "13303D0710690644313308U0750680613813309U081083089431330aU0870920835014001D0850800795314002D07608306744"
+  + "14003D0710710724514008U0740690875114009U079080123551400aU0860840716014301D0860900664614302D07707705541"
+  + "14303D0750800724814308U0760810794514309U081094107511430aU0850900644215001D0840890715015002D07608705742"
+  + "15008U0750760764615009U077078104511500aU0860890825415301D0830840725915302D0760750875115303D07105407753"
+  + "15308U0730650824915309U079079101491530aU0870821026119001D0840840554719002D0770790564419003D07006505038"
+  + "19008U0740720604519009U0810810633719302D0780830564419308U0740830855619309U082083092521930aU08508905253"
+  + "20001D0840790635120002D0750730755520009U076072081542000aU0860840515220302D0770780554020308U07407507440"
+  + "20309U080086080432030aU0880960504921002D0780870644021008U0750830684221009U0810870874521301D08708506447"
+  + "21302D0770870574221303D0700670644421308U0730650694021309U080084085462130aU0880860615622002D07808305435"
+  + "22008U0760760563922009U0840920714222302D0770890594822303D0710650583422308U0750790704222309U08108405134"
+  + "23003D0720720564123008U0760840513823009U0810840573623303D0700780684323308U0730760564323309U08508506137"
+
+D60 = "00008U0720680533600009U0800900733601002D0750750504201009U0800760925502001D0820800715602002D07607907355"
+  + "02003D0710770714602008U0750710835402009U081079108570200aU0880680554703001D0820760926103002D07706208956"
+  + "03008U0700650915503009U079075112620300aU0830810826304001D0870880805104002D0800860804804003D07206405235"
+  + "04008U0740760603804009U082082082400400aU0890930644905003D0710830634205008U0730840563505009U08309308645"
+  + "0500aU0900970774906002D0800860733906008U0740710744406009U083082077380600aU0880890634407002D07306807142"
+  + "07003D0700620594307008U0750620845307009U080081078470700aU0880890795908001D0830810826308002D07808209252"
+  + "08009U079072110540800aU0880770915809001D0780680937009002D0700631377709009U073071129710900aU08306810069"
+  + "10001D0870930735110002D0780900854510003D0700760855110008U0730790654110009U082079121501000aU08909111953"
+  + "11001D0880940684811002D0820930573411008U0750830654011009U086090112471100aU0900971075312002D08008806547"
+  + "12008U0740730704012009U085089091441200aU0910951024913001D0870780615113002D0780910694413003D07006905640"
+  + "13008U0750790864313009U084085076401300aU0890890844814001D0860790685314002D0770820704314008U07608108345"
+  + "14009U080084110501400aU0900910945915001D0840850675515002D0790760715315008U0720791045515009U07907511153"
+  + "1500aU0850860935816001D0890920914616009U085095066381600aU0910951245419008U0760840533419009U08208505739"
+  + "1900aU0890930534320001D0820740615420002D0780730735620008U0720720885320009U077079095502000aU08507905956"
+  + "21002D0800760574121008U0730780704221009U081085089422100aU0900950645022002D0800880714022008U07407605536"
+  + "22009U084085070412200aU0900900664923003D0720790543623009U084094071442300aU09009305846"
+
+D120 = "00008U0730860714200009U081076082400000aU0870870504102001D0760630786602002D0720670916602009U07507611770"
+  + "0200aU0840700916004002D0780840714404008U0730770744404009U080087101470400aU0880890664906008U07207808144"
+  + "06009U080083090480600aU0880880804908001D0760710876808002D0710571147108009U073068165720800aU08206712875"
+  + "10001D0830820714710002D0760840925110008U0720740865510009U078077141591000aU0860911446412008U07607106739"
+  + "12009U081091108471200aU0910961145014001D0810820624814002D0760790615114008U0710660904814009U07907711248"
+  + "1400aU0890951186820001D0800820545020002D0750800674620008U0730681065220009U081081107542000aU08509107253"
+  + "22008U0750840633922009U080087085432200aU08909407552"
+
+D240 = "02001D0770610685702009U080069124650200aU0820731066506009U078065122640600aU0810731186210001D08208207651"
+  + "10002D0730850965310008U0720640895910009U081081135571000aU0850881416114008U0770780724314009U08509208740"
+  + "1400aU0910951405718009U0870910653222008U0750850523122009U085091086442200aU08909407749"
+
+DATA = tfSel == "15" ? D15 : tfSel == "30" ? D30 : tfSel == "60" ? D60 : tfSel == "120" ? D120 : D240
+
+// All five datasets go into one map so every range size can be scanned at once.
+// Key is timeframe index + slot + bucket (6 chars); the value keeps the
+// direction character, then train %, test %, sample, resolve %.
+var map<string, string> LUT = map.new<string, string>()
+if barstate.isfirst
+    for [ti, D] in array.from(D15, D30, D60, D120, D240)
+        if str.length(D) >= 17
+            for i = 0 to math.floor(str.length(D) / 17) - 1
+                rec = str.substring(D, i * 17, i * 17 + 17)
+                LUT.put(str.tostring(ti) + str.substring(rec, 0, 5), str.substring(rec, 5))
+
+// ------------------------------------------------------------ range clock ---
+tfIdx = tfSel == "15" ? 0 : tfSel == "30" ? 1 : tfSel == "60" ? 2 : tfSel == "120" ? 3 : 4
+tfM  = math.round(str.tonumber(tfSel))
+tfMs = tfM * 60000
+
+etMins      = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+sinceAnchor = (etMins - anchorH * 60 + 1440) % 1440
+rIdx        = math.floor(sinceAnchor / tfM)
+rStart      = time - (sinceAnchor % tfM) * 60000
+newRange    = ta.change(rIdx) != 0 or barstate.isfirst
+
+// ------------------------------------------------------------ range state ---
+var float curO = na
+var float curH = na
+var float curL = na
+var int   curStart = na
+var float prvH = na
+var float prvL = na
+var int   prvStart = na
+var box   bx = na
+var array<box> boxes = array.new<box>()
+var box   prevBx = na
+var box   bandBx = na
+var array<line> grid = array.new<line>()
+var line   lnHi = na
+var line   lnMid = na
+var line   lnLo = na
+var label  lbHi = na
+var label  lbMid = na
+var label  lbLo = na
+var string sKey = ""
+
+// rolling window of calls this chart has actually made
+var array<float> tClaim  = array.new_float()   // probability claimed at the open
+var array<float> tOK     = array.new_float()   // 1 right, 0 wrong, na if unresolved
+var array<float> tResOK  = array.new_float()   // 1 if it resolved at all
+var array<float> tResCl  = array.new_float()   // resolve rate claimed
+
+var string sSlot   = ""
+var float  sOP     = na
+var string sBucket = ""
+var string sDir    = ""
+var float  sProb   = na
+var float  sTest   = na
+var int    sN      = 0
+var float  sRes    = na
+var bool   sHit    = false
+var bool   sAdj    = false
+
+pad2(int v) =>
+    (v < 10 ? "0" : "") + str.tostring(v)
+
+bChar(int i) =>
+    str.substring("0123456789ab", i, i + 1)
+
+bName(int i) =>
+    i == 0  ? "below prev low" :
+     i == 11 ? "at/above prev high" :
+     str.tostring((i - 1) / 10.0, "0.0") + " - " + str.tostring(i / 10.0, "0.0")
+
+if newRange
+    // ---- score the range that just closed ----
+    pc = close[1]
+    wasUp  = not na(curO) and not na(prvH) and pc > prvH
+    wasDn  = not na(curO) and not na(prvL) and pc < prvL
+    wasRes = wasUp or wasDn
+
+    // sHit / sDir / sProb still describe the range that just closed, because
+    // they are only overwritten further down for the new one.
+    if showLive and sHit and not na(curO)
+        tResOK.push(wasRes ? 1 : 0)
+        tResCl.push(sRes)
+        tClaim.push(sProb)
+        tOK.push(not wasRes ? na : (sDir == "U" ? wasUp : wasDn) ? 1 : 0)
+        while tClaim.size() > trackN
+            tClaim.shift()
+            tOK.shift()
+            tResOK.shift()
+            tResCl.shift()
+
+    // ---- colour the range that just closed, by what it actually did ----
+    if showBox and not na(bx)
+        box.set_bgcolor(bx, wasUp ? colUp : wasDn ? colDn : colIn)
+
+    // ---- now roll the completed range into the previous slot ----
+    if not na(curO)
+        prvH := curH
+        prvL := curL
+        prvStart := curStart
+
+    curO := open
+    curH := high
+    curL := low
+    curStart := rStart
+
+    // ---- evaluate the new range against the one before it ----
+    sHit := false
+    sProb := na
+    sTest := na
+    sN := 0
+    sRes := na
+    sOP := na
+    sBucket := ""
+    sDir := ""
+    // the previous range must be directly adjacent in time, as in the study
+    sAdj := not na(prvStart) and (curStart - prvStart) == tfMs
+    sSlot := pad2(hour(curStart, "America/New_York")) + pad2(minute(curStart, "America/New_York"))
+
+    if sAdj and not na(prvH) and prvH > prvL
+        sOP := (curO - prvL) / (prvH - prvL)
+        bi = sOP < 0 ? 0 : sOP >= 1.0 ? 11 : math.min(10, math.floor(sOP * 10) + 1)
+        sBucket := bName(bi)
+        sKey := str.tostring(tfIdx) + sSlot + bChar(bi)
+        if LUT.contains(sKey)
+            v = LUT.get(sKey)
+            sDir  := str.substring(v, 0, 1)
+            sProb := str.tonumber(str.substring(v, 1, 4))
+            sTest := str.tonumber(str.substring(v, 4, 7))
+            sN    := math.round(str.tonumber(str.substring(v, 7, 10)))
+            sRes  := str.tonumber(str.substring(v, 10, 12))
+            sHit  := true
+
+    // ---- open the new box ----
+    if showBox
+        bx := box.new(curStart, curH, curStart + tfMs, curL, xloc = xloc.bar_time,
+             bgcolor = colLive, border_color = color.new(color.gray, 55), border_width = 1)
+        boxes.push(bx)
+        while boxes.size() > keepN
+            box.delete(boxes.shift())
+
+    if sHit and showMarker
+        label.new(bar_index, sDir == "U" ? low : high,
+             (sDir == "U" ? "▲ " : "▼ ") + str.tostring(sProb, "#") + "%",
+             style = sDir == "U" ? label.style_label_up : label.style_label_down,
+             color = color.new(sDir == "U" ? color.teal : color.maroon, 20),
+             textcolor = color.white, size = size.tiny)
+
+    if sHit and useAlerts and barstate.isconfirmed
+        alert(tfSel + "M " + str.substring(sSlot, 0, 2) + ":" + str.substring(sSlot, 2, 4) +
+             " ET  opened at " + str.tostring(sOP, "0.00") + "  " +
+             (sDir == "U" ? "closes ABOVE previous high " : "closes BELOW previous low ") +
+             str.tostring(sProb, "#") + "% of ranges that resolve (" +
+             str.tostring(sRes, "#") + "% resolve)", alert.freq_once_per_bar_close)
+else
+    curH := math.max(curH, high)
+    curL := math.min(curL, low)
+
+// keep the live box growing with the range
+if showBox and not na(bx) and not na(curStart)
+    box.set_top(bx, curH)
+    box.set_bottom(bx, curL)
+    box.set_right(bx, math.min(curStart + tfMs, time + timeframe.in_seconds() * 1000))
+
+// -------------------------------------------- all range sizes, in parallel ---
+TFLIST = array.from(15, 30, 60, 120, 240)
+TFNAME = array.from("15M", "30M", "60M", "120M", "240M")
+
+var array<float>  kPH = array.new_float(5, na)
+var array<float>  kPL = array.new_float(5, na)
+var array<float>  kCH = array.new_float(5, na)
+var array<float>  kCL = array.new_float(5, na)
+var array<float>  kCO = array.new_float(5, na)
+var array<int>    kCS = array.new_int(5, na)
+var array<int>    kPS = array.new_int(5, na)
+var array<int>    kIX = array.new_int(5, -999)
+var array<float>  kPr = array.new_float(5, na)
+var array<float>  kRs = array.new_float(5, na)
+var array<string> kDr = array.new_string(5, "")
+
+if showOthers
+    for i = 0 to 4
+        tfi  = TFLIST.get(i)
+        tfiMs = tfi * 60000
+        idx  = math.floor(sinceAnchor / tfi)
+        st   = time - (sinceAnchor % tfi) * 60000
+        if idx != kIX.get(i)
+            if not na(kCO.get(i))
+                kPH.set(i, kCH.get(i))
+                kPL.set(i, kCL.get(i))
+                kPS.set(i, kCS.get(i))
+            kCO.set(i, open)
+            kCH.set(i, high)
+            kCL.set(i, low)
+            kCS.set(i, st)
+            kIX.set(i, idx)
+            kPr.set(i, na)
+            kRs.set(i, na)
+            kDr.set(i, "")
+            ph = kPH.get(i)
+            pl = kPL.get(i)
+            ps = kPS.get(i)
+            if not na(ph) and not na(ps) and ph > pl and (st - ps) == tfiMs
+                o  = (open - pl) / (ph - pl)
+                bb = o < 0 ? 0 : o >= 1.0 ? 11 : math.min(10, math.floor(o * 10) + 1)
+                kk = str.tostring(i) + pad2(hour(st, "America/New_York")) +
+                     pad2(minute(st, "America/New_York")) + bChar(bb)
+                if LUT.contains(kk)
+                    vv = LUT.get(kk)
+                    kDr.set(i, str.substring(vv, 0, 1))
+                    kPr.set(i, str.tonumber(str.substring(vv, 1, 4)))
+                    kRs.set(i, str.tonumber(str.substring(vv, 10, 12)))
+        else
+            kCH.set(i, math.max(kCH.get(i), high))
+            kCL.set(i, math.min(kCL.get(i), low))
+
+// ------------------------------------------------------- previous range -----
+if barstate.isfirst
+    for i = 0 to 10
+        grid.push(line.new(na, na, na, na, xloc = xloc.bar_time, extend = extend.none))
+    lnHi  := line.new(na, na, na, na, xloc = xloc.bar_time, width = 2)
+    lnMid := line.new(na, na, na, na, xloc = xloc.bar_time, width = 1, style = line.style_dashed)
+    lnLo  := line.new(na, na, na, na, xloc = xloc.bar_time, width = 2)
+    lbHi  := label.new(na, na, "", xloc = xloc.bar_time, style = label.style_none, size = size.small)
+    lbMid := label.new(na, na, "", xloc = xloc.bar_time, style = label.style_none, size = size.small)
+    lbLo  := label.new(na, na, "", xloc = xloc.bar_time, style = label.style_none, size = size.small)
+
+if newRange and not na(prvH) and not na(prvStart) and prvH > prvL
+    xL = prvStart
+    xR = curStart + tfMs
+    rng = prvH - prvL
+
+    // outline of the range being measured against
+    if showPrev
+        if na(prevBx)
+            prevBx := box.new(xL, prvH, prvStart + tfMs, prvL, xloc = xloc.bar_time,
+                 bgcolor = color.new(color.gray, 100), border_color = colGrid,
+                 border_width = 2, border_style = line.style_solid)
+        else
+            box.set_lefttop(prevBx, xL, prvH)
+            box.set_rightbottom(prevBx, prvStart + tfMs, prvL)
+
+    xEnd = curStart + tfMs * (1 + extendN)
+    for [k, ln] in array.from(lnHi, lnMid, lnLo)
+        y = k == 0 ? prvH : k == 1 ? (prvH + prvL) / 2 : prvL
+        line.set_xy1(ln, xL, y)
+        line.set_xy2(ln, xEnd, y)
+        line.set_extend(ln, extend.none)
+        line.set_color(ln, not showHML ? color.new(color.gray, 100) : k == 1 ? colMidL : colHML)
+        line.set_width(ln, k == 1 ? wMid : wHL)
+    if showHMLlb
+        for [k, lb] in array.from(lbHi, lbMid, lbLo)
+            y = k == 0 ? prvH : k == 1 ? (prvH + prvL) / 2 : prvL
+            label.set_xy(lb, xEnd, y)
+            label.set_text(lb, not showHML ? "" :
+                 tfSel + (k == 0 ? " HIGH" : k == 1 ? " MID" : " LOW"))
+            label.set_textcolor(lb, colHMLlb)
+            label.set_style(lb, label.style_label_left)
+            label.set_color(lb, color.new(color.gray, 100))
+
+    // the ten open-position boundaries, 0.0 at the previous low to 1.0 at its high
+    for i = 0 to 10
+        ln = grid.get(i)
+        y = prvL + rng * i / 10.0
+        edge = i == 0 or i == 10
+        line.set_xy1(ln, xL, y)
+        line.set_xy2(ln, xR, y)
+        line.set_color(ln, showGrid or edge ? colGrid : color.new(color.gray, 100))
+        line.set_width(ln, wGrid)
+        line.set_style(ln, edge ? line.style_solid : i == 5 ? line.style_dashed : line.style_dotted)
+
+    // shade the decile the new range opened in
+    if showBand and not na(sOP) and sOP >= 0 and sOP < 1.0
+        k = math.floor(sOP * 10)
+        yb = prvL + rng * k / 10.0
+        yt = prvL + rng * (k + 1) / 10.0
+        if na(bandBx)
+            bandBx := box.new(curStart, yt, xR, yb, xloc = xloc.bar_time,
+                 bgcolor = colBand, border_color = color.new(color.gray, 100))
+        else
+            box.set_lefttop(bandBx, curStart, yt)
+            box.set_rightbottom(bandBx, xR, yb)
+    else if not na(bandBx)
+        box.set_lefttop(bandBx, curStart, prvL)
+        box.set_rightbottom(bandBx, curStart, prvL)
+
+// ---------------------------------------------------------------- table -----
+posOf(string s) =>
+    s == "Top left"      ? position.top_left :
+     s == "Bottom right" ? position.bottom_right :
+     s == "Bottom left"  ? position.bottom_left :
+     s == "Middle right" ? position.middle_right : position.top_right
+
+sizeOf(string s) =>
+    s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : size.small
+
+pc(float v) =>
+    na(v) ? "—" : str.tostring(v, "0.#") + "%"
+
+pc2(float v) =>
+    na(v) ? "—" : str.tostring(v, "0") + "%"
+
+var table tb = table.new(posOf(tblPos), 2, 22, border_width = 1,
+     frame_color = color.new(color.gray, 55), frame_width = 1,
+     border_color = color.new(color.gray, 85))
+
+if showTbl and barstate.islast
+    ts  = sizeOf(tblSize)
+    tx  = chart.fg_color
+    dim = color.new(chart.fg_color, 45)
+    hdr = color.new(color.gray, 88)
+    sec = color.new(color.gray, 92)
+    tooHigh = timeframe.in_seconds() > tfM * 60
+    sigCol  = not sHit ? dim : sDir == "U" ? color.teal : color.maroon
+    upCol   = sHit and sDir == "U" ? color.teal : dim
+    dnCol   = sHit and sDir == "D" ? color.maroon : dim
+
+    // split the cell into the three outcomes, which sum to 100
+    pUpCond = na(sProb) ? na : sDir == "U" ? sProb : 100 - sProb
+    uAbove  = na(sRes)  ? na : pUpCond * sRes / 100.0
+    uBelow  = na(sRes)  ? na : (100 - pUpCond) * sRes / 100.0
+    uInside = na(sRes)  ? na : 100 - sRes
+
+    dirTxt = not sAdj ? "no adjacent previous range" :
+              sHit    ? (sDir == "U" ? "closes ABOVE previous high" : "closes BELOW previous low") :
+              "nothing at or above 70%"
+    foot = showDebug ? "key " + sKey + "  ·  " + str.tostring(LUT.size()) + " cells" :
+             tooHigh  ? "chart timeframe is above the range size" :
+             "the range's own close only — wicks do not count"
+    detL = showDetail ? "train / test  ·  sample" : ""
+    detR = not showDetail ? "" : sHit ? str.tostring(sProb, "0") + " / " +
+             str.tostring(sTest, "0") + "  ·  " + str.tostring(sN) : "—"
+
+    table.cell(tb, 0, 0, tfSel + "M range", text_color = tx, text_size = ts, bgcolor = hdr, text_halign = text.align_left)
+    table.cell(tb, 1, 0, sSlot == "" ? "" : str.substring(sSlot, 0, 2) + ":" + str.substring(sSlot, 2, 4) + " ET", text_color = tx, text_size = ts, bgcolor = hdr, text_halign = text.align_right)
+
+    table.cell(tb, 0, 1, "opened at", text_color = dim, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 1, na(sOP) ? "—" : str.tostring(sOP, "0.00"), text_color = tx, text_size = ts, text_halign = text.align_right)
+
+    table.cell(tb, 0, 2, "bucket", text_color = dim, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 2, sBucket == "" ? "—" : sBucket, text_color = tx, text_size = ts, text_halign = text.align_right)
+
+    // ---- conditional: denominator EXCLUDES ranges that close inside ----
+    table.cell(tb, 0, 3, "IF IT CLOSES OUTSIDE THE PREVIOUS RANGE", text_color = dim, text_size = ts, bgcolor = sec, text_halign = text.align_left)
+    table.cell(tb, 1, 3, "", text_size = ts, bgcolor = sec)
+
+    table.cell(tb, 0, 4, dirTxt, text_color = sigCol, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 4, sHit ? pc(sProb) : "—", text_color = sigCol, text_size = ts, text_halign = text.align_right)
+
+    table.cell(tb, 0, 5, "…and it closes outside", text_color = dim, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 5, sHit ? pc(sRes) + " of the time" : "—", text_color = dim, text_size = ts, text_halign = text.align_right)
+
+    // ---- unconditional: every range in this cell, sums to 100 ----
+    table.cell(tb, 0, 6, "OUT OF EVERY 100 RANGES HERE", text_color = dim, text_size = ts, bgcolor = sec, text_halign = text.align_left)
+    table.cell(tb, 1, 6, "", text_size = ts, bgcolor = sec)
+
+    table.cell(tb, 0, 7, "close above previous high", text_color = upCol, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 7, pc(uAbove), text_color = sHit and sDir == "U" ? color.teal : tx, text_size = ts, text_halign = text.align_right)
+
+    table.cell(tb, 0, 8, "close below previous low", text_color = dnCol, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 8, pc(uBelow), text_color = sHit and sDir == "D" ? color.maroon : tx, text_size = ts, text_halign = text.align_right)
+
+    table.cell(tb, 0, 9, "close inside — no result", text_color = dim, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 9, pc(uInside), text_color = tx, text_size = ts, text_halign = text.align_right)
+
+    table.cell(tb, 0, 10, detL, text_color = dim, text_size = ts, text_halign = text.align_left)
+    table.cell(tb, 1, 10, detR, text_color = dim, text_size = ts, text_halign = text.align_right)
+
+    table.cell(tb, 0, 11, foot, text_color = tooHigh and not showDebug ? color.new(color.orange, 10) : dim, text_size = size.tiny, text_halign = text.align_left)
+    table.cell(tb, 1, 11, "", text_size = size.tiny)
+
+    // ---- what the other range sizes are showing right now ----
+    if showOthers
+        live = 0
+        for i = 0 to 4
+            if i != tfIdx and not na(kPr.get(i))
+                live += 1
+        table.cell(tb, 0, 12, "OTHER RANGE SIZES, LIVE NOW", text_color = dim, text_size = ts, bgcolor = sec, text_halign = text.align_left)
+        table.cell(tb, 1, 12, live == 0 ? "none" : str.tostring(live), text_color = dim, text_size = ts, bgcolor = sec, text_halign = text.align_right)
+        r = 13
+        for i = 0 to 4
+            if i != tfIdx
+                pr  = kPr.get(i)
+                dr  = kDr.get(i)
+                rs  = kRs.get(i)
+                on  = not na(pr)
+                col = not on ? dim : dr == "U" ? color.teal : color.maroon
+                txt = not on ? "—" : (dr == "U" ? "▲ " : "▼ ") + str.tostring(pr, "0") + "%  ·  " + str.tostring(rs, "0") + "% res"
+                table.cell(tb, 0, r, TFNAME.get(i) + (on ? (dr == "U" ? "  above prev high" : "  below prev low") : ""), text_color = col, text_size = ts, text_halign = text.align_left)
+                table.cell(tb, 1, r, txt, text_color = col, text_size = ts, text_halign = text.align_right)
+                r += 1
+
+    // ---- how the calls have actually gone on this chart ----
+    if showLive
+        nCalls = tClaim.size()
+        sumCl  = 0.0
+        sumOK  = 0.0
+        nRes   = 0
+        sumRCl = 0.0
+        sumRes = 0.0
+        for i = 0 to (nCalls > 0 ? nCalls - 1 : 0)
+            if nCalls > 0
+                sumRCl += tResCl.get(i)
+                sumRes += tResOK.get(i)
+                if not na(tOK.get(i))
+                    sumCl += tClaim.get(i)
+                    sumOK += tOK.get(i)
+                    nRes  += 1
+        claimAvg = nRes > 0 ? sumCl / nRes : na
+        liveAvg  = nRes > 0 ? 100 * sumOK / nRes : na
+        gap      = na(liveAvg) ? na : liveAvg - claimAvg
+        rClaim   = nCalls > 0 ? sumRCl / nCalls : na
+        rLive    = nCalls > 0 ? 100 * sumRes / nCalls : na
+        gapCol   = na(gap) ? dim : gap >= -2 ? color.teal : gap >= -7 ? color.new(color.orange, 10) : color.maroon
+
+        table.cell(tb, 0, 17, "ON THIS CHART, LAST " + str.tostring(trackN) + " CALLS", text_color = dim, text_size = ts, bgcolor = sec, text_halign = text.align_left)
+        table.cell(tb, 1, 17, str.tostring(nCalls) + " made", text_color = dim, text_size = ts, bgcolor = sec, text_halign = text.align_right)
+
+        table.cell(tb, 0, 18, "resolved / unresolved", text_color = dim, text_size = ts, text_halign = text.align_left)
+        table.cell(tb, 1, 18, nCalls == 0 ? "—" : str.tostring(nRes) + " / " + str.tostring(nCalls - nRes), text_color = tx, text_size = ts, text_halign = text.align_right)
+
+        table.cell(tb, 0, 19, "claimed vs actual", text_color = dim, text_size = ts, text_halign = text.align_left)
+        table.cell(tb, 1, 19, nRes == 0 ? "—" : pc2(claimAvg) + "  vs  " + pc2(liveAvg), text_color = tx, text_size = ts, text_halign = text.align_right)
+
+        table.cell(tb, 0, 20, "drift", text_color = dim, text_size = ts, text_halign = text.align_left)
+        table.cell(tb, 1, 20, na(gap) ? "—" : (gap >= 0 ? "+" : "") + str.tostring(gap, "0.#") + " pts", text_color = gapCol, text_size = ts, text_halign = text.align_right)
+
+        table.cell(tb, 0, 21, "resolve rate, claimed vs actual", text_color = dim, text_size = ts, text_halign = text.align_left)
+        table.cell(tb, 1, 21, nCalls == 0 ? "—" : pc2(rClaim) + "  vs  " + pc2(rLive), text_color = dim, text_size = ts, text_halign = text.align_right)

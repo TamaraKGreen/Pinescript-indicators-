@@ -1,0 +1,859 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=6
+indicator('HTF Sweep Model with CISD Table', overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
+
+// Inputs
+var htf = input.timeframe('60', 'HTF Timeframe Candle Time', inline='tf', group='HTF Candle Settings')
+var tf_auto = input.bool(false, 'Set Automatically', inline='tf', group='HTF Candle Settings')
+var tf_2lvs = input.bool(true, 'Two Levels', inline='tf', group='HTF Candle Settings')
+var num = input.int(4, 'Number of HTF Candles', minval=1, group='HTF Candle Settings')
+var offset = input.int(20, 'Offset', group='HTF Candle Settings')
+var size = input.string('Small', 'Size', options=['Small', 'Medium', 'Large'], group='HTF Candle Settings')
+var type = input.string('Candles', 'Type', options=['Candles', 'Heikin Ashi'], group='HTF Candle Settings')
+var margin = input.int(1, 'Margin', minval=1, group='HTF Candle Settings')
+var htf_data = input.string('Is Weekly', 'Use HTF data to generate candles', options=['Is Weekly', 'Always', 'Never'], group='HTF Candle Settings')
+
+// New Inputs for HTF Table
+var show_htf_table = input.bool(true, 'Show HTF Auto-Selection Table', group='HTF selection: Table')
+var i_pos_htf = input.string(position.bottom_right, 'HTF Table Position', options=[position.top_left, position.top_center, position.top_right, position.middle_left, position.middle_center, position.middle_right, position.bottom_left, position.bottom_center, position.bottom_right], group='HTF selection: Table')
+var i_font_htf = input.string('small', 'HTF Table Text Size', options=['tiny', 'small', 'normal', 'large', 'huge'], group='HTF selection: Table')
+
+
+var up_col = input.color(color.rgb(5, 168, 68, 50), 'Body', inline='Candles', group='HTF Candles: Up Candles')
+var up_col_wick = input.color(color.black, 'Wick', inline='Candles', group='HTF Candles: Up Candles')
+var up_col_border = input.color(color.black, 'Border', inline='Candles', group='HTF Candles: Up Candles')
+var down_col = input.color(color.black, 'Body', inline='Candles', group='HTF Candles: Down Candles')
+var down_col_wick = input.color(color.black, 'Wick', inline='Candles', group='HTF Candles: Down Candles')
+var down_col_border = input.color(color.black, 'Border', inline='Candles', group='HTF Candles: Down Candles')
+
+var low_line_enabled = input.bool(true, 'Show Lowest HTF Low Line', group='HTF Candles: Low Line')
+var low_line_col = input.color(color.black, 'Color', inline='low_line', group='HTF Candles: Low Line')
+var low_line_style = input.string('Solid', 'Style', options=['Solid', 'Dotted', 'Dashed'], inline='low_line', group='HTF Candles: Low Line')
+var low_line_width = input.int(1, 'Width', minval=1, inline='low_line', group='HTF Candles: Low Line')
+
+var high_line_enabled = input.bool(true, 'Show Highest HTF High Line', group='HTF Candles: High Line')
+var high_line_col = input.color(color.black, 'Color', inline='high_line', group='HTF Candles: High Line')
+var high_line_style = input.string('Solid', 'Style', options=['Solid', 'Dotted', 'Dashed'], inline='high_line', group='HTF Candles: High Line')
+var high_line_width = input.int(1, 'Width', minval=1, inline='high_line', group='HTF Candles: High Line')
+
+var prev_mid_line_enabled = input.bool(true, 'Show Previous HTF Candle Midpoint Line', group='HTF Candles: Previous Midpoint Line')
+var prev_mid_line_col = input.color(color.blue, 'Color', inline='prev_mid_line', group='HTF Candles: Previous Midpoint Line')
+var prev_mid_line_style = input.string('Dashed', 'Style', options=['Solid', 'Dotted', 'Dashed'], inline='prev_mid_line', group='HTF Candles: Previous Midpoint Line')
+var prev_mid_line_width = input.int(1, 'Width', minval=1, inline='prev_mid_line', group='HTF Candles: Previous Midpoint Line')
+
+var sweep_line_enabled = input.bool(true, 'Show Sweep Lines', group='HTF Candles: Sweep Lines')
+var sweep_high_col = input.color(color.red, 'High Sweep Color', inline='sweep_line', group='HTF Candles: Sweep Lines')
+var sweep_low_col = input.color(color.green, 'Low Sweep Color', inline='sweep_line', group='HTF Candles: Sweep Lines')
+var sweep_line_style = input.string('Solid', 'Style', options=['Solid', 'Dotted', 'Dashed'], inline='sweep_line', group='HTF Candles: Sweep Lines')
+var sweep_line_width = input.int(1, 'Width', minval=1, inline='sweep_line', group='HTF Candles: Sweep Lines')
+var sweep_htf_line_length = input.int(3, 'HTF Sweep Line Length', minval=1, maxval=10, group='HTF Candles: Sweep Lines')
+var sweep_price_line_length = input.int(10, 'Price Chart Sweep Line Length', minval=0, maxval=50, group='HTF Candles: Sweep Lines')
+
+var tfbox_enabled = input.bool(true, 'Show Timeframe Box', group='HTF Candles: Timeframe Box')
+var tfbox_border_col = input.color(color.rgb(120, 123, 134, 80), 'Sweep Box Border Color', inline='tfbox', group='HTF Candles: Timeframe Box')
+var tfbox_bg_col = input.color(color.rgb(120, 123, 134, 60), 'Sweep Box Background Color', inline='tfbox', group='HTF Candles: Timeframe Box')
+var tfbox_price_mode = input.string('Open to Midpoint', 'Price Range', options=['Open to Midpoint', 'High to Low'], inline='tfbox', group='HTF Candles: Timeframe Box')
+
+var proj_enabled = input.bool(false, 'Show OHLC Lines', group='HTF Candles: OHLC Projections')
+var proj_o_col = input.color(color.gray, 'Open', inline='proj', group='HTF Candles: OHLC Projections')
+var proj_h_col = input.color(color.gray, 'High', inline='proj', group='HTF Candles: OHLC Projections')
+var proj_l_col = input.color(color.gray, 'Low', inline='proj', group='HTF Candles: OHLC Projections')
+var proj_c_col = input.color(color.gray, 'Close', inline='proj', group='HTF Candles: OHLC Projections')
+var proj_style = input.string('Dashed', 'Style', options=['Solid', 'Dotted', 'Dashed'], inline='proj', group='HTF Candles: OHLC Projections')
+var proj_width = input.int(1, 'Width', minval=1, inline='proj', group='HTF Candles: OHLC Projections')
+var proj_extend = input.int(50, 'Extend Bars', minval=0, group='HTF Candles: OHLC Projections')
+var label_enabled = input.bool(false, 'Show Labels', group='HTF Candles: OHLC Projections')
+
+var vert_enabled = input.bool(true, 'Show Timeframe Start Vertical Lines', group='HTF time separators: Vertical Lines')
+var vert_col = input.color(color.gray, 'Color', inline='vert', group='HTF time separators: Vertical Lines')
+var vert_style = input.string('Dotted', 'Style', options=['Solid', 'Dotted', 'Dashed'], inline='vert', group='HTF time separators: Vertical Lines')
+var vert_width = input.int(1, 'Width', minval=1, inline='vert', group='HTF time separators: Vertical Lines')
+
+// CISD Settings
+var bull_color = input.color(defval=color.teal, title="Bull Color", inline="clr", group="CISD Settings")
+var bear_color = input.color(defval=color.red, title="Bear Color", inline="clr", group="CISD Settings")
+
+// Symbol Inputs
+var s1 = input.symbol('NYMEX:CL1!', '1:', group='CISD/Sweep Screener Symbols', inline='s1')
+var s2 = input.symbol('CME_MINI:ES1!', '2:', group='CISD/Sweep Screener Symbols', inline='s2')
+var s3 = input.symbol('CME_MINI:NQ1!', '3:', group='CISD/Sweep Screener Symbols', inline='s3')
+var s4 = input.symbol('COMEX:GC1!', '4:', group='CISD/Sweep Screener Symbols', inline='s4')
+var s5 = input.symbol('CBOT_MINI:YM1!', '5:', group='CISD/Sweep Screener Symbols', inline='s5')
+var s6 = input.symbol('COMEX:SI1!', '6:', group='CISD/Sweep Screener Symbols', inline='s6')
+
+// Updated Candle Type
+type Candle
+    box body
+    line upperWick
+    line lowerWick
+    line lowLine
+    line highLine
+    line prevMidLine
+    array<line> sweepHighLines
+    array<line> sweepLowLines
+    int start_bar
+    float openPrice
+    float highPrice
+    float lowPrice
+    float closePrice
+    box midpointBox
+    line o
+    line h
+    line l
+    line c
+    label labelO
+    label labelH
+    label labelL
+    label labelC
+    line vertLine
+
+getAutoTimeframe(s, m5, m15, m60, m240, m, d, w, q, y) =>
+    timeframe.isseconds ? s : timeframe.isminutes ? timeframe.multiplier < 5 ? m5 : timeframe.multiplier < 15 ? m15 : timeframe.multiplier < 60 ? m60 : timeframe.multiplier < 240 ? m240 : m : timeframe.isdaily ? d : timeframe.isweekly ? w : timeframe.ismonthly and timeframe.multiplier < 6 ? q : y
+
+determineAutoTimeframe() =>
+    if tf_2lvs
+        getAutoTimeframe('5', '15', '60', '240', '1D', '1W', '1M', '3M', '12M', '12M')
+    else
+        getAutoTimeframe('1', '5', '15', '60', '240', '1D', '1W', '1M', '3M', '12M')
+
+getSizeMultiplier() =>
+    result = switch size
+        'Small' => 1
+        'Medium' => 2
+        'Large' => 3
+    result
+
+getLineStyle(style) =>
+    result = switch style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+    result
+
+// FIX: Merged two request.security calls into one per function to reduce total call count
+f_hswept(_sym, _tf) =>
+    [htf_high, htf_close, prev_htf_high] = request.security(_sym, _tf, [high, close, high[1]], lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+    htf_high > prev_htf_high and htf_close < prev_htf_high
+
+f_lswept(_sym, _tf) =>
+    [htf_low, htf_close, prev_htf_low] = request.security(_sym, _tf, [low, close, low[1]], lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+    htf_low < prev_htf_low and htf_close > prev_htf_low
+
+// Text formatting function
+f_text(string _tf) =>
+    _text = str.tonumber(_tf) < 59 ? _tf + 'm' :
+     str.tonumber(_tf) > 59 ? str.tostring(math.floor(str.tonumber(_tf)/60)) + 'h' : _tf
+
+getChartPriceRange(array<Candle> candles_array) =>
+    var float max_high = na
+    var float min_low = na
+    for candle in candles_array
+        if not na(candle.highPrice) and (na(max_high) or candle.highPrice > max_high)
+            max_high := candle.highPrice
+        if not na(candle.lowPrice) and (na(min_low) or candle.lowPrice < min_low)
+            min_low := candle.lowPrice
+    [max_high, min_low]
+
+var maxIndex = num - 1
+var curr_tf = tf_auto ? determineAutoTimeframe() : htf
+var useHtfData = timeframe.isweekly and htf_data == 'Is Weekly' or htf_data == 'Always'
+var sizeMultiplier = getSizeMultiplier()
+newCandle = ta.change(time(curr_tf)) != 0
+var initialized_candles = 0
+
+ohlc() =>
+    [htf_o, htf_h, htf_l, htf_c] = request.security(syminfo.tickerid, curr_tf, [open, high, low, close], lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+    var o = 0.
+    var h = 0.
+    var l = 0.
+    c = close
+    if newCandle
+        o := open
+        h := high
+        l := low
+    else
+        h := math.max(high, h)
+        l := math.min(low, l)
+    [o, h, l, c, htf_o, htf_h, htf_l, htf_c]
+
+getCandlePostion(l_pos) =>
+    m_pos = l_pos + sizeMultiplier
+    r_pos = l_pos + sizeMultiplier * 2
+    [m_pos, r_pos]
+
+createProjections(Candle candle, o, h, l, c, curr_o, curr_h, curr_l, curr_c, htf_o, htf_h, htf_l, htf_c, l_pos, array<Candle> candles_array) =>
+    [m_pos, r_pos] = getCandlePostion(l_pos)
+    if proj_enabled
+        candle.o := line.new(bar_index, curr_o, bar_index + proj_extend, curr_o, style=getLineStyle(proj_style), color=proj_o_col, width=proj_width)
+        candle.h := line.new(bar_index, curr_h, bar_index + proj_extend, curr_h, style=getLineStyle(proj_style), color=proj_h_col, width=proj_width)
+        candle.l := line.new(bar_index, curr_l, bar_index + proj_extend, curr_l, style=getLineStyle(proj_style), color=proj_l_col, width=proj_width)
+        candle.c := line.new(bar_index, curr_c, bar_index + proj_extend, curr_c, style=getLineStyle(proj_style), color=proj_c_col, width=proj_width)
+        if label_enabled
+            candle.labelO := label.new(bar_index, curr_o, 'O: ' + str.tostring(curr_o, format.mintick), style=label.style_label_down, color=proj_o_col, textcolor=color.white)
+            candle.labelH := label.new(bar_index, curr_h, 'H: ' + str.tostring(curr_h, format.mintick), style=label.style_label_down, color=proj_h_col, textcolor=color.white)
+            candle.labelL := label.new(bar_index, curr_l, 'L: ' + str.tostring(curr_l, format.mintick), style=label.style_label_up, color=proj_l_col, textcolor=color.white)
+            candle.labelC := label.new(bar_index, curr_c, 'C: ' + str.tostring(curr_c, format.mintick), style=label.style_label_up, color=proj_c_col, textcolor=color.white)
+    if vert_enabled
+        [max_high, min_low] = getChartPriceRange(candles_array)
+        if not na(max_high) and not na(min_low)
+            candle.vertLine := line.new(candle.start_bar, max_high, candle.start_bar, min_low, style=getLineStyle(vert_style), color=vert_col, width=vert_width)
+
+moveProjections(Candle candle, l_pos, o, h, l, c, curr_o, curr_h, curr_l, curr_c, array<Candle> candles_array) =>
+    [m_pos, r_pos] = getCandlePostion(l_pos)
+    if proj_enabled
+        if not na(candle.o)
+            candle.o.set_xy1(bar_index, curr_o)
+            candle.o.set_xy2(bar_index + proj_extend, curr_o)
+        if not na(candle.h)
+            candle.h.set_xy1(bar_index, curr_h)
+            candle.h.set_xy2(bar_index + proj_extend, curr_h)
+        if not na(candle.l)
+            candle.l.set_xy1(bar_index, curr_l)
+            candle.l.set_xy2(bar_index + proj_extend, curr_l)
+        if not na(candle.c)
+            candle.c.set_xy1(bar_index, curr_c)
+            candle.c.set_xy2(bar_index + proj_extend, curr_c)
+        if label_enabled
+            if not na(candle.labelO)
+                candle.labelO.set_xy(bar_index, curr_o)
+                candle.labelO.set_text('O: ' + str.tostring(curr_o, format.mintick))
+            if not na(candle.labelH)
+                candle.labelH.set_xy(bar_index, curr_h)
+                candle.labelH.set_text('H: ' + str.tostring(curr_h, format.mintick))
+            if not na(candle.labelL)
+                candle.labelL.set_xy(bar_index, curr_l)
+                candle.labelL.set_text('L: ' + str.tostring(curr_l, format.mintick))
+            if not na(candle.labelC)
+                candle.labelC.set_xy(bar_index, curr_c)
+                candle.labelC.set_text('C: ' + str.tostring(curr_c, format.mintick))
+    if vert_enabled and not na(candle.vertLine)
+        [max_high, min_low] = getChartPriceRange(candles_array)
+        if not na(max_high) and not na(min_low)
+            candle.vertLine.set_xy1(candle.start_bar, max_high)
+            candle.vertLine.set_xy2(candle.start_bar, min_low)
+
+deleteProjections(Candle candle) =>
+    if not na(candle.o)
+        candle.o.delete()
+    if not na(candle.h)
+        candle.h.delete()
+    if not na(candle.l)
+        candle.l.delete()
+    if not na(candle.c)
+        candle.c.delete()
+    if not na(candle.labelO)
+        label.delete(candle.labelO)
+    if not na(candle.labelH)
+        label.delete(candle.labelH)
+    if not na(candle.labelL)
+        label.delete(candle.labelL)
+    if not na(candle.labelC)
+        label.delete(candle.labelC)
+    if not na(candle.vertLine)
+        candle.vertLine.delete()
+
+getCandleProperties(o, h, l, c) =>
+    h_body = math.max(o, c)
+    l_body = math.min(o, c)
+    body_col = o > c ? down_col : up_col
+    wick_col = o > c ? down_col_wick : up_col_wick
+    border_col = o > c ? down_col_border : up_col_border
+    [h_body, l_body, body_col, wick_col, border_col]
+
+createCandle(l_pos, o, h, l, c, curr_tf) =>
+    [m_pos, r_pos] = getCandlePostion(l_pos)
+    [h_body, l_body, body_col, wick_col, border_col] = getCandleProperties(o, h, l, c)
+    candle = Candle.new()
+    candle.body := box.new(l_pos, h_body, r_pos, l_body, border_col, bgcolor=body_col)
+    candle.upperWick := line.new(m_pos, h_body, m_pos, h, color=wick_col)
+    candle.lowerWick := line.new(m_pos, l_body, m_pos, l, color=wick_col)
+    candle.start_bar := bar_index
+    candle.openPrice := o
+    candle.highPrice := h
+    candle.lowPrice := l
+    candle.closePrice := c
+    candle.sweepHighLines := array.new<line>(0)
+    candle.sweepLowLines := array.new<line>(0)
+    candle
+
+moveCandle(Candle candle, l_pos) =>
+    [m_pos, r_pos] = getCandlePostion(l_pos)
+    candle.body.set_left(l_pos)
+    candle.body.set_right(r_pos)
+    candle.upperWick.set_x1(m_pos)
+    candle.upperWick.set_x2(m_pos)
+    candle.lowerWick.set_x1(m_pos)
+    candle.lowerWick.set_x2(m_pos)
+    if not na(candle.sweepHighLines)
+        for high_line in candle.sweepHighLines
+            if not na(high_line) and high_line.get_x1() == high_line.get_x2()
+                high_line.set_x1(m_pos - sweep_htf_line_length / 2)
+                high_line.set_x2(m_pos + sweep_htf_line_length / 2)
+    if not na(candle.sweepLowLines)
+        for low_line in candle.sweepLowLines
+            if not na(low_line) and low_line.get_x1() == low_line.get_x2()
+                low_line.set_x1(m_pos - sweep_htf_line_length / 2)
+                low_line.set_x2(m_pos + sweep_htf_line_length / 2)
+
+checkPrevCandleSwept(array<Candle> candles_array, current_index) =>
+    var bool prev_swept = false
+    if current_index == maxIndex and initialized_candles >= 3
+        candle_three_back = array.get(candles_array, current_index - 2)
+        candle_two_back = array.get(candles_array, current_index - 1)
+        current_candle = array.get(candles_array, current_index)
+        if not na(candle_two_back.highPrice) and not na(candle_two_back.lowPrice) and 
+           not na(candle_two_back.closePrice) and not na(candle_three_back.highPrice) and 
+           not na(candle_three_back.lowPrice)
+            high_swept = candle_two_back.highPrice > candle_three_back.highPrice and 
+                         candle_two_back.closePrice < candle_three_back.highPrice and 
+                         candle_two_back.closePrice > candle_three_back.lowPrice
+            low_swept = candle_two_back.lowPrice < candle_three_back.lowPrice and
+                         candle_two_back.closePrice > candle_three_back.lowPrice and 
+                         candle_two_back.closePrice < candle_three_back.highPrice
+            prev_swept := high_swept or low_swept
+    prev_swept
+
+updateCandle(Candle candle, l_pos, o, h, l, c, curr_tf, is_current, array<Candle> candles_array, index) =>
+    [m_pos, r_pos] = getCandlePostion(l_pos)
+    [h_body, l_body, body_col, wick_col, border_col] = getCandleProperties(o, h, l, c)
+    candle.body.set_bgcolor(body_col)
+    candle.body.set_lefttop(l_pos, h_body)
+    candle.body.set_rightbottom(r_pos, l_body)
+    candle.body.set_border_color(border_col)
+    candle.upperWick.set_color(wick_col)
+    candle.upperWick.set_xy1(m_pos, h_body)
+    candle.upperWick.set_xy2(m_pos, h)
+    candle.lowerWick.set_color(wick_col)
+    candle.lowerWick.set_xy1(m_pos, l_body)
+    candle.lowerWick.set_xy2(m_pos, l)
+    if na(candle.sweepHighLines)
+        candle.sweepHighLines := array.new<line>(0)
+    if na(candle.sweepLowLines)
+        candle.sweepLowLines := array.new<line>(0)
+    candle.openPrice := o
+    candle.highPrice := h
+    candle.lowPrice := l
+    candle.closePrice := c
+    if tfbox_enabled and index == maxIndex and initialized_candles >= 3
+        should_draw_box = checkPrevCandleSwept(candles_array, index)
+        if should_draw_box
+            prev_candle = array.get(candles_array, index - 1)
+            prev_candle_midpoint = (prev_candle.openPrice + prev_candle.closePrice) / 2
+            box_top = math.max(candle.openPrice, prev_candle_midpoint)
+            box_bottom = math.min(candle.openPrice, prev_candle_midpoint)
+            if math.abs(box_top - box_bottom) < syminfo.mintick
+                box_top := box_top + syminfo.mintick * 2
+                box_bottom := box_bottom - syminfo.mintick * 2
+            candle_three_back = array.get(candles_array, index - 2)
+            high_swept = prev_candle.highPrice > candle_three_back.highPrice and
+                         prev_candle.closePrice < candle_three_back.highPrice
+            box_bg_color = high_swept ? tfbox_bg_col : tfbox_bg_col
+            box_border_color = high_swept ? tfbox_border_col : tfbox_border_col
+            if na(candle.midpointBox)
+                candle.midpointBox := box.new(candle.start_bar, box_top, bar_index, box_bottom,
+                                             border_color=box_border_color, bgcolor=box_bg_color)
+            else
+                candle.midpointBox.set_lefttop(candle.start_bar, box_top)
+                candle.midpointBox.set_rightbottom(bar_index, box_bottom)
+                candle.midpointBox.set_border_color(box_border_color)
+                candle.midpointBox.set_bgcolor(box_bg_color)
+        else
+            if not na(candle.midpointBox)
+                candle.midpointBox.delete()
+                candle.midpointBox := na
+    if prev_mid_line_enabled and index == maxIndex - 1 and initialized_candles >= 2
+        midpoint = (h + l) / 2
+        if na(candle.prevMidLine)
+            candle.prevMidLine := line.new(candle.start_bar, midpoint, candle.start_bar + sweep_price_line_length, midpoint, style=getLineStyle(prev_mid_line_style), color=prev_mid_line_col, width=prev_mid_line_width)
+        else
+            candle.prevMidLine.set_xy1(candle.start_bar, midpoint)
+            candle.prevMidLine.set_xy2(candle.start_bar + sweep_price_line_length, midpoint)
+    else if not na(candle.prevMidLine)
+        candle.prevMidLine.delete()
+        candle.prevMidLine := na
+    if sweep_line_enabled and index > 0 and initialized_candles >= 2
+        prev_candle = array.get(candles_array, index - 1)
+        for high_line in candle.sweepHighLines
+            if not na(high_line)
+                high_line.delete()
+        for low_line in candle.sweepLowLines
+            if not na(low_line)
+                low_line.delete()
+        candle.sweepHighLines.clear()
+        candle.sweepLowLines.clear()
+        [htf_open, htf_high, htf_low, htf_close] = request.security(syminfo.tickerid, curr_tf, [open, high, low, close], lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+        if is_current
+            if htf_high > prev_candle.highPrice and math.max(htf_open, htf_close) <= prev_candle.highPrice
+                high_line = line.new(m_pos - sweep_htf_line_length / 2, prev_candle.highPrice, m_pos + sweep_htf_line_length / 2, prev_candle.highPrice, style=getLineStyle(sweep_line_style), color=sweep_high_col, width=sweep_line_width)
+                candle.sweepHighLines.push(high_line)
+                price_line = line.new(candle.start_bar, prev_candle.highPrice, candle.start_bar + sweep_price_line_length, prev_candle.highPrice, style=getLineStyle(sweep_line_style), color=sweep_high_col, width=sweep_line_width)
+                candle.sweepHighLines.push(price_line)
+            if htf_low < prev_candle.lowPrice and math.min(htf_open, htf_close) >= prev_candle.lowPrice
+                low_line = line.new(m_pos - sweep_htf_line_length / 2, prev_candle.lowPrice, m_pos + sweep_htf_line_length / 2, prev_candle.lowPrice, style=getLineStyle(sweep_line_style), color=sweep_low_col, width=sweep_line_width)
+                candle.sweepLowLines.push(low_line)
+                price_line = line.new(candle.start_bar, prev_candle.lowPrice, candle.start_bar + sweep_price_line_length, prev_candle.lowPrice, style=getLineStyle(sweep_line_style), color=sweep_low_col, width=sweep_line_width)
+                candle.sweepLowLines.push(price_line)
+        else
+            if candle.highPrice > prev_candle.highPrice and math.max(candle.openPrice, candle.closePrice) <= prev_candle.highPrice
+                high_line = line.new(m_pos - sweep_htf_line_length / 2, prev_candle.highPrice, m_pos + sweep_htf_line_length / 2, prev_candle.highPrice, style=getLineStyle(sweep_line_style), color=sweep_high_col, width=sweep_line_width)
+                candle.sweepHighLines.push(high_line)
+                price_line = line.new(candle.start_bar, prev_candle.highPrice, candle.start_bar + sweep_price_line_length, prev_candle.highPrice, style=getLineStyle(sweep_line_style), color=sweep_high_col, width=sweep_line_width)
+                candle.sweepHighLines.push(price_line)
+            if candle.lowPrice < prev_candle.lowPrice and math.min(candle.openPrice, candle.closePrice) >= prev_candle.lowPrice
+                low_line = line.new(m_pos - sweep_htf_line_length / 2, prev_candle.lowPrice, m_pos + sweep_htf_line_length / 2, prev_candle.lowPrice, style=getLineStyle(sweep_line_style), color=sweep_low_col, width=sweep_line_width)
+                candle.sweepLowLines.push(low_line)
+                price_line = line.new(candle.start_bar, prev_candle.lowPrice, candle.start_bar + sweep_price_line_length, prev_candle.lowPrice, style=getLineStyle(sweep_line_style), color=sweep_low_col, width=sweep_line_width)
+                candle.sweepLowLines.push(price_line)
+    candle
+
+deleteCandle(Candle candle) =>
+    candle.body.delete()
+    candle.upperWick.delete()
+    candle.lowerWick.delete()
+    if not na(candle.lowLine)
+        candle.lowLine.delete()
+    if not na(candle.highLine)
+        candle.highLine.delete()
+    if not na(candle.prevMidLine)
+        candle.prevMidLine.delete()
+    if not na(candle.sweepHighLines)
+        for high_line in candle.sweepHighLines
+            if not na(high_line)
+                high_line.delete()
+        candle.sweepHighLines.clear()
+    if not na(candle.sweepLowLines)
+        for low_line in candle.sweepLowLines
+            if not na(low_line)
+                low_line.delete()
+        candle.sweepLowLines.clear()
+    if not na(candle.midpointBox)
+        candle.midpointBox.delete()
+    deleteProjections(candle)
+
+var candles = array.new<Candle>(num, Candle.new())
+[o, h, l, c, htf_o, htf_h, htf_l, htf_c] = ohlc()
+curr_o = o
+curr_h = h
+curr_l = l
+curr_c = c
+
+if useHtfData
+    curr_o := htf_o
+    curr_h := htf_h
+    curr_l := htf_l
+    curr_c := htf_c
+
+candle_o = curr_o
+candle_h = curr_h
+candle_l = curr_l
+candle_c = curr_c
+
+if type == 'Heikin Ashi' and not chart.is_heikinashi
+    candle_c := (curr_o + curr_h + curr_l + curr_c) / 4
+    if newCandle
+        candle_o := na(candle_o[1]) ? (curr_o + curr_c) / 2 : (nz(candle_o[1]) + nz(candle_c[1])) / 2
+    else
+        candle_o := nz(candle_o[1])
+    candle_h := math.max(curr_h, candle_o, candle_c)
+    candle_l := math.min(curr_l, candle_o, candle_c)
+
+if newCandle
+    initialized_candles := math.min(initialized_candles + 1, num)
+
+if (low_line_enabled or high_line_enabled) and initialized_candles == num
+    var lows = array.new_float(num, na)
+    var highs = array.new_float(num, na)
+    var bar_indices = array.new_int(num, na)
+    for [i, candle] in candles
+        lows.set(i, candle.lowPrice)
+        highs.set(i, candle.highPrice)
+        bar_indices.set(i, candle.start_bar)
+    if not array.includes(lows, na) and not array.includes(highs, na)
+        if low_line_enabled
+            min_low_idx = array.indexof(lows, array.min(lows))
+            if min_low_idx >= 0
+                min_low = array.get(lows, min_low_idx)
+                min_low_bar = array.get(bar_indices, min_low_idx)
+                low_candle = array.get(candles, min_low_idx)
+                for [i, c] in candles
+                    if i != min_low_idx and not na(c.lowLine)
+                        c.lowLine.delete()
+                        c.lowLine := na
+                if na(low_candle.lowLine)
+                    low_candle.lowLine := line.new(min_low_bar, min_low, bar_index, min_low, style=getLineStyle(low_line_style), color=low_line_col, width=low_line_width)
+                else
+                    low_candle.lowLine.set_xy1(min_low_bar, min_low)
+                    low_candle.lowLine.set_xy2(bar_index, min_low)
+        if high_line_enabled
+            max_high_idx = array.indexof(highs, array.max(highs))
+            if max_high_idx >= 0
+                max_high = array.get(highs, max_high_idx)
+                max_high_bar = array.get(bar_indices, max_high_idx)
+                high_candle = array.get(candles, max_high_idx)
+                for [i, c] in candles
+                    if i != max_high_idx and not na(c.highLine)
+                        c.highLine.delete()
+                        c.highLine := na
+                if na(high_candle.highLine)
+                    high_candle.highLine := line.new(max_high_bar, max_high, bar_index, max_high, style=getLineStyle(high_line_style), color=high_line_col, width=high_line_width)
+                else
+                    high_candle.highLine.set_xy1(max_high_bar, max_high)
+                    high_candle.highLine.set_xy2(bar_index, max_high)
+
+if newCandle
+    oldCandle = candles.shift()
+    deleteCandle(oldCandle)
+    pos = bar_index + offset + maxIndex * (3 + sizeMultiplier)
+    candle = createCandle(pos, candle_o, candle_h, candle_l, candle_c, curr_tf)
+    createProjections(candle, o, h, l, c, candle_o, candle_h, candle_l, candle_c, htf_o, htf_h, htf_l, htf_c, pos, candles)
+    candles.push(candle)
+
+for [i, candle] in candles
+    new_pos = bar_index + offset + i * (margin + 2 * sizeMultiplier)
+    is_current = i == maxIndex
+    updateCandle(candle, new_pos, is_current ? candle_o : candle.openPrice, is_current ? candle_h : candle.highPrice, is_current ? candle_l : candle.lowPrice, is_current ? candle_c : candle.closePrice, curr_tf, is_current, candles, i)
+    moveProjections(candle, new_pos, o, h, l, c, is_current ? candle_o : candle.openPrice, is_current ? candle_h : candle.highPrice, is_current ? candle_l : candle.lowPrice, is_current ? candle_c : candle.closePrice, candles)
+    if not is_current and proj_enabled
+        if not na(candle.o)
+            candle.o.delete()
+        if not na(candle.h)
+            candle.h.delete()
+        if not na(candle.l)
+            candle.l.delete()
+        if not na(candle.c)
+            candle.c.delete()
+        if label_enabled
+            if not na(candle.labelO)
+                label.delete(candle.labelO)
+            if not na(candle.labelH)
+                label.delete(candle.labelH)
+            if not na(candle.labelL)
+                label.delete(candle.labelL)
+            if not na(candle.labelC)
+                label.delete(candle.labelC)
+
+// CISD Logic
+var bull_level = high
+var bull_index = bar_index
+var bear_level = low
+var bear_index = bar_index
+var bucisdg = array.new<line>(0)
+var becisdg = array.new<line>(0)
+var bull_alarm = false
+var bear_alarm = false
+var bull_cisd_ara = false
+var bear_cisd_ara = false
+var saybull = 0
+var saybear = 0
+var xcisd = false
+var ycisd = false
+var mm = bar_index
+var nn = bar_index
+
+var o0 = open
+var h0 = high
+var l0 = low
+var h0bar = bar_index
+var l0bar = bar_index
+var l1bar = bar_index
+var h1bar = bar_index
+var h0t = time
+var l0t = time
+var t0 = time
+var c0 = close
+var h1 = high
+var l1 = low
+var t1 = time
+var c1 = close
+var o1 = open
+var h_swept1 = false
+var l_swept1 = false
+
+if timeframe.change(htf)
+    t0 := time
+    o0 := open
+    h0 := high
+    l0 := low
+if high >= h0
+    h0 := high
+    h0bar := bar_index
+    h0t := time    
+if low <= l0
+    l0 := low
+    l0bar := bar_index
+    l0t := time
+c0 := close
+if timeframe.change(htf)
+    o1 := o0[1]
+    h1 := h0[1]
+    l1 := l0[1]
+    t1 := t0[1]
+    c1 := close[1]
+    l1bar := l0bar[1]
+    h1bar := h0bar[1]
+
+h_swept = h0 > h1 and c0 <= h1 and c0 >= l1
+l_swept = l0 < l1 and c0 >= l1 and c0 <= h1
+if timeframe.change(htf)
+    h_swept1 := h_swept[1]
+    l_swept1 := l_swept[1]
+
+if l_swept
+    bull_cisd_ara := true
+if h_swept
+    bear_cisd_ara := true
+
+up = close > open
+dw = close < open
+eq = close == open
+
+if low == l0 and low < l1
+    if (dw[0] or eq[0]) and (up[1] or eq[1]) and not (eq[0] and eq[1])
+        bull_level := open
+        bull_index := bar_index
+        array.push(bucisdg, line.new(x1=bull_index, y1=bull_level, x2=bull_index+4, y2=bull_level, color=bull_color, width=1, style=line.style_dotted))
+    else
+        for i = 2 to 10
+            if low[i] < low
+                break
+            if (up[i] or eq[i]) and dw[i-1]
+                bar = i - 1
+                bull_level := open[bar]
+                bull_index := bar_index - bar
+                bull_index := i > 1 and open[i-2] > bull_level ? bar_index - (i-2) : bull_index
+                bull_level := i > 1 and open[i-2] > bull_level ? open[i-2] : bull_level
+                if bull_level < open and not (close > open)
+                    bull_level := open
+                    bull_index := bar_index
+                if bull_level < open and (close > open)
+                    bull_level := high
+                    bull_index := bar_index
+                array.push(bucisdg, line.new(x1=bull_index, y1=bull_level, x2=bull_index+4, y2=bull_level, color=bull_color, width=1, style=line.style_dotted))
+                break
+
+if high == h0 and high > h1
+    if (dw[1] or eq[1]) and up
+        bear_level := open
+        bear_index := bar_index
+        array.push(becisdg, line.new(x1=bear_index, y1=bear_level, x2=bear_index+4, y2=bear_level, color=bear_color, width=1, style=line.style_dotted))
+    if ((close[1] < open[1] or close[1] == open[1]) and close > open) == false
+        for i = 2 to 10
+            if high[i] > high
+                break
+            if (dw[i] or eq[i]) and up[i-1]
+                ybar = i - 1
+                bear_level := open[ybar]
+                bear_index := bar_index - ybar
+                bear_index := i > 1 and open[i-2] < bear_level ? bar_index - (i-2) : bear_index
+                bear_level := i > 1 and open[i-2] < bear_level ? open[i-2] : bear_level
+                if bear_level > open and not (close < open)
+                    bear_level := open
+                    bear_index := bar_index
+                if bear_level > open and (close < open)
+                    bear_level := low
+                    bear_index := bar_index
+                array.push(becisdg, line.new(x1=bear_index, y1=bear_level, x2=bear_index+4, y2=bear_level, color=bear_color, width=1, style=line.style_dotted))
+                break
+
+if high >= h0[1]
+    saybear := 0
+    bear_cisd_ara := false
+    ycisd := false
+if low <= l0[1]
+    saybull := 0
+    bull_cisd_ara := false
+    xcisd := false
+
+if high >= h0[1]
+    saybear := 0
+    bear_cisd_ara := true
+    ycisd := false
+if low <= l0[1]
+    saybull := 0
+    bull_cisd_ara := true
+    xcisd := false
+
+m = l0 < l1 ? bar_index - l0bar : bar_index - l1bar
+bullcisd = (close[1] > bull_level[1] and close[2] <= bull_level[1] and bar_index - bull_index[1] > 1 and l0 < l1 and m < 30) or
+           (close[1] > bull_level[1] and close[2] <= bull_level[1] and bar_index - bull_index[1] > 1 and l1 < l0 and m < 30 and l_swept1)
+if bullcisd and xcisd[1] == false
+    xcisd := true
+    mm := bar_index
+
+xbull = xcisd and saybull == 0 and bull_cisd_ara and ((l_swept[1]) or (l_swept1 and l1 < l0))
+if xbull
+    bucisd = box.new(left=bull_index[1], top=bull_level[1], right=mm-1, bottom=bull_level[1], border_color=bull_color, border_width=1, text="cisd+", text_color=bull_color, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_bottom)
+    bull_alarm := true
+    if bull_alarm and saybull == 0
+        saybull := 1
+    bull_level := 1000000.0
+    bull_cisd_ara := false
+    xcisd := false
+    if array.size(bucisdg) > 0
+        dbox = array.get(bucisdg, 0)
+        line.delete(dbox)
+        array.remove(bucisdg, 0)
+if array.size(bucisdg) > 1
+    for i = array.size(bucisdg) - 1 to 1
+        dbox = array.get(bucisdg, i)
+        line.delete(dbox)
+        array.remove(bucisdg, i)
+
+n = h0 > h1 ? bar_index - h0bar : bar_index - h1bar
+bearcisd = (close[1] < bear_level[1] and close[2] >= bear_level[1] and bar_index - bear_index[1] > 1 and h0 > h1 and n < 30) or
+           (close[1] < bear_level[1] and close[2] >= bear_level[1] and bar_index - bear_index[1] > 1 and h1 > h0 and n < 30 and h_swept1)
+if bearcisd and ycisd[1] == false
+    ycisd := true
+    nn := bar_index
+xbear = ycisd and ((h_swept[1]) or (h_swept1 and h1 > h0)) and saybear == 0 and bear_cisd_ara
+if xbear
+    becisd = box.new(left=bear_index[1], top=bear_level[1], right=nn-1, bottom=bear_level[1], border_color=bear_color, border_width=1, text="cisd-", text_color=bear_color, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_top)
+    bear_alarm := true
+    if bear_alarm and saybear == 0
+        saybear := 1
+    bear_level := 0.0
+    bear_cisd_ara := false
+    ycisd := false
+    if array.size(becisdg) > 0
+        dbox = array.get(becisdg, 0)
+        line.delete(dbox)
+        array.remove(becisdg, 0)
+if array.size(becisdg) > 1
+    for i = array.size(becisdg) - 1 to 1
+        dbox = array.get(becisdg, i)
+        line.delete(dbox)
+        array.remove(becisdg, i)
+
+// Function to add elements to array
+add_to_array(arr, value) =>
+    array.unshift(arr, value)
+    if array.size(arr) > 100
+        array.pop(arr)
+
+// Function to format CISD table text (replacing emojis with text)
+f_tb2_text(bool _alarm) =>
+    string _textt = _alarm ? "Active" : "Inactive"
+    _textt
+
+// Fetch CISD signals for each symbol
+s1_bull = request.security(s1, timeframe.period, xbull, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s1_bear = request.security(s1, timeframe.period, xbear, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s2_bull = request.security(s2, timeframe.period, xbull, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s2_bear = request.security(s2, timeframe.period, xbear, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s3_bull = request.security(s3, timeframe.period, xbull, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s3_bear = request.security(s3, timeframe.period, xbear, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s4_bull = request.security(s4, timeframe.period, xbull, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s4_bear = request.security(s4, timeframe.period, xbear, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s5_bull = request.security(s5, timeframe.period, xbull, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s5_bear = request.security(s5, timeframe.period, xbear, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s6_bull = request.security(s6, timeframe.period, xbull, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s6_bear = request.security(s6, timeframe.period, xbear, lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+// Sweep detection for each symbol
+s1_h_swept = request.security(s1, timeframe.period, f_hswept(s1, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s2_h_swept = request.security(s2, timeframe.period, f_hswept(s2, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s3_h_swept = request.security(s3, timeframe.period, f_hswept(s3, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s4_h_swept = request.security(s4, timeframe.period, f_hswept(s4, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s5_h_swept = request.security(s5, timeframe.period, f_hswept(s5, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s6_h_swept = request.security(s6, timeframe.period, f_hswept(s6, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+s1_l_swept = request.security(s1, timeframe.period, f_lswept(s1, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s2_l_swept = request.security(s2, timeframe.period, f_lswept(s2, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s3_l_swept = request.security(s3, timeframe.period, f_lswept(s3, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s4_l_swept = request.security(s4, timeframe.period, f_lswept(s4, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s5_l_swept = request.security(s5, timeframe.period, f_lswept(s5, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+s6_l_swept = request.security(s6, timeframe.period, f_lswept(s6, curr_tf), lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+// Compose the sweep screener message (simplified with colored dots)
+swept_label = '       ' + f_text(curr_tf) + ' Swept \n ------------------------\n'
+swept_label := s1_h_swept ? swept_label + str.tostring(syminfo.ticker(s1)) + " High Swept 🔴\n" : swept_label
+swept_label := s2_h_swept ? swept_label + str.tostring(syminfo.ticker(s2)) + " High Swept 🔴\n" : swept_label
+swept_label := s3_h_swept ? swept_label + str.tostring(syminfo.ticker(s3)) + " High Swept 🔴\n" : swept_label
+swept_label := s4_h_swept ? swept_label + str.tostring(syminfo.ticker(s4)) + " High Swept 🔴\n" : swept_label
+swept_label := s5_h_swept ? swept_label + str.tostring(syminfo.ticker(s5)) + " High Swept 🔴\n" : swept_label
+swept_label := s6_h_swept ? swept_label + str.tostring(syminfo.ticker(s6)) + " High Swept 🔴\n" : swept_label
+
+swept_label := s1_l_swept ? swept_label + str.tostring(syminfo.ticker(s1)) + " Low Swept 🟢\n" : swept_label
+swept_label := s2_l_swept ? swept_label + str.tostring(syminfo.ticker(s2)) + " Low Swept 🟢\n" : swept_label
+swept_label := s3_l_swept ? swept_label + str.tostring(syminfo.ticker(s3)) + " Low Swept 🟢\n" : swept_label
+swept_label := s4_l_swept ? swept_label + str.tostring(syminfo.ticker(s4)) + " Low Swept 🟢\n" : swept_label
+swept_label := s5_l_swept ? swept_label + str.tostring(syminfo.ticker(s5)) + " Low Swept 🟢\n" : swept_label
+swept_label := s6_l_swept ? swept_label + str.tostring(syminfo.ticker(s6)) + " Low Swept 🟢\n" : swept_label
+
+
+// New Inputs for CISD and Sweep Tables
+var show_cisd = input.bool(true, 'Show CISD Table', group='Table')
+var table_on = input.bool(true, 'Show HTF Swept Table', group='Table')
+var i_font_cisd = input.string('small', 'CISD Table Text Size', options=['tiny', 'small', 'normal', 'large', 'huge'], group='Table')
+var i_font_sweep = input.string('small', 'Sweep Table Text Size', options=['tiny', 'small', 'normal', 'large', 'huge'], group='Table')
+var i_pos = input.string(position.middle_right, 'CISD Table Position', options=[position.top_left, position.top_center, position.top_right, position.middle_left, position.middle_center, position.middle_right, position.bottom_left, position.bottom_center, position.bottom_right], group='Table')
+var i_pos_sweep = input.string(position.top_right, 'Sweep Table Position', options=[position.top_left, position.top_center, position.top_right, position.middle_left, position.middle_center, position.middle_right, position.bottom_left, position.bottom_center, position.bottom_right], group='Table')
+
+// CISD Table Logic
+var table cisd_table = na
+if show_cisd and barstate.islast
+    if na(cisd_table)
+        cisd_table := table.new(position=i_pos, columns=3, rows=7, frame_color=color.black, frame_width=2, border_color=color.black, border_width=1)
+    // Header Row (Row 0)
+    table.cell(cisd_table, 0, 0, text="CISD", text_color=color.white, bgcolor=color.black, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 0, text="Bullish", text_color=color.white, bgcolor=color.black, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 0, text="Bearish", text_color=color.white, bgcolor=color.black, text_size=i_font_cisd, text_halign=text.align_center)
+    
+    // Data Rows (Rows 1-6) with conditional coloring
+    table.cell(cisd_table, 0, 1, text=syminfo.ticker(s1), text_color=color.black, bgcolor=color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 1, text=f_tb2_text(s1_bull), text_color=s1_bull ? color.white : color.black, bgcolor=s1_bull ? color.green : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 1, text=f_tb2_text(s1_bear), text_color=s1_bear ? color.white : color.black, bgcolor=s1_bear ? color.red : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    
+    table.cell(cisd_table, 0, 2, text=syminfo.ticker(s2), text_color=color.black, bgcolor=color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 2, text=f_tb2_text(s2_bull), text_color=s2_bull ? color.white : color.black, bgcolor=s2_bull ? color.green : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 2, text=f_tb2_text(s2_bear), text_color=s2_bear ? color.white : color.black, bgcolor=s2_bear ? color.red : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    
+    table.cell(cisd_table, 0, 3, text=syminfo.ticker(s3), text_color=color.black, bgcolor=color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 3, text=f_tb2_text(s3_bull), text_color=s3_bull ? color.white : color.black, bgcolor=s3_bull ? color.green : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 3, text=f_tb2_text(s3_bear), text_color=s3_bear ? color.white : color.black, bgcolor=s3_bear ? color.red : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    
+    table.cell(cisd_table, 0, 4, text=syminfo.ticker(s4), text_color=color.black, bgcolor=color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 4, text=f_tb2_text(s4_bull), text_color=s4_bull ? color.white : color.black, bgcolor=s4_bull ? color.green : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 4, text=f_tb2_text(s4_bear), text_color=s4_bear ? color.white : color.black, bgcolor=s4_bear ? color.red : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    
+    table.cell(cisd_table, 0, 5, text=syminfo.ticker(s5), text_color=color.black, bgcolor=color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 5, text=f_tb2_text(s5_bull), text_color=s5_bull ? color.white : color.black, bgcolor=s5_bull ? color.green : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 5, text=f_tb2_text(s5_bear), text_color=s5_bear ? color.white : color.black, bgcolor=s5_bear ? color.red : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    
+    table.cell(cisd_table, 0, 6, text=syminfo.ticker(s6), text_color=color.black, bgcolor=color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 1, 6, text=f_tb2_text(s6_bull), text_color=s6_bull ? color.white : color.black, bgcolor=s6_bull ? color.green : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    table.cell(cisd_table, 2, 6, text=f_tb2_text(s6_bear), text_color=s6_bear ? color.white : color.black, bgcolor=s6_bear ? color.red : color.white, text_size=i_font_cisd, text_halign=text.align_center)
+    
+else if not show_cisd and not na(cisd_table)
+    table.delete(cisd_table)
+    cisd_table := na
+
+// Sweep Table Logic
+var table dataTable = na
+if table_on and barstate.islast
+    if na(dataTable)
+        dataTable := table.new(position=i_pos_sweep, columns=1, rows=5, frame_color=color.black, frame_width=2, border_color=color.black, border_width=1)
+    // Header Row (Row 0)
+    table.cell(table_id=dataTable, column=0, row=0, text=f_text(curr_tf) + " Swept", text_color=color.white, bgcolor=color.black, text_size=i_font_sweep, text_halign=text.align_center, text_valign=text.align_center)
+    // Data Row (Row 1)
+    table.cell(table_id=dataTable, column=0, row=1, text=swept_label, text_color=color.black, bgcolor=color.white, text_size=i_font_sweep, text_halign=text.align_left, text_valign=text.align_center)
+else if not table_on and not na(dataTable)
+    table.delete(dataTable)
+    dataTable := na
+
+// HTF Auto-Selection Table Logic
+var table htf_table = na
+if show_htf_table and tf_auto and barstate.islast
+    if na(htf_table)
+        htf_table := table.new(position=i_pos_htf, columns=2, rows=2, frame_color=color.black, frame_width=2, border_color=color.black, border_width=1)
+    // Header Row
+    table.cell(htf_table, 0, 0, text="Chart TF", text_color=color.white, bgcolor=color.black, text_size=i_font_htf, text_halign=text.align_center)
+    table.cell(htf_table, 1, 0, text="Auto HTF", text_color=color.white, bgcolor=color.black, text_size=i_font_htf, text_halign=text.align_center)
+    // Data Row
+    table.cell(htf_table, 0, 1, text=f_text(timeframe.period), text_color=color.black, bgcolor=color.white, text_size=i_font_htf, text_halign=text.align_center)
+    table.cell(htf_table, 1, 1, text=f_text(curr_tf), text_color=color.black, bgcolor=color.white, text_size=i_font_htf, text_halign=text.align_center)
+else if (not show_htf_table or not tf_auto) and not na(htf_table)
+    table.delete(htf_table)
+    htf_table := na

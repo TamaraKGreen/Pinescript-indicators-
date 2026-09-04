@@ -1,0 +1,1234 @@
+// This Pine Script(R) code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// (c) lucymatos
+
+//@version=5
+indicator(title="Session Statistical Levels + Extension Gauge", shorttitle="Sess Stats+",
+     overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ==================================================================
+// Fixed statistical levels and a right-edge extension gauge, both driven
+// by one constant set measured from 15 years of NQ 1-minute data,
+// 2010-06-06 to 2025-03-14, 4,974,698 bars over 3,804 sessions.
+//
+// STORAGE. Every grid is held in SIGMA units, so a level in percent is
+// just sigma(anchor) x grid value. One source of truth: the volatility
+// multiplier is frozen at each anchor's open, so a level cannot move
+// under you mid-session and the chart, gauge and table are all computed
+// from the same number.
+//
+// LAYOUT. 32 anchors: index 0-23 are hours of the NY clock, then 24 Asia,
+// 25 London, 26 NY AM, 27 NY PM, 28 Day, 29 Week, 30 RTH, 31 NY full.
+// Excursion grids are 19 nodes, P5 to P95 in steps of 5, so grid index i
+// is percentile 5(i+1). S_ONE and S_FADE hold 4 values per anchor at
+// k = 0.5 / 1.0 / 1.5 / 2.0.
+//
+// SAMPLE SIZES. Hours and sessions rest on 3,544-3,795 observations each.
+// Week has only 770, so its outer percentiles rest on a few dozen tail
+// observations. Hour 17 has 26 because of the maintenance break and is
+// blank in every table.
+//
+// REGENERATING. pipeline.py + generate.py rebuild every constant here
+// from the raw minute CSV and reproduce the shipped tables to within
+// 0.05%, which is the rounding at 4 significant figures.
+//
+// The statistics themselves - what the two distributions mean, why the
+// textbook 68% is wrong, and the difference between the unconditional
+// and conditional probabilities - are explained in the tooltips on the
+// inputs they affect, and at length in the script description.
+// ==================================================================
+
+TZ = "America/New_York"
+NQ = 19
+I_ASIA = 24
+I_LON  = 25
+I_NYAM = 26
+I_NYPM = 27
+I_DAY  = 28
+I_WEEK = 29
+I_RTH  = 30
+I_NY   = 31
+// grid index for a percentile: P25=4, P50=9, P75=14, P90=17, P95=18
+Q25 = 4
+Q50 = 9
+Q75 = 14
+Q90 = 17
+Q95 = 18
+LONGRUN_DAILY = 1.259
+
+// ---- measured constants: sigma%, then grids in sigma units ----
+
+var string S_SIG =
+     "0.1402,0.1362,0.1708,0.2331,0.204,0.1752,0.1725,0.1982,0.3114,0.4248,0.447,0.3539,0.3044,0.3037,0.3322,0.4226," +
+     "0.237,0,0.204,0.1467,0.1759,0.1809,0.1557,0.1181,0.4111,0.4452,0.7698,0.7341,1.259,2.679,1.006,1.064"
+
+var string S_MFE =
+     "0.01967,0.05102,0.07956,0.1108,0.1427,0.1701,0.2024,0.2357,0.2709,0.3095,0.3522,0.4064,0.4662,0.5374,0.6221," +
+     "0.7452,0.9132,1.166,1.763,0.02059,0.06112,0.09385,0.134,0.1746,0.2178,0.2638,0.3078,0.3524,0.4014,0.4602," +
+     "0.5269,0.5959,0.6843,0.7895,0.909,1.102,1.383,1.904,0.02295,0.06063,0.09962,0.1393,0.1805,0.2211,0.2674,0.3172," +
+     "0.3682,0.4242,0.4903,0.5608,0.6378,0.7263,0.8299,0.9739,1.137,1.434,2.085,0.02416,0.05899,0.1021,0.1488,0.1939," +
+     "0.2392,0.2873,0.3308,0.3869,0.4456,0.5058,0.5757,0.6501,0.7407,0.8483,0.9987,1.185,1.452,1.883,0.02565,0.0628," +
+     "0.1051,0.148,0.1927,0.232,0.2774,0.3308,0.3828,0.4387,0.4941,0.5648,0.6432,0.7509,0.8698,1.005,1.194,1.493," +
+     "2.02,0.03681,0.07567,0.115,0.1604,0.2058,0.2472,0.295,0.3481,0.3994,0.4607,0.5304,0.6054,0.6812,0.778,0.8856," +
+     "1.034,1.219,1.463,2.019,0.03022,0.06642,0.1115,0.1553,0.194,0.2397,0.2927,0.3392,0.3911,0.4456,0.5038,0.561," +
+     "0.6314,0.7285,0.8459,0.9825,1.16,1.427,1.95,0.02939,0.06649,0.1083,0.1514,0.1946,0.2396,0.2867,0.3375,0.3851," +
+     "0.4451,0.5036,0.572,0.6451,0.7395,0.845,0.9775,1.142,1.414,1.883,0.02597,0.05765,0.0869,0.1164,0.1495,0.1899," +
+     "0.2226,0.2629,0.303,0.3442,0.3869,0.4437,0.511,0.5822,0.6873,0.7959,0.9752,1.266,1.756,0.04538,0.09745,0.1529," +
+     "0.2074,0.2645,0.3115,0.3577,0.4144,0.4788,0.5338,0.6101,0.6872,0.7842,0.8841,0.997,1.124,1.307,1.575,1.992," +
+     "0.04281,0.0916,0.1355,0.1852,0.23,0.28,0.3319,0.386,0.444,0.5084,0.5779,0.6459,0.7268,0.8151,0.9345,1.065," +
+     "1.214,1.472,1.921,0.05731,0.1114,0.1556,0.2064,0.2533,0.3017,0.3532,0.4083,0.4612,0.52,0.5873,0.66,0.7361," +
+     "0.8214,0.941,1.055,1.226,1.466,1.939,0.04053,0.08296,0.1286,0.1712,0.2153,0.2654,0.3085,0.3534,0.401,0.4644," +
+     "0.522,0.5937,0.6629,0.76,0.8545,0.9692,1.114,1.365,1.832,0.03554,0.08156,0.1244,0.1689,0.2119,0.2643,0.3116," +
+     "0.3622,0.4152,0.4682,0.5288,0.5899,0.6641,0.7584,0.8717,1.006,1.169,1.428,1.892,0.03349,0.0783,0.1217,0.1639," +
+     "0.2046,0.2479,0.2951,0.34,0.3956,0.4477,0.5135,0.5763,0.6485,0.7473,0.8515,0.9734,1.149,1.439,1.975,0.03078," +
+     "0.07042,0.1113,0.15,0.1863,0.2247,0.2624,0.3046,0.3421,0.3852,0.444,0.499,0.5636,0.6383,0.7392,0.8537,1.013," +
+     "1.229,1.703,0.03927,0.07591,0.1135,0.1519,0.1852,0.2276,0.2658,0.3066,0.3468,0.3927,0.4426,0.4989,0.5623,0.635," +
+     "0.7314,0.8414,1.007,1.255,1.762,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.03086,0.06284,0.1033,0.1344,0.1706," +
+     "0.2075,0.242,0.2801,0.3299,0.3773,0.4282,0.505,0.5747,0.6704,0.7958,0.9671,1.218,1.668,0.0243,0.06232,0.08984," +
+     "0.1252,0.1621,0.2029,0.241,0.2833,0.3231,0.3752,0.4304,0.4918,0.5638,0.6441,0.7495,0.8954,1.069,1.358,1.875," +
+     "0.007807,0.04893,0.07907,0.1117,0.1488,0.1893,0.237,0.2791,0.3189,0.3685,0.4291,0.4966,0.5744,0.6565,0.772," +
+     "0.9157,1.121,1.398,1.898,0.01808,0.05854,0.09553,0.1287,0.1598,0.1941,0.2322,0.2683,0.3135,0.3575,0.407,0.4643," +
+     "0.5346,0.6124,0.7085,0.8288,0.9933,1.242,1.673,0.02242,0.05915,0.09167,0.1229,0.1574,0.1904,0.2301,0.2719," +
+     "0.3121,0.3526,0.4049,0.4684,0.5289,0.5976,0.6859,0.7948,0.9742,1.211,1.654,0,0.06549,0.1007,0.1463,0.1855," +
+     "0.227,0.268,0.3039,0.3511,0.4051,0.4652,0.5206,0.5865,0.6747,0.7841,0.9161,1.083,1.389,1.971,0.03261,0.07142," +
+     "0.1038,0.1414,0.1768,0.2141,0.2572,0.3031,0.3476,0.3976,0.4507,0.5128,0.5773,0.657,0.7634,0.8953,1.056,1.311," +
+     "1.832,0.04116,0.08989,0.1339,0.1827,0.231,0.2786,0.3229,0.376,0.4348,0.4965,0.552,0.6343,0.7136,0.8092,0.912," +
+     "1.061,1.267,1.551,2.047,0.04111,0.09325,0.1364,0.1816,0.2331,0.2801,0.3315,0.3893,0.4422,0.5072,0.5793,0.6469," +
+     "0.7292,0.8294,0.9337,1.051,1.243,1.501,1.917,0.04529,0.09002,0.1382,0.1782,0.2213,0.2635,0.3081,0.3628,0.4065," +
+     "0.4582,0.5163,0.5775,0.648,0.725,0.8324,0.9675,1.124,1.381,1.8,0.054,0.1058,0.1573,0.1994,0.248,0.298,0.3459," +
+     "0.3942,0.4445,0.4971,0.5589,0.6347,0.7053,0.787,0.8948,1.027,1.203,1.437,1.85,0.08419,0.1534,0.1933,0.2441," +
+     "0.2824,0.3369,0.4118,0.4687,0.5322,0.5821,0.6458,0.708,0.8078,0.9074,1.048,1.16,1.317,1.55,2.02,0.03684," +
+     "0.08254,0.1246,0.1715,0.2136,0.2569,0.307,0.3624,0.4236,0.4769,0.5521,0.6236,0.703,0.7914,0.9009,1.034,1.19," +
+     "1.429,1.814,0.04515,0.08747,0.1284,0.1711,0.2181,0.2642,0.3074,0.3566,0.4128,0.4738,0.5384,0.6061,0.6911," +
+     "0.7829,0.885,1.017,1.166,1.429,1.789"
+
+var string S_MAE =
+     "0,0.04733,0.07422,0.1028,0.1332,0.1642,0.1972,0.235,0.2733,0.3136,0.3577,0.4136,0.4761,0.5492,0.6413,0.7591," +
+     "0.9235,1.162,1.675,0,0.05387,0.08354,0.1219,0.1593,0.203,0.2426,0.2859,0.3342,0.3894,0.4465,0.4994,0.5768," +
+     "0.6606,0.7908,0.9322,1.116,1.408,1.995,0.009289,0.05379,0.08692,0.1279,0.1635,0.2038,0.2476,0.2964,0.3412," +
+     "0.398,0.4558,0.5137,0.5799,0.6648,0.7754,0.908,1.086,1.388,1.967,0.02898,0.07854,0.1252,0.1695,0.2112,0.2511," +
+     "0.2966,0.3492,0.4025,0.4626,0.5336,0.6035,0.696,0.7919,0.9138,1.065,1.264,1.588,2.174,0.02498,0.05804,0.1014," +
+     "0.146,0.1835,0.2213,0.2659,0.3108,0.3614,0.4243,0.4959,0.5732,0.6661,0.766,0.8759,1.023,1.236,1.536,2.098," +
+     "0.02986,0.06808,0.1076,0.1526,0.1935,0.2374,0.2818,0.3326,0.3853,0.4435,0.5046,0.5725,0.6619,0.75,0.8798,1.024," +
+     "1.23,1.527,2.068,0.0312,0.07456,0.1159,0.1573,0.1968,0.2433,0.2871,0.3312,0.3814,0.4363,0.5026,0.5674,0.648," +
+     "0.7538,0.8692,1.011,1.222,1.509,2.071,0.009165,0.04566,0.08073,0.1152,0.1503,0.1911,0.2326,0.2797,0.3347," +
+     "0.3917,0.4547,0.5247,0.5975,0.6951,0.8033,0.9402,1.138,1.443,2.05,0.02865,0.05982,0.09307,0.1235,0.153,0.1851," +
+     "0.218,0.2661,0.3132,0.3576,0.4145,0.4723,0.5361,0.6115,0.7054,0.8311,0.992,1.243,1.777,0.0497,0.09916,0.149," +
+     "0.1978,0.2507,0.3137,0.3653,0.4238,0.4817,0.553,0.6247,0.7165,0.8043,0.8958,1.026,1.188,1.411,1.701,2.173,0.03," +
+     "0.08511,0.1369,0.1862,0.2365,0.2863,0.3375,0.3996,0.4574,0.5215,0.5947,0.6864,0.7838,0.8953,1.029,1.197,1.385," +
+     "1.717,2.255,0.0296,0.06618,0.1058,0.146,0.1904,0.2354,0.2899,0.3453,0.3991,0.4689,0.5406,0.6157,0.7031,0.8127," +
+     "0.9503,1.126,1.34,1.655,2.217,0.0315,0.07201,0.1131,0.1557,0.1995,0.2441,0.2921,0.3469,0.4011,0.4616,0.543," +
+     "0.6211,0.7171,0.8142,0.9471,1.1,1.316,1.625,2.177,0.035,0.07746,0.1186,0.1555,0.2056,0.2475,0.2913,0.3444," +
+     "0.4021,0.4644,0.531,0.5997,0.68,0.7945,0.9276,1.087,1.315,1.618,2.237,0.03256,0.06814,0.1075,0.1464,0.1778," +
+     "0.2202,0.2679,0.317,0.3735,0.436,0.5054,0.5808,0.6807,0.7706,0.8949,1.056,1.275,1.619,2.198,0.03886,0.0713," +
+     "0.1096,0.1516,0.1862,0.2231,0.2617,0.3062,0.3583,0.4057,0.4583,0.5131,0.5857,0.6635,0.7737,0.9096,1.104,1.367," +
+     "1.866,0.03435,0.06008,0.09198,0.1188,0.1465,0.1744,0.2065,0.2411,0.2837,0.3283,0.375,0.4337,0.4977,0.5678," +
+     "0.6509,0.7782,0.936,1.212,1.75,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.04395,0.07966,0.1122,0.1496,0.1849," +
+     "0.2208,0.2575,0.2963,0.3354,0.379,0.4274,0.4935,0.5665,0.6512,0.7839,0.9608,1.296,2.002,0,0.03986,0.07486," +
+     "0.1115,0.1429,0.181,0.217,0.2556,0.2992,0.348,0.3956,0.4595,0.5263,0.6142,0.7195,0.8673,1.03,1.352,1.922," +
+     "0.0227,0.05446,0.08593,0.1175,0.1546,0.1893,0.2324,0.2749,0.3245,0.3791,0.4357,0.5007,0.5792,0.6661,0.7744," +
+     "0.9431,1.147,1.459,2.083,0.01391,0.0506,0.07778,0.1102,0.1423,0.1742,0.2072,0.246,0.2946,0.3392,0.3911,0.4501," +
+     "0.5181,0.6089,0.7019,0.8244,1,1.289,1.842,0.01055,0.05118,0.0767,0.1138,0.1414,0.1745,0.2056,0.2366,0.2747," +
+     "0.3224,0.3661,0.425,0.4944,0.5739,0.6828,0.8117,0.9903,1.27,1.873,0,0.05238,0.08712,0.1189,0.1554,0.1902," +
+     "0.2282,0.2711,0.3147,0.3669,0.4259,0.4859,0.5593,0.653,0.767,0.9042,1.103,1.384,2.049,0.01959,0.0458,0.07763," +
+     "0.1101,0.1402,0.1747,0.2115,0.2557,0.2935,0.3408,0.3977,0.4553,0.5311,0.618,0.7152,0.8444,1.029,1.296,1.861," +
+     "0.03134,0.07518,0.1183,0.159,0.2029,0.2509,0.2921,0.3445,0.3984,0.4575,0.527,0.6018,0.6885,0.7832,0.9178,1.083," +
+     "1.302,1.652,2.19,0.04422,0.08738,0.137,0.1815,0.2348,0.2909,0.3418,0.4034,0.4637,0.5361,0.607,0.6896,0.7833," +
+     "0.9094,1.044,1.201,1.439,1.719,2.165,0.03114,0.06746,0.1049,0.1381,0.1749,0.2173,0.2669,0.3102,0.3656,0.4294," +
+     "0.4929,0.5812,0.6727,0.772,0.8897,1.066,1.286,1.571,2.167,0.03271,0.0707,0.1119,0.1525,0.1953,0.2379,0.2881," +
+     "0.3388,0.3943,0.4566,0.5241,0.6012,0.6844,0.7973,0.9358,1.099,1.292,1.602,2.11,0.02449,0.07184,0.1134,0.161," +
+     "0.2058,0.2508,0.299,0.3544,0.4237,0.5054,0.5706,0.6436,0.7464,0.8804,0.9991,1.168,1.323,1.582,2.087,0.03589," +
+     "0.07445,0.1191,0.1616,0.2046,0.2505,0.2989,0.3519,0.4054,0.4761,0.5552,0.6286,0.7304,0.8429,0.9987,1.15,1.36," +
+     "1.673,2.205,0.04116,0.0779,0.1227,0.1713,0.2185,0.2662,0.3143,0.3634,0.4219,0.4805,0.5413,0.6276,0.7322,0.8421," +
+     "0.9848,1.153,1.368,1.63,2.117"
+
+var string S_RNG =
+     "0.274,0.335,0.3912,0.4411,0.4828,0.5302,0.5785,0.6287,0.6777,0.7409,0.8117,0.8903,0.9827,1.089,1.223,1.399," +
+     "1.646,2.011,2.802,0.3429,0.4283,0.4885,0.5534,0.6186,0.6751,0.7244,0.7922,0.8593,0.9347,1.019,1.115,1.22,1.348," +
+     "1.498,1.69,1.958,2.331,3.049,0.3645,0.4383,0.5062,0.5712,0.6355,0.6942,0.7541,0.8181,0.8897,0.9636,1.043,1.134," +
+     "1.228,1.357,1.518,1.721,1.999,2.462,3.201,0.4134,0.5047,0.5875,0.6542,0.7237,0.7844,0.8563,0.9238,1.01,1.093," +
+     "1.18,1.272,1.385,1.508,1.661,1.844,2.117,2.487,3.121,0.3982,0.4874,0.5571,0.6269,0.6967,0.7653,0.8357,0.9053," +
+     "0.9825,1.061,1.151,1.247,1.363,1.504,1.641,1.839,2.074,2.437,3.126,0.4134,0.5056,0.5829,0.656,0.7236,0.7875," +
+     "0.8507,0.9196,0.986,1.065,1.156,1.254,1.358,1.489,1.639,1.836,2.102,2.483,3.178,0.4115,0.505,0.5704,0.6279," +
+     "0.6991,0.767,0.8318,0.8957,0.9776,1.053,1.135,1.224,1.336,1.461,1.616,1.785,2.038,2.412,3.139,0.3955,0.4838," +
+     "0.5594,0.6242,0.6785,0.7343,0.7962,0.8594,0.9314,1.001,1.075,1.163,1.26,1.383,1.537,1.722,1.953,2.325,3.044," +
+     "0.2978,0.3794,0.4365,0.4913,0.5465,0.6007,0.6538,0.712,0.7761,0.8369,0.9126,0.9783,1.09,1.193,1.32,1.506,1.761," +
+     "2.116,2.824,0.5674,0.6801,0.7581,0.8395,0.9107,0.9837,1.055,1.129,1.195,1.272,1.353,1.448,1.554,1.671,1.824," +
+     "1.993,2.222,2.535,3.033,0.5046,0.6122,0.7016,0.777,0.8483,0.9109,0.9877,1.062,1.146,1.231,1.308,1.4,1.504," +
+     "1.626,1.76,1.949,2.174,2.538,3.168,0.4691,0.5798,0.6618,0.7389,0.8139,0.8804,0.9416,1.012,1.095,1.176,1.266," +
+     "1.351,1.468,1.595,1.736,1.923,2.173,2.489,3.115,0.4435,0.5384,0.614,0.6837,0.7455,0.8135,0.88,0.9516,1.03," +
+     "1.104,1.199,1.289,1.388,1.525,1.668,1.835,2.077,2.428,3.089,0.423,0.5258,0.6006,0.6675,0.7312,0.789,0.8604," +
+     "0.9367,1.02,1.108,1.195,1.299,1.405,1.538,1.695,1.876,2.132,2.485,3.08,0.4013,0.4824,0.5525,0.6307,0.6988," +
+     "0.7708,0.8346,0.9132,0.9814,1.053,1.13,1.23,1.343,1.474,1.638,1.85,2.121,2.491,3.275,0.3898,0.4549,0.5159," +
+     "0.5734,0.6236,0.6728,0.7293,0.7864,0.8464,0.9116,0.994,1.075,1.169,1.276,1.422,1.58,1.817,2.148,2.891,0.3681," +
+     "0.4258,0.4769,0.5206,0.5667,0.6146,0.6654,0.7149,0.771,0.8316,0.9092,0.9789,1.065,1.178,1.295,1.477,1.716," +
+     "2.188,3.096,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.2975,0.3592,0.4049,0.4553,0.4995,0.5478,0.5984,0.6488," +
+     "0.7002,0.7698,0.8426,0.9214,1.025,1.166,1.317,1.502,1.773,2.183,2.991,0.3156,0.3841,0.4412,0.4988,0.5522," +
+     "0.6133,0.6656,0.7332,0.7946,0.8677,0.9407,1.031,1.136,1.264,1.419,1.618,1.882,2.298,3.125,0.3275,0.3978,0.4656," +
+     "0.5261,0.5851,0.6359,0.6931,0.7561,0.8365,0.9195,0.9962,1.096,1.207,1.332,1.499,1.692,1.947,2.373,3.152,0.2996," +
+     "0.37,0.4351,0.4885,0.5368,0.5952,0.6542,0.7159,0.7772,0.8488,0.9203,0.9981,1.094,1.21,1.352,1.513,1.741,2.108," +
+     "2.854,0.2953,0.3656,0.4137,0.4712,0.5228,0.5825,0.6323,0.6903,0.7487,0.8174,0.8872,0.9652,1.072,1.188,1.319," +
+     "1.485,1.731,2.106,2.859,0.3494,0.4173,0.476,0.5381,0.5944,0.6604,0.7251,0.7912,0.8489,0.9236,1.002,1.094,1.199," +
+     "1.329,1.47,1.663,1.955,2.384,3.262,0.3343,0.4136,0.4727,0.5245,0.5817,0.6431,0.7068,0.7646,0.8293,0.8896," +
+     "0.9666,1.044,1.143,1.257,1.393,1.557,1.831,2.21,2.973,0.4462,0.5526,0.6335,0.7043,0.7644,0.8282,0.9015,0.9745," +
+     "1.051,1.127,1.215,1.319,1.434,1.586,1.744,1.957,2.195,2.559,3.343,0.5106,0.6099,0.6954,0.7692,0.8468,0.9215," +
+     "0.9957,1.076,1.149,1.232,1.324,1.427,1.534,1.666,1.811,1.988,2.207,2.479,2.954,0.4308,0.5188,0.5825,0.6551," +
+     "0.7149,0.7775,0.8348,0.904,0.9754,1.051,1.134,1.242,1.356,1.475,1.614,1.796,2.024,2.41,3.123,0.4613,0.5557," +
+     "0.6375,0.7077,0.7762,0.8468,0.9141,0.9934,1.062,1.155,1.238,1.328,1.43,1.555,1.707,1.873,2.094,2.387,3.041," +
+     "0.5507,0.6649,0.7466,0.8322,0.8908,0.9602,1.031,1.114,1.182,1.285,1.378,1.462,1.567,1.702,1.793,1.957,2.141," +
+     "2.503,2.883,0.4616,0.5579,0.6519,0.7181,0.7901,0.8611,0.9272,1.011,1.079,1.161,1.249,1.339,1.438,1.553,1.69," +
+     "1.885,2.099,2.431,3.023,0.4554,0.5535,0.6425,0.7081,0.7781,0.8469,0.9162,0.9964,1.068,1.151,1.235,1.327,1.437," +
+     "1.547,1.694,1.863,2.092,2.404,2.956"
+
+// P(anchor CLOSES below +k SD), unconditional, k = 0.5 / 1.0 / 1.5 / 2.0.
+// This is a statement about the whole population of sessions. It is NOT
+// conditioned on where price is right now. See S_FADE.
+var string S_ONE =
+     "84.06,93.57,96.73,98.07,78.55,90.77,95.72,97.77,77.8,90.07,94.94,97.11,77.37,90.48,95.85,97.73,76.44,89.64," +
+     "94.95,97.3,76.39,90.01,94.87,97.62,77.65,91,95.83,98.02,77.1,90.96,95.86,97.63,82.68,92.62,96.44,98.08,71.24," +
+     "87.78,94.56,97.47,73.47,89.07,95.49,97.89,72.3,88.77,95.08,98.02,75.7,91.31,96.16,98.12,76.18,89.46,95.78," +
+     "97.82,76.89,90.39,95.21,97.47,79.72,92.65,96.71,98.26,79.63,92.24,96.25,97.97,0,0,0,0,82.83,93.21,96.92,98.32," +
+     "79.5,91.26,95.43,97.63,78.7,90.56,95.73,98.01,80.97,92.75,96.45,98.08,82.65,93.16,97.18,98.58,79.36,91.32," +
+     "95.81,97.88,77.92,91.18,95.96,97.66,73.17,88.87,95.24,97.65,72.45,87.54,94.67,97.94,75.01,90.09,95.73,97.9," +
+     "71.98,87.61,94.53,97.6,65.97,84.42,93.25,96.62,72.29,87.72,95.12,97.85,72.96,88.44,94.8,98.01"
+
+// ------------------------------------------------------------------
+// P(closes back INSIDE the band | the band was tagged), k = 0.5/1.0/1.5/2.0.
+// Four values per anchor, in percent. This is the CONDITIONAL figure and
+// the one the "P fade" column reports.
+//
+// Measured the same way as the study's fade_table.p_close_inside: among
+// periods whose high reached +k sigma (and symmetrically for the low),
+// the share that closed back inside. Up and down sides pooled. Tagging
+// uses the same full-sample sigma the levels are drawn from, so the
+// historical rule matches what the chart does.
+//
+// A zero means fewer than 100 tagged observations - the cell renders "-"
+// rather than quote a figure with a standard error of 5 points or worse.
+// Only two cells are zero: hour 17 throughout, and Week at 2 SD (n=80).
+// ------------------------------------------------------------------
+var string S_FADE =
+     "52.82,52.73,53.18,52.78,50.91,53.06,53.22,52.68,51.68,50.99,48.27,51.95,51.69,54.11,53.96,51.14," +
+     "49.3,50.58,50.46,50.74,52.41,53.96,50,51.15,52.57,55.99,56.59,58.75,49.36,52.04,50.73,45.18," +
+     "52.95,49.5,51.45,50.17,49.17,50.86,52.93,54.09,49.27,50.11,48.29,52.47,50.6,51.1,49.7,54.44," +
+     "50.87,53.88,54,54.41,51.29,49.01,52.73,51.52,51.58,52.25,52.76,52.22,50.59,50.08,46.86,44.78," +
+     "51.87,49.51,47.46,46.9,0,0,0,0,52.54,52.92,53.37,54.64,50.8,51.7,49.67,50.6," +
+     "48.12,49.48,51.92,54.12,50.45,51.92,50.29,50.68,53.53,54.32,55.21,54.45,52.01,52.29,52.9,53.13," +
+     "50.53,51.03,51.99,48.22,50.98,51.23,57.13,55.76,48.79,48.86,51.48,52.87,49.07,50.13,50.07,48.64," +
+     "49.14,45.86,44.76,44.89,48.07,47.1,50.28,0,47.5,46.41,46.81,45.53,47.79,47.04,46.22,49.03"
+
+// ------------------------------------------------------------------
+// Bull / bear split: [BullMFE, BullMAE, BearMFE, BearMAE] per anchor,
+// medians in sigma units. Descriptive only - it says how far a session
+// that ENDED up typically travelled each way, which you cannot know in
+// advance. Off by default for that reason.
+//
+// Definition, recovered by reproducing the shipped table to 0.03%: a
+// bull period is ret >= 0 and a bear period is ret < 0, so flat periods
+// count as bull. That asymmetry only matters overnight, where up to 3.5%
+// of hours close exactly unchanged.
+// ------------------------------------------------------------------
+var string S_BB =
+     "0.5061,0.1616,0.5664,0.1498,0.6472,0.1951,0.7199,0.1963,0.7021,0.1985,0.6879,0.1871,0.7382,0.2425,0.8147," +
+     "0.2111,0.7469,0.2045,0.8094,0.2079,0.7535,0.2294,0.7848,0.2201,0.7014,0.2428,0.7915,0.2098,0.7114,0.1787," +
+     "0.7624,0.1985,0.577,0.1761,0.6277,0.168,0.8786,0.291,0.9638,0.2779,0.8025,0.267,0.9526,0.2485,0.7879,0.2333," +
+     "0.904,0.2584,0.728,0.2397,0.9133,0.2158,0.7301,0.2405,0.8794,0.2229,0.6966,0.218,0.8332,0.2148,0.616,0.2123," +
+     "0.6921,0.2068,0.5836,0.1712,0.6357,0.1892,0,0,0,0,0.5614,0.1697,0.5647,0.1452,0.6001,0.1746,0.6509,0.1738," +
+     "0.6397,0.1784,0.7085,0.1597,0.5943,0.1693,0.6397,0.1746,0.5706,0.1705,0.6049,0.1674,0.6341,0.1863,0.7088," +
+     "0.1944,0.6261,0.1759,0.6849,0.1766,0.7823,0.2475,0.8649,0.2415,0.8222,0.2778,0.9928,0.2424,0.6852,0.2164," +
+     "0.8607,0.2212,0.7407,0.2408,0.9061,0.2607,0.8324,0.2642,1.025,0.2855,0.7581,0.2417,0.9755,0.224,0.7575,0.254," +
+     "0.9405,0.2295"
+
+// ==================================================================
+// INPUTS
+// ==================================================================
+var gL = "1 - Levels (chart lines AND gauge ticks)"
+i_mode    = input.string("Both", "Level type", options=["Percentiles","Std Dev","Both"],
+     group=gL, tooltip="Drives what is drawn on the chart AND what is marked inside the "
+                     + "gauge columns, so the two always agree.\n\n"
+                     + "These are TWO DIFFERENT DISTRIBUTIONS, deliberately. Std Dev "
+                     + "ticks come from the sigma of the NET CHANGE, (close-open)/open - that is what +/-1.0 means. Percentiles come from the EXCURSION distributions, how far "
+                     + "price actually reached. A session's high is not its close, so "
+                     + "these are measured on different samples and the two sets of "
+                     + "levels are not interchangeable.")
+i_lv_on   = input.bool(true,  "Show chart lines", group=gL)
+i_lv_keep = input.bool(true,  "Keep levels after the period ends", group=gL,
+     tooltip="ON keeps a finished period's levels on the chart, frozen at the bar it "
+           + "closed on, until that period next opens. This is what you usually want: "
+           + "at 10:00 in New York, Asia and London are both long closed, and where "
+           + "their levels sat is exactly the information you are looking for.\n\n"
+           + "OFF deletes a period's lines the moment it ends, so only currently-live "
+           + "anchors are ever drawn. Cleaner, but Asia and London will appear to do "
+           + "nothing for most of the New York day.\n\n"
+           + "Either way the levels stop extending when the period closes, so a frozen "
+           + "set ends at its own close rather than running to the current bar.")
+i_hourL= input.bool(false, "Current hour  (rolls hourly)", group=gL,
+     tooltip="Levels from the 15-year distribution for THIS hour of the NY clock. "
+           + "09:00 and 10:00 behave nothing like 02:00, so each hour has its own "
+           + "sigma and excursion grid. Redraws on the hour. Meaningless on charts "
+           + "of 1H or coarser, and the 17:00 hour is blank - only 26 clean "
+           + "observations in 15 years because of the maintenance break.")
+i_asia = input.bool(true,  "Asia          19:00-02:00", group=gL)
+i_lon  = input.bool(true,  "London        02:00-08:00", group=gL)
+i_nyam = input.bool(true,  "NY morning    08:00-12:00", group=gL)
+i_nypm = input.bool(true,  "NY afternoon  12:00-17:00", group=gL)
+i_rth  = input.bool(false, "NY RTH        09:30-16:00", group=gL)
+i_nyf  = input.bool(false, "NY full       08:00-16:00", group=gL)
+i_dayL = input.bool(false, "Globex day    18:00-17:00", group=gL)
+i_weekL= input.bool(false, "Week          Mon-Fri", group=gL,
+     tooltip="Only 770 observations in the study, against ~3,700-3,800 for every "
+           + "other anchor, so the P90/P95 levels rest on a few dozen tail "
+           + "observations. Treat the outer bands as indicative.")
+i_p25 = input.bool(false, "  MFE/MAE P25", group=gL)
+i_p50 = input.bool(true,  "  MFE/MAE P50", group=gL)
+i_p75 = input.bool(true,  "  MFE/MAE P75", group=gL)
+i_p90 = input.bool(true,  "  MFE/MAE P90", group=gL)
+i_p95 = input.bool(false, "  MFE/MAE P95", group=gL)
+i_bb  = input.bool(false, "  Bull/bear split (descriptive only)", group=gL,
+     tooltip="Median excursions of sessions that ENDED up, and of those that ended down. Both are known only in hindsight, so these are a description of history, not levels to trade against. Off by default.")
+i_rng = input.bool(false, "  Range band (H-L percentiles, symmetric)", group=gL,
+     tooltip="Off by default. The Range basis setting below does nothing until this is on.")
+i_rngb= input.string("Half Range","  Range basis - needs Range band ON",
+     options=["Half Range","Full Range"], group=gL,
+     tooltip="The session's full high-to-low span is roughly the sum of its two "
+           + "excursions, so plotting the WHOLE span on EACH side of the open gives a "
+           + "band about twice as wide as price typically travels either way - its P50 "
+           + "is tagged ~16% of the time, not 50%. Half Range divides by two, giving an "
+           + "envelope comparable to the MFE/MAE bands. Half is the sane default.")
+i_sdk = input.string("1.0","  Std Dev band", options=["0.5","1.0","1.5","2.0"], group=gL,
+     tooltip="Careful with the textbook numbers here. \"68% of sessions close below "
+           + "+1 SD\" is wrong twice over: 68% is a TWO-SIDED share, the ground between "
+           + "-1 and +1, so quoting it one-sided is a category error - and 68.3% is the "
+           + "GAUSSIAN figure, which NQ is not.\n\n"
+           + "Measured on the daily anchor: 75.2% of sessions close INSIDE +/-1 SD, and "
+           + "87.6% close BELOW +1 SD. Both are unconditional - see the probability "
+           + "setting in the gauge section for what happens once a band is tagged.")
+
+var gG = "2 - Extension gauge"
+i_g_on    = input.bool(true, "Show gauge", group=gG)
+i_g_hour  = input.bool(true, "  Hour",    group=gG)
+i_g_sess  = input.bool(true, "  Session", group=gG)
+i_g_which = input.string("Auto (live session)", "  Which session",
+     options=["Auto (live session)","Asia","London","NY AM","NY PM","NY RTH","NY full"],
+     group=gG, tooltip="Auto follows whichever session is running now. Where windows "
+                     + "overlap the narrower one wins, so Auto never selects NY RTH or "
+                     + "NY full - pick those explicitly. Between 17:00 and 19:00 no "
+                     + "session is live; the last one is held and its header is marked "
+                     + "with * to show the data is stale.")
+i_g_day   = input.bool(true, "  Day",     group=gG)
+i_g_week  = input.bool(true, "  Week",    group=gG)
+i_g_align = input.string("Range fill", "Column mode",
+     options=["Range fill","Common baseline","Own open"], group=gG,
+     tooltip="Range fill draws every column as a fixed-height tank representing that "
+           + "anchor's full statistical range, filled from the open out to the high and "
+           + "low so far. A full column means the range is used up, and all columns are "
+           + "directly comparable, but the heights are normalised so they do NOT line up "
+           + "with the SD lines on the chart. Common baseline plots true sigma but centres "
+           + "every column on the last price. Own open is the only mode whose ticks sit at "
+           + "the same prices as the chart lines - and only when Column height multiplier "
+           + "is left at 1.0, since that setting scales the gauge but not the chart.")
+i_g_full  = input.string("Percentile 0-100", "  Full tank =",
+     options=["Percentile 0-100","MFE/MAE P75","MFE/MAE P90","MFE/MAE P95",
+              "1.0 SD","1.5 SD","2.0 SD"],
+     group=gG, tooltip="What counts as 100% of the expected range. Percentile 0-100 "
+                     + "makes the bar height BE the percentile rank - a bar at 88% of "
+                     + "the tank is p88, and the MFE/MAE ticks space out evenly. The "
+                     + "others set the top to a fixed level, so the fill reads as a "
+                     + "fraction of that level instead.")
+i_g_fillpc= input.bool(true, "  Show percent filled", group=gG)
+i_g_tankax= input.bool(true, "  Show % of range axis", group=gG,
+     tooltip="In Range fill the tank height is the same for every column, so a percent "
+           + "axis is genuinely shared. The SD scale is not - each column is normalised "
+           + "to its own range, so 1 SD sits at a different height in each.")
+i_g_prob  = input.string("P fade (conditional)", "Probability under each column",
+     options=["P fade (conditional)","P close below (unconditional)","None"], group=gG,
+     tooltip="P FADE is P(the anchor closes back inside the band | price already tagged "
+           + "it), measured per anchor at 0.5/1.0/1.5/2.0 SD. It runs 44.8% to 58.8% and "
+           + "does NOT rise with distance - reaching 2 SD makes a session no more likely "
+           + "to come back than reaching 0.5 SD does. This is the number that answers "
+           + "'will it come back'. Cells under 100 tagged observations render '-'.\n\n"
+           + "P CLOSE BELOW is P(the anchor closes below the current level) over ALL "
+           + "sessions, with no conditioning on where price is now or how much time is "
+           + "left. It rises to 87% at 1 SD and 94% at 1.5 SD. It is a fact about the "
+           + "population, not a forecast for today, and reading it as one overstates the "
+           + "reversion case by 30-45 points.")
+i_g_nowlab= input.bool(true,  "Label the price-now marker", group=gG,
+     tooltip="The coloured bar shows how far price REACHED (the high and low so far). "
+           + "This marker shows where it is NOW. After a pullback the bar top can sit "
+           + "above a level the marker is below - both are correct.\n\n"
+           + "Under Range fill the marker's HEIGHT is positioned by ranking the net "
+           + "change through the excursion grid, which mixes two different samples. Read "
+           + "its position relative to the bar top, not as a percentile in its own right.")
+i_g_hdr   = input.bool(true,  "Show column headers", group=gG)
+i_g_sdlab = input.string("First column", "SD tick labels on",
+     options=["Every column","First column","None"], group=gG,
+     tooltip="On Common baseline every column shares one SD scale, so repeating the "
+           + "labels adds nothing. On Own open each column has its own scale.")
+i_g_ptlab = input.string("Every column", "Percentile tick labels on",
+     options=["Every column","First column","None"], group=gG,
+     tooltip="These differ per anchor, so per-column labelling is usually what you want.")
+i_g_tickval = input.bool(false, "Include points on gauge tick labels", group=gG)
+i_g_kmax  = input.float(2.0, "Scale extent (SD)", minval=1.0, maxval=4.0, step=0.5, group=gG)
+i_g_gap   = input.int(14, "Gap from last bar (bars)", minval=1,  maxval=200, group=gG)
+i_g_wid   = input.int(3,  "Column half-width (bars)", minval=1,  maxval=30,  group=gG)
+i_g_space = input.int(11, "Column spacing (bars)",    minval=2,  maxval=100, group=gG)
+i_g_hmode = input.string("Fixed multiplier", "Gauge height",
+     options=["Fit to recent range","Fixed multiplier"], group=gG,
+     tooltip="In the shared modes the gauge is a schematic - nothing about its height "
+           + "carries meaning, only the proportions inside it - so it can be sized to "
+           + "suit the chart. FIT sizes the tank to a share of the recent high-low "
+           + "range, so it stays readable at any zoom, timeframe or price level. FIXED "
+           + "MULTIPLIER scales it off the day's sigma instead, which is a real price "
+           + "height and so grows as the instrument does.\n\n"
+           + "This matters because TradingView includes drawing objects in autoscale "
+           + "and there is no way to opt out: an oversized gauge squashes the candles.\n\n"
+           + "Own open ignores this setting entirely - its whole purpose is that the "
+           + "ticks sit at the same prices as the chart lines, so its height cannot be "
+           + "rescaled without breaking that.")
+i_g_fit   = input.float(55, "  Fit: % of recent range", minval=5, maxval=200, step=5, group=gG,
+     tooltip="Total tank height as a percentage of the lookback's high-low range. At "
+           + "100 the gauge is exactly as tall as the recent range and will dominate "
+           + "the pane; 40-60 leaves the candles room to breathe.")
+i_g_look  = input.int(150, "  Fit: lookback (bars)", minval=20, maxval=1000, group=gG,
+     tooltip="Roughly how much chart the gauge sizes itself against. Longer lookbacks "
+           + "make the height steadier but slower to adapt after a volatility shift.")
+i_g_height= input.float(0.3, "  Fixed: height multiplier", minval=0.05, maxval=5.0, step=0.05, group=gG,
+     tooltip="Only used when Gauge height is set to Fixed multiplier, and always used "
+           + "by Own open. NOTE: at any value other than 1.0 the Own open ticks no "
+           + "longer sit at the same prices as the chart lines.")
+
+var gS = "3 - Day / Week source"
+i_src = input.string("Chart-tracked", "Day and Week ranges from",
+     options=["Chart-tracked","Exchange bars"], group=gS,
+     tooltip="Chart-tracked builds the day (18:00-17:00 ET) and week from the bars on "
+           + "this chart, matching the study definition exactly. Exchange bars uses the "
+           + "broker's own D and W bars via request.security. Compare them in the "
+           + "table's Open / High / Low columns - they should agree closely on CME futures.")
+
+var gV = "4 - Volatility scaling"
+i_scale = input.bool(true, "Scale all levels by recent volatility", group=gV,
+     tooltip="LEAVE THIS ON. The constants are 15-year averages and annual sigma ran "
+           + "0.53% to 1.69% over the study, a 3.2x spread, so they are not usable raw. "
+           + "Fitting the grids on 2010-2017 and testing them on 2017-2025: with "
+           + "scaling, the P50 level was tagged 51-55% of the time and P90 caught "
+           + "89-91%, close to nominal. Without it, P50 was tagged 57-64% and P90 only "
+           + "80% - the bands sit far too tight because volatility rose ~40% between "
+           + "the two halves.\n\n"
+           + "The multiplier is frozen at each anchor's open, so a level never moves "
+           + "under you mid-session and the chart lines, gauge ticks and table always "
+           + "agree.")
+i_slen  = input.int(252, "  Lookback (days)", minval=5, maxval=500, group=gV,
+     tooltip="The source study fits sigma over 252 periods. Shorter windows are much "
+           + "noisier: at 20 days the standard error of a sigma estimate is about 16%, "
+           + "so the levels would shift by that much on estimation noise alone before "
+           + "volatility has actually changed anything. At 252 it is about 4.5%. "
+           + "Note the estimator here is a close-to-close standard deviation rather "
+           + "than the study's root-mean-square of (close-open)/open; on a contiguous "
+           + "23-hour session the two are close, but they are not identical.")
+i_smin  = input.float(0.5, "  Min multiplier", minval=0.1, maxval=1.0, step=0.05, group=gV)
+i_smax  = input.float(2.5, "  Max multiplier", minval=1.0, maxval=5.0, step=0.05, group=gV)
+
+var gH = "5 - Short sessions"
+i_hd_mode = input.string("Flag only", "Early-close days",
+     options=["Flag only","Hide affected levels"], group=gH,
+     tooltip="The study dropped any session with less than half its expected bars, "
+           + "which removed holidays and half-days. On a 13:00 early close the Day, NY "
+           + "PM, RTH and NY full anchors are only two-thirds to three-quarters of their "
+           + "usual length, so full-session constants make the levels far too wide and "
+           + "the percentile ranks far too low. Flag only marks the table row; Hide "
+           + "suppresses the affected levels entirely.")
+i_hd_tg   = input.bool(true, "  Day after Thanksgiving", group=gH)
+i_hd_xmas = input.bool(true, "  Christmas Eve",          group=gH)
+i_hd_jul  = input.bool(true, "  July 3rd",               group=gH)
+i_hd_nye  = input.bool(false,"  New Year's Eve",         group=gH,
+     tooltip="Not normally an early close for CME equity index futures. Off by default.")
+
+var gT = "6 - Text and labels"
+i_sz_lvl  = input.string("Tiny",  "Level label size",   options=["Tiny","Small","Normal","Large"], group=gT)
+i_sz_pct  = input.string("Small", "Gauge pNN size",     options=["Tiny","Small","Normal","Large"], group=gT)
+i_sz_tick = input.string("Tiny",  "Gauge SD tick size", options=["Tiny","Small","Normal","Large"], group=gT)
+i_sz_hdr  = input.string("Small", "Gauge header size",  options=["Tiny","Small","Normal","Large"], group=gT)
+i_lvl_fmt = input.string("Points","Level label shows",  options=["Points","Percent","Both","Name only"], group=gT)
+i_lvl_off = input.int(6, "Level label offset (bars)", minval=0, maxval=80, group=gT)
+
+var gB = "7 - Table"
+i_tb_on   = input.bool(true, "Show table", group=gB)
+i_tb_pos  = input.string("Bottom Right", "Position",
+     options=["Top Left","Top Center","Top Right","Middle Left","Middle Right",
+              "Bottom Left","Bottom Center","Bottom Right"], group=gB)
+i_tb_sz   = input.string("Tiny", "Text size", options=["Tiny","Small","Normal","Large"], group=gB)
+i_tb_lvls = input.bool(true,  "  Level columns  (sigma, MFE, MAE)", group=gB)
+i_tb_st   = input.bool(true,  "  State columns  (rank, SD, probability)", group=gB)
+i_tb_diag = input.bool(false, "  Diagnostic columns  (open, high, low, bars)", group=gB,
+     tooltip="Shows exactly what the script thinks each anchor's open, high and low "
+           + "are, plus elapsed bars against the expected count, so you can check the "
+           + "day and week tracking against the chart.")
+
+var gC = "8 - Colours"
+c_mfe = input.color(color.rgb(30,140,30),        "MFE / upside",  group=gC)
+c_mae = input.color(color.rgb(180,30,30),        "MAE / downside",group=gC)
+c_sd  = input.color(color.rgb(60,60,160),        "Std Dev",       group=gC)
+c_rn  = input.color(color.rgb(110,110,110),      "Range",         group=gC)
+c_op  = input.color(color.rgb(120,120,120),      "Session open",  group=gC)
+c_bup = input.color(color.new(color.green, 55),  "Gauge up bar",  group=gC)
+c_bdn = input.color(color.new(color.red,   55),  "Gauge down bar",group=gC)
+c_ax  = input.color(color.rgb(140,140,140),      "Gauge axis",    group=gC)
+c_tx  = input.color(color.rgb(105,105,105),      "Gauge text",    group=gC)
+c_now = input.color(color.rgb(20,20,20),         "Price-now marker", group=gC)
+c_hdr = input.color(color.rgb(200,170,90),       "Gauge header",  group=gC)
+
+f_sz(s) => s == "Tiny" ? size.tiny : s == "Small" ? size.small : s == "Normal" ? size.normal : size.large
+f_pos(s) =>
+    switch s
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+// ==================================================================
+// PARSE CONSTANTS ONCE
+// ==================================================================
+f_parse(s) =>
+    a = array.new<float>(0)
+    for p in str.split(s, ",")
+        array.push(a, str.tonumber(p))
+    a
+var array<float> SIG  = f_parse(S_SIG)
+var array<float> MFE  = f_parse(S_MFE)
+var array<float> MAE  = f_parse(S_MAE)
+var array<float> RNG  = f_parse(S_RNG)
+var array<float> ONE  = f_parse(S_ONE)
+var array<float> FADE = f_parse(S_FADE)
+var array<float> BB   = f_parse(S_BB)
+
+// ==================================================================
+// SYMBOL GUARD
+// ==================================================================
+// Every constant here was measured on NQ. Nothing stops the script being
+// dropped on ES, CL or SPY, where it would render confident nonsense, so
+// say so plainly rather than let the numbers speak for a symbol they
+// never described.
+isNQ = str.contains(str.upper(syminfo.root), "NQ") or str.contains(str.upper(syminfo.ticker), "NQ")
+tfOK = timeframe.isintraday and timeframe.in_seconds() <= 3600
+
+var label WARN = na
+if barstate.islast
+    label.delete(WARN)
+    msg = not isNQ ? "Constants are NQ-only. This is " + syminfo.ticker + " - levels are not valid here."
+         : not tfOK ? "Intraday timeframes of 1H or finer only. Session anchors cannot be tracked on " + timeframe.period + "."
+         : ""
+    if msg != ""
+        WARN := label.new(bar_index, high, "Sess Stats+   " + msg,
+             style=label.style_label_lower_left, color=color.new(color.red, 15),
+             textcolor=color.white, size=size.normal)
+
+// ==================================================================
+// VOLATILITY MULTIPLIER
+// ==================================================================
+// The stdev must be evaluated ON the daily series. Computing it on the chart
+// series makes close[1] the previous CHART bar's daily close, which is the same
+// day, so the returns are ~0 and the multiplier pins to its floor.
+cs = request.security(syminfo.tickerid, "D",
+     ta.stdev((close - close[1]) / close[1], i_slen) * 100,
+     lookahead=barmerge.lookahead_off)
+volLive = not i_scale or na(cs) or cs <= 0 ? 1.0 :
+     math.min(i_smax, math.max(i_smin, cs / LONGRUN_DAILY))
+
+// Every sigma lookup takes an explicit multiplier. Anchors store the value
+// that was live when they opened and pass that, so a level drawn at the open
+// keeps its price for the whole session and the table, the gauge ticks and
+// the chart lines are computed from one number.
+f_sigv(a, vm) => array.get(SIG, a) * vm
+f_mfev(a, q, vm) => f_sigv(a, vm) * array.get(MFE, a * NQ + q)
+f_maev(a, q, vm) => f_sigv(a, vm) * array.get(MAE, a * NQ + q)
+f_rngv(a, q, vm) => f_sigv(a, vm) * array.get(RNG, a * NQ + q)
+
+// ==================================================================
+// SESSIONS AND ANCHOR TRACKING
+// ==================================================================
+in_asia = not na(time(timeframe.period, "1900-0200", TZ))
+in_lon  = not na(time(timeframe.period, "0200-0800", TZ))
+in_nyam = not na(time(timeframe.period, "0800-1200", TZ))
+in_nypm = not na(time(timeframe.period, "1200-1700", TZ))
+in_rth  = not na(time(timeframe.period, "0930-1600", TZ))
+in_ny   = not na(time(timeframe.period, "0800-1600", TZ))
+
+nyHour  = hour(time, TZ)
+hourNew = nyHour != nyHour[1]
+
+// The session-window approach cannot detect the day roll: "1800-1700" is only
+// false during the 17:00-18:00 maintenance break, and no bars exist then, so
+// the transition never occurs. Instead derive a session-date key directly.
+// Shifting +6h puts 18:00 ET onto the next calendar day, which is the CME
+// convention and matches the study's DAY_SHIFT_HOURS = 6.
+stamp   = time + 6 * 60 * 60 * 1000
+sdKey   = year(stamp, TZ) * 10000 + month(stamp, TZ) * 100 + dayofmonth(stamp, TZ)
+sdDow   = dayofweek(stamp, TZ)
+sdMon   = month(stamp, TZ)
+sdDom   = dayofmonth(stamp, TZ)
+dayNew  = na(sdKey[1]) or sdKey != sdKey[1]
+// A new week is the first session whose weekday is Monday, or - to survive a
+// Monday holiday - any session whose weekday moves backwards from the last one.
+var int prevDow = na
+weekNew = dayNew and (sdDow == dayofweek.monday or (not na(prevDow) and sdDow < prevDow))
+if dayNew
+    prevDow := sdDow
+
+// ---- early closes ----
+// US equity-index futures shut at 13:00 ET on a handful of days a year. The
+// study threw those sessions away; this script cannot, so it marks them. Dates
+// are derived rather than hard-coded so the script does not expire.
+isThanksFri = i_hd_tg   and sdMon == 11 and sdDow == dayofweek.friday and sdDom >= 23 and sdDom <= 29
+isXmasEve   = i_hd_xmas and sdMon == 12 and sdDom == 24 and sdDow != dayofweek.saturday and sdDow != dayofweek.sunday
+isJul3      = i_hd_jul  and sdMon == 7  and sdDom == 3  and sdDow != dayofweek.saturday and sdDow != dayofweek.sunday
+isNYE       = i_hd_nye  and sdMon == 12 and sdDom == 31 and sdDow != dayofweek.saturday and sdDow != dayofweek.sunday
+earlyClose  = isThanksFri or isXmasEve or isJul3 or isNYE
+
+// Expected bar count per anchor, used only as a diagnostic.
+tfMin = math.max(1, timeframe.in_seconds() / 60)
+f_expBars(a) =>
+    mins = a == I_ASIA ? 420 : a == I_LON ? 360 : a == I_NYAM ? 240 : a == I_NYPM ? 300 :
+           a == I_RTH ? 390 : a == I_NY ? 480 : a == I_DAY ? 1380 : a == I_WEEK ? 6900 : 60
+    int(mins / tfMin)
+
+var float d_o = na, var float d_h = na, var float d_l = na
+var int   d_bars = 0, var int w_bars = 0
+
+if dayNew or na(d_o)
+    d_o := open, d_h := high, d_l := low, d_bars := 1
+else
+    d_h := math.max(d_h, high), d_l := math.min(d_l, low), d_bars := d_bars + 1
+
+var float w_o = na, var float w_h = na, var float w_l = na
+if weekNew or na(w_o)
+    w_o := open, w_h := high, w_l := low, w_bars := 1
+else
+    w_h := math.max(w_h, high), w_l := math.min(w_l, low), w_bars := w_bars + 1
+
+// Exchange bars, for comparison and as an alternative source. lookahead_off
+// means historical values are the confirmed ones; on the last bar these are
+// the live developing D and W bars, which is what the gauge wants.
+[xd_o, xd_h, xd_l] = request.security(syminfo.tickerid, "D", [open, high, low],
+     lookahead=barmerge.lookahead_off)
+[xw_o, xw_h, xw_l] = request.security(syminfo.tickerid, "W", [open, high, low],
+     lookahead=barmerge.lookahead_off)
+
+useX = i_src == "Exchange bars"
+D_O = useX ? xd_o : d_o
+D_H = useX ? xd_h : d_h
+D_L = useX ? xd_l : d_l
+W_O = useX ? xw_o : w_o
+W_H = useX ? xw_h : w_h
+W_L = useX ? xw_l : w_l
+
+// ==================================================================
+// PERCENTILE RANK against the 19-point grid
+// ==================================================================
+f_rank(grid, a, x) =>
+    base = a * NQ
+    lo0  = array.get(grid, base)
+    hiN  = array.get(grid, base + NQ - 1)
+    r = 0.0
+    if na(x) or x < 0
+        r := 0.0
+    else if lo0 > 0 and x <= lo0
+        // Seven grids have an exact zero at P5; for those this branch cannot
+        // fire and the loop below handles the interval from zero correctly.
+        r := 5.0 * x / lo0
+    else if x >= hiN
+        r := math.min(99.0, 95.0 + 4.0 * (x - hiN) / hiN)
+    else
+        for i = 0 to NQ - 2
+            a1 = array.get(grid, base + i)
+            b1 = array.get(grid, base + i + 1)
+            if x >= a1 and x <= b1 and b1 > a1
+                r := 5.0 * (i + 1) + 5.0 * (x - a1) / (b1 - a1)
+                break
+    r
+
+// P(anchor closes below +k SD), unconditional, interpolated across the table.
+f_below(a, k) =>
+    ak = math.abs(k)
+    b  = a * 4
+    p  = 0.0
+    if ak <= 0.5
+        p := 50.0 + (array.get(ONE, b) - 50.0) * (ak / 0.5)
+    else if ak <= 1.0
+        p := array.get(ONE, b)   + (array.get(ONE, b+1) - array.get(ONE, b))   * ((ak-0.5)/0.5)
+    else if ak <= 1.5
+        p := array.get(ONE, b+1) + (array.get(ONE, b+2) - array.get(ONE, b+1)) * ((ak-1.0)/0.5)
+    else if ak <= 2.0
+        p := array.get(ONE, b+2) + (array.get(ONE, b+3) - array.get(ONE, b+2)) * ((ak-1.5)/0.5)
+    else
+        p := array.get(ONE, b+3)
+    p
+
+// P(closes back inside | tagged), interpolated across the same k grid as
+// f_below. Held flat outside 0.5-2.0 rather than extrapolated: the measured
+// series has no trend in k, so a slope fitted to its noise would be fiction.
+// Returns na where the cell is unmeasured, so callers render "-" not 0.
+f_fade(a, k) =>
+    ak = math.abs(k)
+    b  = a * 4
+    v0 = array.get(FADE, b)
+    v1 = array.get(FADE, b+1)
+    v2 = array.get(FADE, b+2)
+    v3 = array.get(FADE, b+3)
+    p  = float(na)
+    if ak <= 0.5
+        p := v0
+    else if ak <= 1.0
+        p := v0 > 0 and v1 > 0 ? v0 + (v1 - v0) * ((ak-0.5)/0.5) : float(na)
+    else if ak <= 1.5
+        p := v1 > 0 and v2 > 0 ? v1 + (v2 - v1) * ((ak-1.0)/0.5) : float(na)
+    else if ak <= 2.0
+        p := v2 > 0 and v3 > 0 ? v2 + (v3 - v2) * ((ak-1.5)/0.5) : float(na)
+    else
+        p := v3
+    na(p) or p <= 0 ? float(na) : p
+
+// The text under a gauge column, and in the table's probability cell.
+f_probTxt(a, zc) =>
+    s = ""
+    if i_g_prob == "P fade (conditional)"
+        f = f_fade(a, zc)
+        s := na(f) ? "-" : str.format("{0,number,#}", f) + "%"
+    else if i_g_prob == "P close below (unconditional)"
+        p = f_below(a, zc)
+        s := str.format("{0,number,#}", zc >= 0 ? p : 100 - p) + "%"
+    s
+
+// ==================================================================
+// LEVEL DRAWING
+// ==================================================================
+type Lv
+    string tag
+    int    anchor
+    bool   show
+    float  o  = na
+    float  h  = na
+    float  l  = na
+    float  vm = 1.0
+    bool   short = false
+    bool   stale = false
+    int    bars = 0
+    array<line>  ln
+    array<label> lb
+f_newLv(tag, a, show) => Lv.new(tag=tag, anchor=a, show=show,
+     ln=array.new<line>(), lb=array.new<label>())
+
+var Lv LV_HOUR = f_newLv("Hr",   0,      i_hourL)
+var Lv LV_ASIA = f_newLv("Asia", I_ASIA, i_asia)
+var Lv LV_LON  = f_newLv("Lon",  I_LON,  i_lon)
+var Lv LV_AM   = f_newLv("AM",   I_NYAM, i_nyam)
+var Lv LV_PM   = f_newLv("PM",   I_NYPM, i_nypm)
+var Lv LV_RTH  = f_newLv("RTH",  I_RTH,  i_rth)
+var Lv LV_NY   = f_newLv("NY",   I_NY,   i_nyf)
+var Lv LV_DAY  = f_newLv("DAY",  I_DAY,  i_dayL)
+var Lv LV_WEEK = f_newLv("WEEK", I_WEEK, i_weekL)
+
+// Anchors whose length is cut by a 13:00 close. Asia, London and the NY morning
+// all finish before 13:00, so they are unaffected.
+f_hitByEarly(a) => a == I_DAY or a == I_WEEK or a == I_NYPM or a == I_RTH or a == I_NY
+
+f_lvClear(v) =>
+    for x in v.ln
+        line.delete(x)
+    array.clear(v.ln)
+    for x in v.lb
+        label.delete(x)
+    array.clear(v.lb)
+
+f_lvExtend(v) =>
+    x2 = bar_index + i_lvl_off
+    for x in v.ln
+        line.set_x2(x, x2)
+    for x in v.lb
+        label.set_x(x, x2)
+
+f_lvTxt(name, pct, o) =>
+    pts = pct / 100.0 * o
+    switch i_lvl_fmt
+        "Points"    => name + "  " + str.format("{0,number,#}", pts)
+        "Percent"   => name + "  " + str.format("{0,number,#.##}", pct) + "%"
+        "Both"      => name + "  " + str.format("{0,number,#}", pts) + " / " + str.format("{0,number,#.##}", pct) + "%"
+        => name
+
+f_lvAdd(v, y, txt, col, st) =>
+    x1 = bar_index
+    array.push(v.ln, line.new(x1, y, x1 + 1, y, color=col, style=st, width=1))
+    array.push(v.lb, label.new(x1 + 1, y, " " + txt, style=label.style_none,
+         textcolor=color.new(col, 15), color=color.new(color.white, 100),
+         size=f_sz(i_sz_lvl), text_font_family=font.family_monospace))
+
+f_lvDraw(v) =>
+    o  = v.o
+    a  = v.anchor
+    vm = v.vm
+    doP = i_mode != "Std Dev"
+    doS = i_mode != "Percentiles"
+    if doP
+        if i_p25
+            f_lvAdd(v, o * (1 + f_mfev(a,Q25,vm)/100), f_lvTxt(v.tag+" MFE25", f_mfev(a,Q25,vm), o), c_mfe, line.style_dotted)
+            f_lvAdd(v, o * (1 - f_maev(a,Q25,vm)/100), f_lvTxt(v.tag+" MAE25", f_maev(a,Q25,vm), o), c_mae, line.style_dotted)
+        if i_p50
+            f_lvAdd(v, o * (1 + f_mfev(a,Q50,vm)/100), f_lvTxt(v.tag+" MFE50", f_mfev(a,Q50,vm), o), c_mfe, line.style_solid)
+            f_lvAdd(v, o * (1 - f_maev(a,Q50,vm)/100), f_lvTxt(v.tag+" MAE50", f_maev(a,Q50,vm), o), c_mae, line.style_solid)
+        if i_p75
+            f_lvAdd(v, o * (1 + f_mfev(a,Q75,vm)/100), f_lvTxt(v.tag+" MFE75", f_mfev(a,Q75,vm), o), c_mfe, line.style_dashed)
+            f_lvAdd(v, o * (1 - f_maev(a,Q75,vm)/100), f_lvTxt(v.tag+" MAE75", f_maev(a,Q75,vm), o), c_mae, line.style_dashed)
+        if i_p90
+            f_lvAdd(v, o * (1 + f_mfev(a,Q90,vm)/100), f_lvTxt(v.tag+" MFE90", f_mfev(a,Q90,vm), o), c_mfe, line.style_dotted)
+            f_lvAdd(v, o * (1 - f_maev(a,Q90,vm)/100), f_lvTxt(v.tag+" MAE90", f_maev(a,Q90,vm), o), c_mae, line.style_dotted)
+        if i_p95
+            f_lvAdd(v, o * (1 + f_mfev(a,Q95,vm)/100), f_lvTxt(v.tag+" MFE95", f_mfev(a,Q95,vm), o), c_mfe, line.style_dotted)
+            f_lvAdd(v, o * (1 - f_maev(a,Q95,vm)/100), f_lvTxt(v.tag+" MAE95", f_maev(a,Q95,vm), o), c_mae, line.style_dotted)
+        if i_bb
+            bb0 = f_sigv(a, vm) * array.get(BB, a*4)
+            bb1 = f_sigv(a, vm) * array.get(BB, a*4+1)
+            bb2 = f_sigv(a, vm) * array.get(BB, a*4+2)
+            bb3 = f_sigv(a, vm) * array.get(BB, a*4+3)
+            f_lvAdd(v, o * (1 + bb0/100), f_lvTxt(v.tag+" BullMFE", bb0, o), c_mfe, line.style_solid)
+            f_lvAdd(v, o * (1 - bb1/100), f_lvTxt(v.tag+" BullMAE", bb1, o), c_mae, line.style_dotted)
+            f_lvAdd(v, o * (1 - bb2/100), f_lvTxt(v.tag+" BearMFE", bb2, o), c_mae, line.style_solid)
+            f_lvAdd(v, o * (1 + bb3/100), f_lvTxt(v.tag+" BearMAE", bb3, o), c_mfe, line.style_dotted)
+        if i_rng
+            dv = i_rngb == "Half Range" ? 2.0 : 1.0
+            r5 = f_rngv(a,Q50,vm) / dv
+            r7 = f_rngv(a,Q75,vm) / dv
+            f_lvAdd(v, o * (1 + r5/100), f_lvTxt(v.tag+" R50", r5, o), c_rn, line.style_dotted)
+            f_lvAdd(v, o * (1 - r5/100), f_lvTxt(v.tag+" -R50", r5, o), c_rn, line.style_dotted)
+            f_lvAdd(v, o * (1 + r7/100), f_lvTxt(v.tag+" R75", r7, o), c_rn, line.style_dotted)
+            f_lvAdd(v, o * (1 - r7/100), f_lvTxt(v.tag+" -R75", r7, o), c_rn, line.style_dotted)
+    if doS
+        k  = str.tonumber(i_sdk)
+        sd = f_sigv(a, vm) * k
+        f_lvAdd(v, o * (1 + sd/100), f_lvTxt(v.tag+" +"+i_sdk+"SD", sd, o), c_sd, line.style_dashed)
+        f_lvAdd(v, o * (1 - sd/100), f_lvTxt(v.tag+" -"+i_sdk+"SD", sd, o), c_sd, line.style_dashed)
+    f_lvAdd(v, o, v.tag + " Open", c_op, line.style_dashed)
+
+f_lvBar(v, isIn, wasIn) =>
+    if not isIn and wasIn
+        // Retained levels simply stop being extended, so they freeze at the bar
+        // the period closed on. The next open clears them before redrawing.
+        if not i_lv_keep
+            f_lvClear(v)
+        v.stale := true
+    if isIn and not wasIn
+        v.o  := open
+        v.h  := high
+        v.l  := low
+        v.vm := volLive          // frozen here, for the whole session
+        v.short := earlyClose and f_hitByEarly(v.anchor)
+        v.stale := false
+        v.bars  := 1
+        f_lvClear(v)
+        suppress = v.short and i_hd_mode == "Hide affected levels"
+        if v.show and i_lv_on and not suppress
+            f_lvDraw(v)
+    else if isIn and not na(v.o)
+        // Only extends while the session is actually live, so nothing bleeds
+        // across the 17:00-19:00 window when no session is running.
+        v.h := math.max(v.h, high)
+        v.l := math.min(v.l, low)
+        v.bars := v.bars + 1
+    if isIn and v.show and i_lv_on and not na(v.o)
+        f_lvExtend(v)
+
+LV_HOUR.anchor := nyHour
+LV_HOUR.tag    := str.format("{0,number,00}", nyHour) + "h"
+f_lvBar(LV_HOUR, f_sigv(nyHour, 1.0) > 0, not hourNew)
+f_lvBar(LV_ASIA, in_asia, in_asia[1])
+f_lvBar(LV_LON,  in_lon,  in_lon[1])
+f_lvBar(LV_AM,   in_nyam, in_nyam[1])
+f_lvBar(LV_PM,   in_nypm, in_nypm[1])
+f_lvBar(LV_RTH,  in_rth,  in_rth[1])
+f_lvBar(LV_NY,   in_ny,   in_ny[1])
+// The globex day and the week span every bar, so they are always "in" and roll
+// on their own new-period flags.
+f_lvBar(LV_DAY,  true,    not dayNew)
+f_lvBar(LV_WEEK, true,    not weekNew)
+
+// Day and Week can be driven from exchange bars instead of chart tracking.
+if useX
+    LV_DAY.o  := D_O
+    LV_DAY.h  := D_H
+    LV_DAY.l  := D_L
+    LV_WEEK.o := W_O
+    LV_WEEK.h := W_H
+    LV_WEEK.l := W_L
+
+// Optional points value for a gauge tick, given its offset in sigma units.
+f_tickPts(zz, sigPx) =>
+    i_g_tickval ? "  " + str.format("{0,number,#}", zz * sigPx) : ""
+
+f_gaugeSess() =>
+    switch i_g_which
+        "Asia"    => LV_ASIA
+        "London"  => LV_LON
+        "NY AM"   => LV_AM
+        "NY PM"   => LV_PM
+        "NY RTH"  => LV_RTH
+        "NY full" => LV_NY
+        => in_asia ? LV_ASIA : in_lon ? LV_LON : in_nyam ? LV_AM :
+           in_nypm ? LV_PM : in_rth ? LV_RTH : LV_PM
+
+// ==================================================================
+// GAUGE
+// ==================================================================
+var array<box>   GB = array.new<box>()
+var array<label> GL = array.new<label>()
+var array<line>  GN = array.new<line>()
+
+f_gWipe() =>
+    for b in GB
+        box.delete(b)
+    array.clear(GB)
+    for l in GL
+        label.delete(l)
+    array.clear(GL)
+    for l in GN
+        line.delete(l)
+    array.clear(GN)
+
+// Reference excursion, in sigma units, that counts as a full tank.
+f_zRef(a, up) =>
+    switch i_g_full
+        "MFE/MAE P75" => array.get(up ? MFE : MAE, a * NQ + Q75)
+        "MFE/MAE P90" => array.get(up ? MFE : MAE, a * NQ + Q90)
+        "MFE/MAE P95" => array.get(up ? MFE : MAE, a * NQ + Q95)
+        "1.0 SD"      => 1.0
+        "1.5 SD"      => 1.5
+        => 2.0
+
+// Map an excursion in sigma units to a vertical offset in price.
+//   Range fill : normalise by the reference, so the tank tops out at 100%.
+//   otherwise  : plot true sigma, clamped to the scale extent.
+f_yoff(z, zRef, fill, pctScale, grid, a, unitPx) =>
+    if not fill
+        math.min(z, i_g_kmax) * unitPx
+    else if pctScale
+        math.min(f_rank(grid, a, z) / 100.0, 1.0) * i_g_kmax * unitPx
+    else
+        math.min(z / zRef, 1.0) * i_g_kmax * unitPx
+
+f_gCol(slot, a, o, hi, lo, vm, tag, baseY, unitPx) =>
+    if not na(o) and o > 0 and a >= 0 and f_sigv(a, vm) > 0 and not na(hi) and not na(lo)
+        fill  = i_g_align == "Range fill"
+        pctSc = i_g_full == "Percentile 0-100"
+        sigPx = f_sigv(a, vm) / 100.0 * o
+        x  = bar_index + i_g_gap + slot * i_g_space
+        xl = x - i_g_wid
+        xr = x + i_g_wid
+        showSD  = i_mode != "Percentiles"
+        showPct = i_mode != "Std Dev"
+
+        // The tank axis and the SD ticks both want the left gutter. Give the SD
+        // labels a wider berth when both are on, or they overprint each other.
+        axX = xl - i_g_wid - 2
+        sdX = fill and i_g_tankax and slot == 0 ? axX - 2 * i_g_wid - 6 : axX
+
+        zu = (hi - o) / sigPx
+        zd = (o - lo) / sigPx
+        zc = (close - o) / sigPx
+        ru = f_rank(MFE, a, zu)
+        rd = f_rank(MAE, a, zd)
+        zRu = f_zRef(a, true)
+        zRd = f_zRef(a, false)
+
+        yMid = baseY
+        yT   = yMid + i_g_kmax * unitPx
+        yB   = yMid - i_g_kmax * unitPx
+        yU   = yMid + f_yoff(zu, zRu, fill, pctSc, MFE, a, unitPx)
+        yD   = yMid - f_yoff(zd, zRd, fill, pctSc, MAE, a, unitPx)
+
+        // The tank: an empty outline the fill sits inside, so an unfilled
+        // column reads as unfilled rather than as missing data.
+        array.push(GB, box.new(xl, yT, xr, yB, bgcolor=color.new(color.gray, 92),
+             border_color=c_ax, border_width=1, border_style=line.style_dotted))
+        array.push(GB, box.new(xl, yU, xr, yMid, bgcolor=c_bup, border_width=0))
+        array.push(GB, box.new(xl, yMid, xr, yD, bgcolor=c_bdn, border_width=0))
+        // Open line.
+        array.push(GN, line.new(xl, yMid, xr, yMid, color=c_ax, style=line.style_solid, width=1))
+        // Price NOW. The bar top is the HIGH, which may sit well above this after a
+        // pullback - that gap is the point of the gauge, so draw it boldly and wider
+        // than the column so it cannot be mistaken for a level tick.
+        yC = yMid + (zc >= 0 ? f_yoff(zc, zRu, fill, pctSc, MFE, a, unitPx)
+                             : -f_yoff(-zc, zRd, fill, pctSc, MAE, a, unitPx))
+        array.push(GN, line.new(xl - 1, yC, xr + 1, yC, color=c_now,
+             style=line.style_solid, width=3))
+        if i_g_nowlab
+            array.push(GL, label.new(x, yC, "now", style=label.style_none,
+                 textcolor=c_now, size=f_sz(i_sz_tick),
+                 color=color.new(color.white, 100), text_font_family=font.family_monospace))
+
+        if i_g_hdr
+            array.push(GL, label.new(x, yT + 0.14 * i_g_kmax * unitPx, tag,
+                 style=label.style_none, textcolor=c_hdr, size=f_sz(i_sz_hdr),
+                 color=color.new(color.white, 100), text_font_family=font.family_monospace))
+
+        // pNN ranks, and how much of the tank each side has consumed
+        if showPct or fill
+            uTxt = "p" + str.tostring(int(math.round(ru)))
+            dTxt = "p" + str.tostring(int(math.round(rd)))
+            if i_g_fillpc and fill and not pctSc
+                // Under Percentile 0-100 the fill percent IS the pNN already, so
+                // printing both would just repeat the same number.
+                uTxt := uTxt + "  " + str.tostring(int(math.round(math.min(zu / zRu, 1.0) * 100))) + "%"
+                dTxt := dTxt + "  " + str.tostring(int(math.round(math.min(zd / zRd, 1.0) * 100))) + "%"
+            array.push(GL, label.new(x, yU, uTxt, style=label.style_none, textcolor=c_tx,
+                 size=f_sz(i_sz_pct), color=color.new(color.white, 100),
+                 text_font_family=font.family_monospace))
+            array.push(GL, label.new(x, yD, dTxt, style=label.style_none, textcolor=c_tx,
+                 size=f_sz(i_sz_pct), color=color.new(color.white, 100),
+                 text_font_family=font.family_monospace))
+
+        // Under Range fill each column normalises to its own range, so a given SD
+        // sits at a different height in every column. Sharing one label is wrong,
+        // so "First column" is promoted to per-column rather than dropped.
+        sdLab = fill ? i_g_sdlab != "None"
+                     : i_g_sdlab == "Every column" or (i_g_sdlab == "First column" and slot == 0)
+        ptLab = i_g_ptlab == "Every column" or (i_g_ptlab == "First column" and slot == 0)
+
+        // SD gridlines. In Range fill these land at their normalised positions,
+        // so they still say where 1 SD sits inside this anchor's own range.
+        if showSD
+            for t = 1 to 4
+                k = t * 0.5
+                yKu = f_yoff(k, zRu, fill, pctSc, MFE, a, unitPx)
+                yKd = f_yoff(k, zRd, fill, pctSc, MAE, a, unitPx)
+                if yKu < i_g_kmax * unitPx
+                    array.push(GN, line.new(xl, yMid + yKu, xr, yMid + yKu,
+                         color=c_ax, style=line.style_dotted, width=1))
+                    if sdLab
+                        array.push(GL, label.new(sdX, yMid + yKu,
+                             "+" + str.format("{0,number,#.#}", k) + f_tickPts(k, sigPx),
+                             style=label.style_none, textcolor=c_ax, size=f_sz(i_sz_tick),
+                             color=color.new(color.white, 100), text_font_family=font.family_monospace))
+                if yKd < i_g_kmax * unitPx
+                    array.push(GN, line.new(xl, yMid - yKd, xr, yMid - yKd,
+                         color=c_ax, style=line.style_dotted, width=1))
+                    if sdLab
+                        array.push(GL, label.new(sdX, yMid - yKd,
+                             "-" + str.format("{0,number,#.#}", k) + f_tickPts(k, sigPx),
+                             style=label.style_none, textcolor=c_ax, size=f_sz(i_sz_tick),
+                             color=color.new(color.white, 100), text_font_family=font.family_monospace))
+
+        // The anchor's own MFE/MAE levels, at their positions inside the tank.
+        if showPct
+            for qi = 0 to 4
+                q  = qi == 0 ? Q25 : qi == 1 ? Q50 : qi == 2 ? Q75 : qi == 3 ? Q90 : Q95
+                on = qi == 0 ? i_p25 : qi == 1 ? i_p50 : qi == 2 ? i_p75 : qi == 3 ? i_p90 : i_p95
+                pl = qi == 0 ? "25" : qi == 1 ? "50" : qi == 2 ? "75" : qi == 3 ? "90" : "95"
+                if on
+                    zU = array.get(MFE, a * NQ + q)
+                    zD = array.get(MAE, a * NQ + q)
+                    yQu = f_yoff(zU, zRu, fill, pctSc, MFE, a, unitPx)
+                    yQd = f_yoff(zD, zRd, fill, pctSc, MAE, a, unitPx)
+                    if yQu <= i_g_kmax * unitPx
+                        array.push(GN, line.new(xl, yMid + yQu, xr, yMid + yQu,
+                             color=color.new(c_mfe, 25), style=line.style_solid, width=1))
+                        if ptLab
+                            array.push(GL, label.new(xr + i_g_wid + 2, yMid + yQu,
+                                 "MFE" + pl + f_tickPts(zU, sigPx), style=label.style_none,
+                                 textcolor=color.new(c_mfe, 10), size=f_sz(i_sz_tick),
+                                 color=color.new(color.white, 100), text_font_family=font.family_monospace))
+                    if yQd <= i_g_kmax * unitPx
+                        array.push(GN, line.new(xl, yMid - yQd, xr, yMid - yQd,
+                             color=color.new(c_mae, 25), style=line.style_solid, width=1))
+                        if ptLab
+                            array.push(GL, label.new(xr + i_g_wid + 2, yMid - yQd,
+                                 "MAE" + pl + f_tickPts(zD, sigPx), style=label.style_none,
+                                 textcolor=color.new(c_mae, 10), size=f_sz(i_sz_tick),
+                                 color=color.new(color.white, 100), text_font_family=font.family_monospace))
+
+        // Percent-of-tank axis. Valid to share because the tank height is common
+        // to all columns, unlike the SD scale under normalisation.
+        if fill and i_g_tankax and slot == 0
+            for t = 1 to 4
+                fr = t * 0.25
+                yf = fr * i_g_kmax * unitPx
+                array.push(GL, label.new(axX, yMid + yf,
+                     str.tostring(int(fr * 100)) + "%", style=label.style_none,
+                     textcolor=c_ax, size=f_sz(i_sz_tick),
+                     color=color.new(color.white, 100), text_font_family=font.family_monospace))
+                array.push(GL, label.new(axX, yMid - yf,
+                     str.tostring(int(fr * 100)) + "%", style=label.style_none,
+                     textcolor=c_ax, size=f_sz(i_sz_tick),
+                     color=color.new(color.white, 100), text_font_family=font.family_monospace))
+
+        if i_g_prob != "None"
+            array.push(GL, label.new(x, yB - 0.22 * i_g_kmax * unitPx, f_probTxt(a, zc),
+                 style=label.style_none, textcolor=c_tx, size=f_sz(i_sz_tick),
+                 color=color.new(color.white, 100), text_font_family=font.family_monospace))
+
+f_gTag(v) => str.upper(v.tag) + (v.stale ? "*" : "") + (v.short ? " !" : "")
+
+// Evaluated on every bar, not inside the barstate.islast block below - ta.*
+// functions need a continuous series to keep their history correct.
+gFitRange = ta.highest(high, i_g_look) - ta.lowest(low, i_g_look)
+
+if barstate.islast
+    f_gWipe()
+    if i_g_on and isNQ and tfOK
+        // Range fill and Common baseline both share one centre and one pixel
+        // height; only Own open staggers the columns.
+        common = i_g_align != "Own open"
+        // Total tank height is 2 * kmax * unit, so solving for a target height
+        // of gFitRange * fit% gives the unit below. Own open never reaches here
+        // - it passes its own sigma-derived unit per column instead.
+        useFit = i_g_hmode == "Fit to recent range" and not na(gFitRange) and gFitRange > 0
+        unit   = useFit ? gFitRange * (i_g_fit / 100.0) / (2.0 * i_g_kmax)
+             : f_sigv(I_DAY, LV_DAY.vm) / 100.0 * close * i_g_height
+        slot = 0
+        if i_g_hour
+            f_gCol(slot, LV_HOUR.anchor, LV_HOUR.o, LV_HOUR.h, LV_HOUR.l, LV_HOUR.vm, f_gTag(LV_HOUR),
+                 common ? close : nz(LV_HOUR.o, close),
+                 common ? unit : f_sigv(LV_HOUR.anchor, LV_HOUR.vm)/100.0*nz(LV_HOUR.o, close) * i_g_height)
+            slot += 1
+        if i_g_sess
+            sv = f_gaugeSess()
+            f_gCol(slot, sv.anchor, sv.o, sv.h, sv.l, sv.vm, f_gTag(sv),
+                 common ? close : nz(sv.o, close),
+                 common ? unit : f_sigv(sv.anchor, sv.vm)/100.0*nz(sv.o, close) * i_g_height)
+            slot += 1
+        if i_g_day
+            f_gCol(slot, I_DAY, D_O, D_H, D_L, LV_DAY.vm, f_gTag(LV_DAY),
+                 common ? close : D_O,
+                 common ? unit : f_sigv(I_DAY, LV_DAY.vm)/100.0*nz(D_O, close) * i_g_height)
+            slot += 1
+        if i_g_week
+            f_gCol(slot, I_WEEK, W_O, W_H, W_L, LV_WEEK.vm, f_gTag(LV_WEEK),
+                 common ? close : W_O,
+                 common ? unit : f_sigv(I_WEEK, LV_WEEK.vm)/100.0*nz(W_O, close) * i_g_height)
+            slot += 1
+
+// ==================================================================
+// TABLE
+// ==================================================================
+// One table, nine anchors, three optional column groups. The previous build
+// split this in two - one for levels, one for live state - which looked like
+// the same table printed twice and meant the Week anchor appeared in one and
+// not the other, and only a single session could be shown at a time.
+
+f_pctOf(o, hi, lo, a, vm, up) =>
+    r = float(na)
+    if not na(o) and o > 0 and f_sigv(a, vm) > 0
+        sp = f_sigv(a, vm) / 100.0 * o
+        r := f_rank(up ? MFE : MAE, a, up ? (hi - o) / sp : (o - lo) / sp)
+    r
+
+// Column layout, resolved once from the group toggles.
+NC_LV = i_tb_lvls ? 6 : 0
+NC_ST = i_tb_st   ? 4 : 0
+NC_DG = i_tb_diag ? 4 : 0
+NCOLS = 1 + NC_LV + NC_ST + NC_DG
+C_LV  = 1
+C_ST  = C_LV + NC_LV
+C_DG  = C_ST + NC_ST
+
+f_tbRow(t, row, v, o, hi, lo, isLive) =>
+    a  = v.anchor
+    vm = v.vm
+    ok = not na(o) and o > 0 and f_sigv(a, vm) > 0
+    // Live anchors read black, dormant ones grey, short sessions amber - so a
+    // half-day announces itself instead of quietly poisoning the numbers.
+    bg = v.short ? color.rgb(255,248,230) : isLive ? color.rgb(252,252,252) : color.rgb(240,240,240)
+    tc = v.short ? color.rgb(150,95,0)    : isLive ? color.rgb(40,40,40)    : color.rgb(150,150,150)
+    z  = f_sz(i_tb_sz)
+    fn = font.family_monospace
+    op = nz(o, close)
+    zc = ok ? (close - o) / (f_sigv(a, vm)/100.0*o) : float(na)
+
+    table.cell(t, 0, row, v.tag + (v.short ? " !" : v.stale ? "*" : ""),
+         text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+
+    if i_tb_lvls
+        table.cell(t, C_LV+0, row, ok ? str.format("{0,number,#.###}", f_sigv(a,vm)) + "%" : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_LV+1, row, ok ? str.format("{0,number,#}", f_mfev(a,Q50,vm)/100*op) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_LV+2, row, ok ? str.format("{0,number,#}", f_mfev(a,Q75,vm)/100*op) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_LV+3, row, ok ? str.format("{0,number,#}", f_mfev(a,Q90,vm)/100*op) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_LV+4, row, ok ? str.format("{0,number,#}", f_maev(a,Q50,vm)/100*op) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_LV+5, row, ok ? str.format("{0,number,#}", f_maev(a,Q90,vm)/100*op) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+
+    if i_tb_st
+        table.cell(t, C_ST+0, row, ok ? "p"+str.tostring(int(math.round(f_pctOf(o,hi,lo,a,vm,true))))  : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_ST+1, row, ok ? "p"+str.tostring(int(math.round(f_pctOf(o,hi,lo,a,vm,false)))) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_ST+2, row, ok ? str.format("{0,number,#.##}", zc) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_ST+3, row, ok ? f_probTxt(a, zc) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+
+    if i_tb_diag
+        eb = f_expBars(a)
+        table.cell(t, C_DG+0, row, ok ? str.format("{0,number,#.##}", o)  : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_DG+1, row, ok ? str.format("{0,number,#.##}", hi) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_DG+2, row, ok ? str.format("{0,number,#.##}", lo) : "-", text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+        table.cell(t, C_DG+3, row, str.tostring(v.bars) + "/" + str.tostring(eb), text_size=z, text_color=tc, bgcolor=bg, text_font_family=fn)
+
+if i_tb_on and barstate.islast and isNQ and tfOK
+    var table t = table.new(f_pos(i_tb_pos), NCOLS, 11, bgcolor=color.white,
+         border_color=color.rgb(200,200,200), frame_color=color.rgb(170,170,170),
+         frame_width=1, border_width=1)
+    z  = f_sz(i_tb_sz)
+    fn = font.family_monospace
+    hb = color.rgb(35,35,35)
+    ht = color.white
+    table.cell(t, 0, 0, "Anchor", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+    if i_tb_lvls
+        table.cell(t, C_LV+0, 0, "sigma", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_LV+1, 0, "MFE50", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_LV+2, 0, "MFE75", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_LV+3, 0, "MFE90", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_LV+4, 0, "MAE50", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_LV+5, 0, "MAE90", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+    if i_tb_st
+        // "now SD" not "now pNN" - the cell holds a sigma multiple, and the old
+        // header invited it to be read as a percentile.
+        table.cell(t, C_ST+0, 0, "up pNN", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_ST+1, 0, "dn pNN", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_ST+2, 0, "now SD", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_ST+3, 0, i_g_prob == "P fade (conditional)" ? "P fade" :
+                                 i_g_prob == "P close below (unconditional)" ? "P<lvl" : "-",
+             text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+    if i_tb_diag
+        table.cell(t, C_DG+0, 0, "Open", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_DG+1, 0, "High", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_DG+2, 0, "Low",  text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+        table.cell(t, C_DG+3, 0, "bars", text_size=z, text_color=ht, bgcolor=hb, text_font_family=fn)
+
+    f_tbRow(t, 1, LV_HOUR, LV_HOUR.o, LV_HOUR.h, LV_HOUR.l, f_sigv(nyHour, 1.0) > 0)
+    f_tbRow(t, 2, LV_ASIA, LV_ASIA.o, LV_ASIA.h, LV_ASIA.l, in_asia)
+    f_tbRow(t, 3, LV_LON,  LV_LON.o,  LV_LON.h,  LV_LON.l,  in_lon)
+    f_tbRow(t, 4, LV_AM,   LV_AM.o,   LV_AM.h,   LV_AM.l,   in_nyam)
+    f_tbRow(t, 5, LV_PM,   LV_PM.o,   LV_PM.h,   LV_PM.l,   in_nypm)
+    f_tbRow(t, 6, LV_RTH,  LV_RTH.o,  LV_RTH.h,  LV_RTH.l,  in_rth)
+    f_tbRow(t, 7, LV_NY,   LV_NY.o,   LV_NY.h,   LV_NY.l,   in_ny)
+    f_tbRow(t, 8, LV_DAY,  D_O, D_H, D_L, true)
+    f_tbRow(t, 9, LV_WEEK, W_O, W_H, W_L, true)
+
+    // A chart with no lines on it looks broken, but is usually correct: lines
+    // are deleted when a period ends, so only live anchors draw. Say which of
+    // the possible reasons applies rather than leave it to guesswork.
+    anyOn = i_hourL or i_asia or i_lon or i_nyam or i_nypm or i_rth or i_nyf or i_dayL or i_weekL
+    anyQ  = i_p25 or i_p50 or i_p75 or i_p90 or i_p95 or i_bb or i_rng
+    drawn = 0
+    for lv in array.from(LV_HOUR, LV_ASIA, LV_LON, LV_AM, LV_PM, LV_RTH, LV_NY, LV_DAY, LV_WEEK)
+        if lv.show and array.size(lv.ln) > 0
+            drawn += 1
+    lvNote = not i_lv_on          ? "  |  LINES OFF - see Show chart lines"
+         : not anyOn              ? "  |  NO LINES - no anchor selected"
+         : i_mode == "Percentiles" and not anyQ ? "  |  NO LINES - no percentile selected"
+         : drawn == 0             ? "  |  NO LINES - selected anchors are not live now"
+         : "  |  " + str.tostring(drawn) + " anchors drawn"
+
+    foot = "15y levels, points  |  src " + i_src
+         + "  |  vol " + str.format("{0,number,#.##}", volLive) + " @" + str.tostring(i_slen) + "d"
+         + "  |  D " + str.tostring(d_bars) + "  W " + str.tostring(w_bars)
+         + (earlyClose ? "  |  ! EARLY CLOSE - affected anchors are short" : "")
+         + lvNote
+         + "  |  * held, not live"
+    table.cell(t, 0, 10, foot, text_size=z, text_color=color.rgb(140,140,140),
+         bgcolor=color.rgb(245,245,245), text_font_family=fn)
+    table.merge_cells(t, 0, 10, NCOLS - 1, 10)

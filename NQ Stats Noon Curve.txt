@@ -1,0 +1,414 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator(title="Noon Curve", shorttitle="NC", overlay=true)
+
+// === Input Definitions ===
+// Session Settings
+time_zone = "America/New_York"  // Fixed to EST
+session_time_levels = "0800-1600"  // Full session: 8:00 AM - 4:00 PM EST
+am_session = "0800-1200"  // AM session: 8:00 AM - 12:00 PM EST
+quarter_1_session = "0800-1000"  // Quarter 1: 8:00 AM - 10:00 AM EST
+quarter_2_session = "1000-1200"  // Quarter 2: 10:00 AM - 12:00 PM EST
+
+// Range Box Settings
+show_range_box = input.bool(true, "Show Range Box", inline="range_box")
+range_box_color = input.color(color.new(color.white, 100), "", inline="range_box")
+show_quarter_lines = input.bool(true, "Show Quarter Vertical Lines", inline="quarter_lines")
+quarter_line_color = input.color(color.gray, "Quarter Line Color (10AM, 2PM)", inline="quarter_lines")
+quarter_line_style = input.string("Dashed", "Quarter Line Style (10AM, 2PM)", options=["Solid", "Dashed", "Dotted"], inline="quarter_lines")
+quarter_line_width = input.int(1, "Quarter Line Width (10AM, 2PM)", minval=1, maxval=4, inline="quarter_lines")
+noon_line_color = input.color(color.blue, "Noon Line Color", inline="noon_lines")
+noon_line_style = input.string("Solid", "Noon Line Style", options=["Solid", "Dashed", "Dotted"], inline="noon_lines")
+noon_line_width = input.int(2, "Noon Line Width", minval=1, maxval=4, inline="noon_lines")
+show_am_lines = input.bool(true, "Show AM High/Low Lines", inline="am_lines")
+am_line_color = input.color(color.teal, "AM High/Low Line Color", inline="am_lines")
+// New inputs for likely AM and PM levels
+show_likely_am_lines = input.bool(true, "Show Likely AM High/Low Lines (+0.5%/-0.5%)", group="Likely Levels Lines")
+likely_am_line_color = input.color(color.green, "Likely AM High/Low Line Color", group="Likely Levels Lines")
+likely_am_line_style = input.string("Dashed", "Likely AM Line Style", options=["Solid", "Dashed", "Dotted"], group="Likely Levels Lines")
+likely_am_line_width = input.int(1, "Likely AM Line Width", minval=1, maxval=4, group="Likely Levels Lines")
+show_likely_pm_lines = input.bool(true, "Show Likely PM High/Low Lines (+1.0%/-1.25%)", group="Likely Levels Lines")
+likely_pm_line_color = input.color(color.purple, "Likely PM High/Low Line Color", group="Likely Levels Lines")
+likely_pm_line_style = input.string("Dashed", "Likely PM Line Style", options=["Solid", "Dashed", "Dotted"], group="Likely Levels Lines")
+likely_pm_line_width = input.int(1, "Likely PM Line Width", minval=1, maxval=4, group="Likely Levels Lines")
+max_sessions = input.int(10, "Max Historical Sessions", minval=1, maxval=50)
+table_position = input.string("Top-Right", "Table Position", options=["Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right"], group="Noon Curve Table")
+show_noon_table = input.bool(true, "Show Noon Curve Table", group="Noon Curve Table")
+table_text_size = input.string("Normal", "Table Text Size", options=["Tiny", "Small", "Normal"], group="Noon Curve Table")
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_text_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size.normal
+
+// === Session Detection ===
+is_in_session_levels = not na(time(timeframe.period, session_time_levels, time_zone))
+is_session_start_levels = is_in_session_levels and not is_in_session_levels[1]
+is_session_end_levels = not is_in_session_levels and is_in_session_levels[1]
+is_in_am_session = not na(time(timeframe.period, am_session, time_zone))
+is_in_quarter_1 = not na(time(timeframe.period, quarter_1_session, time_zone))
+is_in_quarter_2 = not na(time(timeframe.period, quarter_2_session, time_zone))
+
+// === Session Data Tracking ===
+var float session_high = na
+var float session_low = na
+var int session_start_bar = na
+var int session_end_bar = na
+var box current_box = na
+var float am_high = na
+var float am_low = na
+var float q1_high = na
+var float q1_low = na
+var line am_high_line = na
+var line am_low_line = na
+var line[] all_lines = array.new_line(0)
+var int[] line_session_ids = array.new_int(0)
+var int[] line_hours = array.new_int(0)
+var float[] line_lows = array.new_float(0)
+var float[] line_highs = array.new_float(0)
+var int[] line_bars = array.new_int(0)
+var box[] session_boxes = array.new_box(0)
+var line[] am_high_lines = array.new_line(0)
+var line[] am_low_lines = array.new_line(0)
+var int[] am_line_session_ids = array.new_int(0)
+var line likely_am_high_line = na
+var line likely_am_low_line = na
+var line likely_pm_high_line = na
+var line likely_pm_low_line = na
+var line[] likely_am_high_lines = array.new_line(0)
+var line[] likely_am_low_lines = array.new_line(0)
+var line[] likely_pm_high_lines = array.new_line(0)
+var line[] likely_pm_low_lines = array.new_line(0)
+var int[] likely_line_session_ids = array.new_int(0)
+var label likely_am_high_label = na
+var label likely_am_low_label = na
+var label likely_pm_high_label = na
+var label likely_pm_low_label = na
+var label[] likely_am_high_labels = array.new_label(0)
+var label[] likely_am_low_labels = array.new_label(0)
+var label[] likely_pm_high_labels = array.new_label(0)
+var label[] likely_pm_low_labels = array.new_label(0)
+var int session_id = 0
+var int[] session_hours_drawn = array.new_int(0)
+var bool q2_broke_q1_low = false
+var bool q2_broke_q1_high = false
+var float session_open = na
+var float morning_high_level = na
+var float morning_low_level = na
+var float afternoon_high_level = na
+var float afternoon_low_level = na
+
+// === Noon Curve Table ===
+var table noon_table = na
+if show_noon_table and session_id == 0  // Initialize table once
+    pos = table_position == "Top-Left" ? position.top_left : table_position == "Top-Right" ? position.top_right : table_position == "Bottom-Left" ? position.bottom_left : position.bottom_right
+    noon_table := table.new(
+         position=pos,
+         columns=10,
+         rows=10,
+         bgcolor=color.white,
+         border_color=color.black,
+         border_width=1
+     )
+    table.cell(noon_table, 0, 0, "Today's Noon Curve Status", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 1, "No Q2 Break", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 2, "No Q2 Break", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 3, "Session Open: -", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 4, "Morning High (+0.5%): -", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 5, "Morning Low (-0.5%): -", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 6, "Afternoon High (+1.0%): -", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(noon_table, 0, 7, "Afternoon Low (-1.25%): -", bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+
+// === Session Management ===
+if is_session_start_levels
+    session_open := open  // Capture the session open price at 8 AM
+    morning_high_level := session_open * 1.005  // +0.5%
+    morning_low_level := session_open * 0.995  // -0.5%
+    afternoon_high_level := session_open * 1.01  // +1.0%
+    afternoon_low_level := session_open * 0.9875  // -1.25%
+    session_high := high
+    session_low := low
+    session_start_bar := bar_index
+    session_id := session_id + 1
+    am_high := high
+    am_low := low
+    q1_high := high
+    q1_low := low
+    q2_broke_q1_low := false
+    q2_broke_q1_high := false
+    array.clear(session_hours_drawn)
+    // Create new box at session start
+    if show_range_box and not na(session_high) and not na(session_low)
+        current_box := box.new(
+             left=session_start_bar, 
+             top=session_high, 
+             right=bar_index, 
+             bottom=session_low, 
+             bgcolor=range_box_color, 
+             border_color=color.gray
+         )
+    // Initialize AM high/low lines
+    if show_am_lines and not na(am_high) and not na(am_low)
+        am_high_line := line.new(
+             x1=session_start_bar, 
+             y1=am_high, 
+             x2=bar_index, 
+             y2=am_high, 
+             xloc=xloc.bar_index, 
+             color=am_line_color, 
+             style=line.style_dashed, 
+             width=1
+         )
+        am_low_line := line.new(
+             x1=session_start_bar, 
+             y1=am_low, 
+             x2=bar_index, 
+             y2=am_low, 
+             xloc=xloc.bar_index, 
+             color=am_line_color, 
+             style=line.style_dashed, 
+             width=1
+         )
+    // Initialize likely AM and PM level lines with labels
+    if show_likely_am_lines and not na(morning_high_level) and not na(morning_low_level)
+        likely_am_high_line := line.new(
+             x1=session_start_bar, 
+             y1=morning_high_level, 
+             x2=bar_index, 
+             y2=morning_high_level, 
+             xloc=xloc.bar_index, 
+             color=likely_am_line_color, 
+             style=get_line_style(likely_am_line_style), 
+             width=likely_am_line_width
+         )
+        likely_am_low_line := line.new(
+             x1=session_start_bar, 
+             y1=morning_low_level, 
+             x2=bar_index, 
+             y2=morning_low_level, 
+             xloc=xloc.bar_index, 
+             color=likely_am_line_color, 
+             style=get_line_style(likely_am_line_style), 
+             width=likely_am_line_width
+         )
+        // Create labels for AM lines
+        likely_am_high_label := label.new(
+             x=bar_index,
+             y=morning_high_level,
+             text="Morning High (+0.5%)",
+             color=color.new(color.green, 80),
+             textcolor=likely_am_line_color,
+             style=label.style_label_left,
+             size=get_text_size(table_text_size),
+             text_font_family=font.family_monospace
+         )
+        likely_am_low_label := label.new(
+             x=bar_index,
+             y=morning_low_level,
+             text="Morning Low (-0.5%)",
+             color=color.new(color.green, 80),
+             textcolor=likely_am_line_color,
+             style=label.style_label_left,
+             size=get_text_size(table_text_size),
+             text_font_family=font.family_monospace
+         )
+    if show_likely_pm_lines and not na(afternoon_high_level) and not na(afternoon_low_level)
+        likely_pm_high_line := line.new(
+             x1=session_start_bar, 
+             y1=afternoon_high_level, 
+             x2=bar_index, 
+             y2=afternoon_high_level, 
+             xloc=xloc.bar_index, 
+             color=likely_pm_line_color, 
+             style=get_line_style(likely_pm_line_style), 
+             width=likely_pm_line_width
+         )
+        likely_pm_low_line := line.new(
+             x1=session_start_bar, 
+             y1=afternoon_low_level, 
+             x2=bar_index, 
+             y2=afternoon_low_level, 
+             xloc=xloc.bar_index, 
+             color=likely_pm_line_color, 
+             style=get_line_style(likely_pm_line_style), 
+             width=likely_pm_line_width
+         )
+        // Create labels for PM lines
+        likely_pm_high_label := label.new(
+             x=bar_index,
+             y=afternoon_high_level,
+             text="Afternoon High (+1.0%)",
+             color=color.new(color.purple, 80),
+             textcolor=likely_pm_line_color,
+             style=label.style_label_left,
+             size=get_text_size(table_text_size),
+             text_font_family=font.family_monospace
+         )
+        likely_pm_low_label := label.new(
+             x=bar_index,
+             y=afternoon_low_level,
+             text="Afternoon Low (-1.25%)",
+             color=color.new(color.purple, 80),
+             textcolor=likely_pm_line_color,
+             style=label.style_label_left,
+             size=get_text_size(table_text_size),
+             text_font_family=font.family_monospace
+         )
+else if is_in_session_levels
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+    // Update AM and Q1 high/low
+    if is_in_am_session
+        am_high := math.max(am_high, high)
+        am_low := math.min(am_low, low)
+        if is_in_quarter_1
+            q1_high := math.max(q1_high, high)
+            q1_low := math.min(q1_low, low)
+    // Detect Quarter 2 breaking Quarter 1 high or low
+    if is_in_quarter_2 and not na(q1_high) and not na(q1_low)
+        if not q2_broke_q1_low and low < q1_low
+            q2_broke_q1_low := true
+        if not q2_broke_q1_high and high > q1_high
+            q2_broke_q1_high := true
+    // Update table with Q2 break status and levels
+    if show_noon_table
+        string break_text = q2_broke_q1_low and q2_broke_q1_high ? "Q2 Broke Q1 High and Low" : q2_broke_q1_low ? "Q2 Broke Q1 Low" : q2_broke_q1_high ? "Q2 Broke Q1 High" : "No Q2 Break"
+        string pm_text = q2_broke_q1_low and q2_broke_q1_high ? "Q2 Broke Both" : q2_broke_q1_low ? "Likely PM Low" : q2_broke_q1_high ? "Likely PM High" : "No Q2 Break"
+        table.cell(noon_table, 0, 1, break_text, bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+        table.cell(noon_table, 0, 2, pm_text, bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+        table.cell(noon_table, 0, 3, "Session Open: " + str.tostring(session_open, "#.##"), bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+        table.cell(noon_table, 0, 4, "Morning High (+0.5%): " + str.tostring(morning_high_level, "#.##"), bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+        table.cell(noon_table, 0, 5, "Morning Low (-0.5%): " + str.tostring(morning_low_level, "#.##"), bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+        table.cell(noon_table, 0, 6, "Afternoon High (+1.0%): " + str.tostring(afternoon_high_level, "#.##"), bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+        table.cell(noon_table, 0, 7, "Afternoon Low (-1.25%): " + str.tostring(afternoon_low_level, "#.##"), bgcolor=color.white, text_color=color.black, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    // Update current box and lines in real-time
+    if show_range_box and not na(current_box) and not na(session_high) and not na(session_low)
+        box.set_top(current_box, session_high)
+        box.set_bottom(current_box, session_low)
+        box.set_right(current_box, bar_index)
+    if show_quarter_lines and array.size(all_lines) > 0 and not na(session_high) and not na(session_low)
+        for i = 0 to array.size(all_lines) - 1
+            if array.get(line_session_ids, i) == session_id
+                line.set_y1(array.get(all_lines, i), session_low)
+                line.set_y2(array.get(all_lines, i), session_high)
+                array.set(line_lows, i, session_low)
+                array.set(line_highs, i, session_high)
+    if show_am_lines and not na(am_high) and not na(am_low)
+        if not na(am_high_line)
+            line.set_y1(am_high_line, am_high)
+            line.set_y2(am_high_line, am_high)
+            line.set_x2(am_high_line, bar_index)
+        if not na(am_low_line)
+            line.set_y1(am_low_line, am_low)
+            line.set_y2(am_low_line, am_low)
+            line.set_x2(am_low_line, bar_index)
+    if show_likely_am_lines and not na(likely_am_high_line) and not na(likely_am_low_line)
+        line.set_x2(likely_am_high_line, bar_index)
+        line.set_x2(likely_am_low_line, bar_index)
+        // Update AM labels position
+        label.set_x(likely_am_high_label, bar_index)
+        label.set_x(likely_am_low_label, bar_index)
+    if show_likely_pm_lines and not na(likely_pm_high_line) and not na(likely_pm_low_line)
+        line.set_x2(likely_pm_high_line, bar_index)
+        line.set_x2(likely_pm_low_line, bar_index)
+        // Update PM labels position
+        label.set_x(likely_pm_high_label, bar_index)
+        label.set_x(likely_pm_low_label, bar_index)
+if is_session_end_levels
+    session_end_bar := bar_index
+    // Store completed box and lines for historical display
+    if show_range_box and not na(current_box)
+        array.push(session_boxes, current_box)
+        current_box := na
+    if show_am_lines and not na(am_high_line) and not na(am_low_line)
+        line.set_x2(am_high_line, session_end_bar)
+        line.set_x2(am_low_line, session_end_bar)
+        array.push(am_high_lines, am_high_line)
+        array.push(am_low_lines, am_low_line)
+        array.push(am_line_session_ids, session_id)
+        am_high_line := na
+        am_low_line := na
+    if show_likely_am_lines and not na(likely_am_high_line) and not na(likely_am_low_line)
+        line.set_x2(likely_am_high_line, session_end_bar)
+        line.set_x2(likely_am_low_line, session_end_bar)
+        array.push(likely_am_high_lines, likely_am_high_line)
+        array.push(likely_am_low_lines, likely_am_low_line)
+        // Store AM labels
+        label.set_x(likely_am_high_label, session_end_bar)
+        label.set_x(likely_am_low_label, session_end_bar)
+        array.push(likely_am_high_labels, likely_am_high_label)
+        array.push(likely_am_low_labels, likely_am_low_label)
+        array.push(likely_line_session_ids, session_id)
+        likely_am_high_line := na
+        likely_am_low_line := na
+        likely_am_high_label := na
+        likely_am_low_label := na
+    if show_likely_pm_lines and not na(likely_pm_high_line) and not na(likely_pm_low_line)
+        line.set_x2(likely_pm_high_line, session_end_bar)
+        line.set_x2(likely_pm_low_line, session_end_bar)
+        array.push(likely_pm_high_lines, likely_pm_high_line)
+        array.push(likely_pm_low_lines, likely_pm_low_line)
+        // Store PM labels
+        label.set_x(likely_pm_high_label, session_end_bar)
+        label.set_x(likely_pm_low_label, session_end_bar)
+        array.push(likely_pm_high_labels, likely_pm_high_label)
+        array.push(likely_pm_low_labels, likely_pm_low_label)
+        array.push(likely_line_session_ids, session_id)
+        likely_pm_high_line := na
+        likely_pm_low_line := na
+        likely_pm_high_label := na
+        likely_pm_low_label := na
+    // Clean up old sessions
+    if array.size(session_boxes) > max_sessions
+        box.delete(array.shift(session_boxes))
+        while array.size(all_lines) > 0 and array.get(line_session_ids, 0) <= session_id - max_sessions
+            line.delete(array.shift(all_lines))
+            array.shift(line_session_ids)
+            array.shift(line_hours)
+            array.shift(line_lows)
+            array.shift(line_highs)
+            array.shift(line_bars)
+        while array.size(am_high_lines) > 0 and array.get(am_line_session_ids, 0) <= session_id - max_sessions
+            line.delete(array.shift(am_high_lines))
+            line.delete(array.shift(am_low_lines))
+            array.shift(am_line_session_ids)
+        while array.size(likely_am_high_lines) > 0 and array.get(likely_line_session_ids, 0) <= session_id - max_sessions
+            line.delete(array.shift(likely_am_high_lines))
+            line.delete(array.shift(likely_am_low_lines))
+            line.delete(array.shift(likely_pm_high_lines))
+            line.delete(array.shift(likely_pm_low_lines))
+            label.delete(array.shift(likely_am_high_labels))
+            label.delete(array.shift(likely_am_low_labels))
+            label.delete(array.shift(likely_pm_high_labels))
+            label.delete(array.shift(likely_pm_low_labels))
+            array.shift(likely_line_session_ids)
+
+// === Quarter Vertical Lines ===
+if is_in_session_levels and show_quarter_lines
+    int current_hour = hour(time, time_zone)
+    int current_minute = minute(time, time_zone)
+    bool draw_line = current_minute == 0 and (current_hour == 10 or current_hour == 12 or current_hour == 14) and not array.includes(session_hours_drawn, current_hour)
+    if draw_line
+        line_color = current_hour == 12 ? noon_line_color : quarter_line_color
+        line_style = current_hour == 12 ? get_line_style(noon_line_style) : get_line_style(quarter_line_style)
+        line_width = current_hour == 12 ? noon_line_width : quarter_line_width
+        new_line = line.new(
+             x1=bar_index, 
+             y1=session_low, 
+             x2=bar_index, 
+             y2=session_high, 
+             xloc=xloc.bar_index, 
+             color=line_color, 
+             style=line_style, 
+             width=line_width
+         )
+        array.push(all_lines, new_line)
+        array.push(line_session_ids, session_id)
+        array.push(line_hours, current_hour)
+        array.push(line_lows, session_low)
+        array.push(line_highs, session_high)
+        array.push(line_bars, bar_index)
+        array.push(session_hours_drawn, current_hour)

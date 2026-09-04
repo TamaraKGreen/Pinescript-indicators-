@@ -1,0 +1,1007 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+import czoa/SetSessionTimes/1 as Session
+
+//@version=6
+indicator("Daily Statistical Range and Levels (Weekday Stats)", overlay=true)
+
+// === Input Definitions ===
+// Session Settings for Levels
+session_time_levels = input.string("2300-2100", "Levels Session Time (HHMM-HHMM)", tooltip="Session range for calculating levels (e.g., 2300-2100)")
+time_zone = input.string("UTC", "Time Zone", options=["UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"], tooltip="Time zone for both sessions")
+// Session Settings for Stats
+session_time_stats = input.string("0930-1600", "Stats Session Time (HHMM-HHMM)", tooltip="Session range for tracking hit statistics (e.g., 0900-1600)")
+
+// Anchor Settings
+show_anchor = input.bool(true, "Show Session Anchor", inline="anchor", tooltip="Toggle vertical line at levels session start")
+anchor_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="anchor")
+anchor_color = input.color(color.black, "", inline="anchor")
+anchor_width = input.int(1, "", minval=1, maxval=4, inline="anchor")
+show_anchor_label = input.bool(true, "Show Anchor Label", tooltip="Toggle label for anchor line")
+
+// Session Open Line Settings
+show_session_open = input.bool(true, "Show Session Open Line", inline="session_open", tooltip="Toggle horizontal session open line")
+session_open_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="session_open")
+session_open_color = input.color(color.gray, "", inline="session_open")
+session_open_width = input.int(1, "", minval=1, maxval=4, inline="session_open")
+show_session_open_label = input.bool(true, "Show Session Open Label", tooltip="Toggle label for session open line")
+
+// Manipulation Settings
+show_manipulation = input.bool(true, "Show Manipulation Levels", inline="manipulation", tooltip="Toggle horizontal manipulation levels")
+manipulation_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="manipulation")
+manipulation_color = input.color(color.red, "", inline="manipulation")
+manipulation_width = input.int(1, "", minval=1, maxval=4, inline="manipulation")
+show_manipulation_label = input.bool(true, "Show Manipulation Labels", tooltip="Toggle labels for manipulation levels")
+
+// Distribution Settings
+show_distribution = input.bool(true, "Show Distribution Levels", inline="distribution", tooltip="Toggle horizontal distribution levels")
+distribution_style = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], inline="distribution")
+distribution_color = input.color(color.blue, "", inline="distribution")
+distribution_width = input.int(1, "", minval=1, maxval=4, inline="distribution")
+show_distribution_label = input.bool(true, "Show Distribution Labels", tooltip="Toggle labels for distribution levels")
+
+// Display Settings
+projection_offset = input.int(24, "Projection Offset (Bars)", minval=0, tooltip="Number of bars to extend projection lines beyond session start")
+label_size = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], tooltip="Size of labels for all lines")
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_label_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size_string == "Normal" ? size.normal : size.large
+
+get_label_style() =>
+    label.style_label_left
+
+get_weekday() =>
+    day = dayofweek(time, time_zone)
+    day == dayofweek.monday ? "Monday" : day == dayofweek.tuesday ? "Tuesday" :  day == dayofweek.wednesday ? "Wednesday" : day == dayofweek.thursday ? "Thursday" : day == dayofweek.friday ? "Friday" : "Other"
+
+// Rounding levels to min tick
+nround(x) =>
+    n = math.round(x / syminfo.mintick) * syminfo.mintick
+    n
+
+
+// === Session Detection ===
+// For Levels Calculation and Plotting
+is_in_session_levels = not na(time(timeframe.period, session_time_levels, time_zone))
+is_session_start_levels = is_in_session_levels and not is_in_session_levels[1]
+is_session_end_levels = not is_in_session_levels and is_in_session_levels[1]
+
+// For Stats Tracking
+is_in_session_stats = not na(time(timeframe.period, session_time_stats, time_zone))
+is_session_start_stats = is_in_session_stats and not is_in_session_stats[1]
+is_session_end_stats = not is_in_session_stats and is_in_session_stats[1]
+
+// === Session Data Tracking for Levels ===
+var float session_open = na
+var float session_high = na
+var float session_low = na
+var float session_close = na
+
+if is_session_start_levels
+    session_open := open
+    session_high := high
+    session_low := low
+    session_close := close
+else if is_in_session_levels
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+    session_close := close
+
+// === Arrays and Counters for Levels ===
+var float[] manipulation_distances = array.new_float(0)
+var float[] distribution_distances = array.new_float(0)
+
+if is_session_end_levels
+    float manipulation = na
+    float distribution = na
+    if session_close > session_open
+        manipulation := session_open - session_low
+        distribution := session_high - session_open
+    else if session_close < session_open
+        manipulation := session_high - session_open
+        distribution := session_open - session_low
+    
+    if not na(manipulation) and not na(distribution)
+        array.push(manipulation_distances, manipulation)
+        array.push(distribution_distances, distribution)
+
+// === Calculate Daily Range Statistics ===
+avg_manipulation = array.size(manipulation_distances) > 0 ? array.avg(manipulation_distances) : na
+median_manipulation = array.size(manipulation_distances) > 0 ? array.median(manipulation_distances) : na
+std_dev_manipulation = array.size(manipulation_distances) > 1 ? array.stdev(manipulation_distances) : na
+
+avg_distribution = array.size(distribution_distances) > 0 ? array.avg(distribution_distances) : na
+median_distribution = array.size(distribution_distances) > 0 ? array.median(distribution_distances) : na
+std_dev_distribution = array.size(distribution_distances) > 1 ? array.stdev(distribution_distances) : na
+
+// === Standard Deviation Levels Calculation ===
+upper_manipulation_std = not na(std_dev_manipulation) ? avg_manipulation + std_dev_manipulation : na
+lower_manipulation_std = not na(std_dev_manipulation) ? avg_manipulation - std_dev_manipulation : na
+upper_distribution_std = not na(std_dev_distribution) ? avg_distribution + std_dev_distribution : na
+lower_distribution_std = not na(std_dev_distribution) ? avg_distribution - std_dev_distribution : na
+
+// === Plotting Levels and Labels ===
+var line anchor_line = na
+var label anchor_label = na
+var line session_open_line = na
+var label session_open_label = na
+var line upper_manipulation_line = na
+var label upper_manipulation_label = na
+var line lower_manipulation_line = na
+var label lower_manipulation_label = na
+var line upper_distribution_line = na
+var label upper_distribution_label = na
+var line lower_distribution_line = na
+var label lower_distribution_label = na
+var line median_manipulation_upper_line = na
+var label median_manipulation_upper_label = na
+var line median_manipulation_lower_line = na
+var label median_manipulation_lower_label = na
+var line median_distribution_upper_line = na
+var label median_distribution_upper_label = na
+var line median_distribution_lower_line = na
+var label median_distribution_lower_label = na
+var line upper_manipulation_std_line = na
+var label upper_manipulation_std_label = na
+var line lower_manipulation_std_line = na
+var label lower_manipulation_std_label = na
+var line upper_distribution_std_line = na
+var label upper_distribution_std_label = na
+var line lower_distribution_std_line = na
+var label lower_distribution_std_label = na
+var line upper_distribution_std2_line = na
+var label upper_distribution_std2_label = na
+var line lower_distribution_std2_line = na
+var label lower_distribution_std2_label = na
+
+if bar_index == 0
+    anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
+    session_open_line := line.new(bar_index, na, bar_index+1, na, color=session_open_color, style=get_line_style(session_open_style), width=session_open_width)
+    upper_manipulation_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    lower_manipulation_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    upper_distribution_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    lower_distribution_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    median_manipulation_upper_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    median_manipulation_lower_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    median_distribution_upper_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    median_distribution_lower_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    upper_manipulation_std_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    lower_manipulation_std_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    upper_distribution_std_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    lower_distribution_std_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    upper_distribution_std2_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    lower_distribution_std2_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    // Modified label definitions in the initialization block (replace corresponding lines)
+    session_open_label := label.new(bar_index, na, "Session open " + str.tostring(math.round(session_open)), style=get_label_style(), color=color.new(session_open_color, 100), textcolor=session_open_color, size=get_label_size(label_size))
+    upper_manipulation_label := label.new(bar_index, na, "-Manipulation " + str.tostring(nround(session_open + avg_manipulation)), style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    lower_manipulation_label := label.new(bar_index, na, "+Manipulation " + str.tostring(nround(session_open - avg_manipulation)), style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    upper_distribution_label := label.new(bar_index, na, "+Distribution " + str.tostring(nround(session_open + avg_distribution)), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    lower_distribution_label := label.new(bar_index, na, "-Distribution " + str.tostring(nround(session_open - avg_distribution)), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    median_manipulation_upper_label := label.new(bar_index, na, "+Median Manipulation " + str.tostring(nround(session_open + median_manipulation)), style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    median_manipulation_lower_label := label.new(bar_index, na, "-Median Manipulation " + str.tostring(nround(session_open - median_manipulation)), style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    median_distribution_upper_label := label.new(bar_index, na, "+Median Distribution " + str.tostring(nround(session_open + median_distribution)), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    median_distribution_lower_label := label.new(bar_index, na, "-Median Distribution " + str.tostring(nround(session_open - median_distribution)), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    upper_manipulation_std_label := label.new(bar_index, na, "+Manipulation stdev " + str.tostring(nround(session_open + (avg_manipulation + std_dev_manipulation))), style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    lower_manipulation_std_label := label.new(bar_index, na, "-Manipulation stdev " + str.tostring(nround(session_open - (avg_manipulation + std_dev_manipulation))), style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    upper_distribution_std_label := label.new(bar_index, na, "+Distribution stdev " + str.tostring(nround(session_open + (avg_distribution + std_dev_distribution))), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    lower_distribution_std_label := label.new(bar_index, na, "-Distribution stdev " + str.tostring(nround(session_open - (avg_distribution + std_dev_distribution))), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    upper_distribution_std2_label := label.new(bar_index, na, "+Distribution 2stdev " + str.tostring(nround(session_open + (avg_distribution + 2 * std_dev_distribution))), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    lower_distribution_std2_label := label.new(bar_index, na, "-Distribution 2stdev " + str.tostring(nround(session_open - (avg_distribution + 2 * std_dev_distribution))), style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+
+// Session Anchor (Vertical Line with Extend Both)
+// Session Open Line
+if is_session_start_levels and show_session_open
+    line.set_xy1(session_open_line, bar_index, session_open)
+    line.set_xy2(session_open_line, bar_index + projection_offset, session_open)
+if show_session_open_label
+    label.set_xy(session_open_label, bar_index + projection_offset, session_open)
+    label.set_text(session_open_label, "Session open " + str.tostring(nround(session_open)))
+
+// Manipulation Levels
+if is_session_start_levels and not na(avg_manipulation) and not na(avg_distribution) and show_manipulation
+    line.set_xy1(upper_manipulation_line, bar_index + projection_offset, session_open + avg_manipulation)
+    line.set_xy2(upper_manipulation_line, bar_index + projection_offset, session_open + avg_manipulation)
+    line.set_xy1(lower_manipulation_line, bar_index + projection_offset, session_open - avg_manipulation)
+    line.set_xy2(lower_manipulation_line, bar_index + projection_offset, session_open - avg_manipulation)
+if show_manipulation_label
+    label.set_xy(upper_manipulation_label, bar_index + projection_offset, session_open + avg_manipulation)
+    label.set_text(upper_manipulation_label, "-Manipulation " + str.tostring(nround(session_open + avg_manipulation)))
+    label.set_xy(lower_manipulation_label, bar_index + projection_offset, session_open - avg_manipulation)
+    label.set_text(lower_manipulation_label, "+Manipulation " + str.tostring(nround(session_open - avg_manipulation)))
+
+// Distribution Levels
+if is_session_start_levels and not na(avg_manipulation) and not na(avg_distribution) and show_distribution
+    line.set_xy1(upper_distribution_line, bar_index + projection_offset, session_open + avg_distribution)
+    line.set_xy2(upper_distribution_line, bar_index + projection_offset, session_open + avg_distribution)
+    line.set_xy1(lower_distribution_line, bar_index + projection_offset, session_open - avg_distribution)
+    line.set_xy2(lower_distribution_line, bar_index + projection_offset, session_open - avg_distribution)
+if show_distribution_label
+    label.set_xy(upper_distribution_label, bar_index + projection_offset, session_open + avg_distribution)
+    label.set_text(upper_distribution_label, "+Distribution " + str.tostring(nround(session_open + avg_distribution)))
+    label.set_xy(lower_distribution_label, bar_index + projection_offset, session_open - avg_distribution)
+    label.set_text(lower_distribution_label, "-Distribution " + str.tostring(nround(session_open - avg_distribution)))
+
+// Median Manipulation Levels
+if is_session_start_levels and not na(median_manipulation) and show_manipulation
+    line.set_xy1(median_manipulation_upper_line, bar_index + projection_offset, session_open + median_manipulation)
+    line.set_xy2(median_manipulation_upper_line, bar_index + projection_offset, session_open + median_manipulation)
+    line.set_xy1(median_manipulation_lower_line, bar_index + projection_offset, session_open - median_manipulation)
+    line.set_xy2(median_manipulation_lower_line, bar_index + projection_offset, session_open - median_manipulation)
+if show_manipulation_label
+    label.set_xy(median_manipulation_upper_label, bar_index + projection_offset, session_open + median_manipulation)
+    label.set_text(median_manipulation_upper_label, "+Median Manipulation " + str.tostring(nround(session_open + median_manipulation)))
+    label.set_xy(median_manipulation_lower_label, bar_index + projection_offset, session_open - median_manipulation)
+    label.set_text(median_manipulation_lower_label, "-Median Manipulation " + str.tostring(nround(session_open - median_manipulation)))
+
+// Median Distribution Levels
+if is_session_start_levels and not na(median_distribution) and show_distribution
+    line.set_xy1(median_distribution_upper_line, bar_index + projection_offset, session_open + median_distribution)
+    line.set_xy2(median_distribution_upper_line, bar_index + projection_offset, session_open + median_distribution)
+    line.set_xy1(median_distribution_lower_line, bar_index + projection_offset, session_open - median_distribution)
+    line.set_xy2(median_distribution_lower_line, bar_index + projection_offset, session_open - median_distribution)
+if show_distribution_label
+    label.set_xy(median_distribution_upper_label, bar_index + projection_offset, session_open + median_distribution)
+    label.set_text(median_distribution_upper_label, "+Median Distribution " + str.tostring(nround(session_open + median_distribution)))
+    label.set_xy(median_distribution_lower_label, bar_index + projection_offset, session_open - median_distribution)
+    label.set_text(median_distribution_lower_label, "-Median Distribution " + str.tostring(nround(session_open - median_distribution)))
+
+// Standard Deviation Manipulation Levels
+if is_session_start_levels and not na(avg_manipulation) and not na(std_dev_manipulation) and show_manipulation
+    line.set_xy1(upper_manipulation_std_line, bar_index + projection_offset, session_open + (avg_manipulation + std_dev_manipulation))
+    line.set_xy2(upper_manipulation_std_line, bar_index + projection_offset, session_open + (avg_manipulation + std_dev_manipulation))
+    line.set_xy1(lower_manipulation_std_line, bar_index + projection_offset, session_open - (avg_manipulation + std_dev_manipulation))
+    line.set_xy2(lower_manipulation_std_line, bar_index + projection_offset, session_open - (avg_manipulation + std_dev_manipulation))
+if show_manipulation_label
+    label.set_xy(upper_manipulation_std_label, bar_index + projection_offset, session_open + (avg_manipulation + std_dev_manipulation))
+    label.set_text(upper_manipulation_std_label, "+Manipulation stdev " + str.tostring(nround(session_open + (avg_manipulation + std_dev_manipulation))))
+    label.set_xy(lower_manipulation_std_label, bar_index + projection_offset, session_open - (avg_manipulation + std_dev_manipulation))
+    label.set_text(lower_manipulation_std_label, "-Manipulation stdev " + str.tostring(nround(session_open - (avg_manipulation + std_dev_manipulation))))
+
+// Standard Deviation Distribution Levels
+if is_session_start_levels and not na(avg_distribution) and not na(std_dev_distribution) and show_distribution
+    line.set_xy1(upper_distribution_std_line, bar_index + projection_offset, session_open + (avg_distribution + std_dev_distribution))
+    line.set_xy2(upper_distribution_std_line, bar_index + projection_offset, session_open + (avg_distribution + std_dev_distribution))
+    line.set_xy1(lower_distribution_std_line, bar_index + projection_offset, session_open - (avg_distribution + std_dev_distribution))
+    line.set_xy2(lower_distribution_std_line, bar_index + projection_offset, session_open - (avg_distribution + std_dev_distribution))
+if show_distribution_label
+    label.set_xy(upper_distribution_std_label, bar_index + projection_offset, session_open + (avg_distribution + std_dev_distribution))
+    label.set_text(upper_distribution_std_label, "+Distribution stdev " + str.tostring(nround(session_open + (avg_distribution + std_dev_distribution))))
+    label.set_xy(lower_distribution_std_label, bar_index + projection_offset, session_open - (avg_distribution + std_dev_distribution))
+    label.set_text(lower_distribution_std_label, "-Distribution stdev " + str.tostring(nround(session_open - (avg_distribution + std_dev_distribution))))
+
+// New ±2σ Distribution Levels
+if is_session_start_levels and not na(avg_distribution) and not na(std_dev_distribution) and show_distribution
+    line.set_xy1(upper_distribution_std2_line, bar_index + projection_offset, session_open + (avg_distribution + 2 * std_dev_distribution))
+    line.set_xy2(upper_distribution_std2_line, bar_index + projection_offset, session_open + (avg_distribution + 2 * std_dev_distribution))
+    line.set_xy1(lower_distribution_std2_line, bar_index + projection_offset, session_open - (avg_distribution + 2 * std_dev_distribution))
+    line.set_xy2(lower_distribution_std2_line, bar_index + projection_offset, session_open - (avg_distribution + 2 * std_dev_distribution))
+if show_distribution_label
+    label.set_xy(upper_distribution_std2_label, bar_index + projection_offset, session_open + (avg_distribution + 2 * std_dev_distribution))
+    label.set_text(upper_distribution_std2_label, "+Distribution 2stdev " + str.tostring(nround(session_open + (avg_distribution + 2 * std_dev_distribution))))
+    label.set_xy(lower_distribution_std2_label, bar_index + projection_offset, session_open - (avg_distribution + 2 * std_dev_distribution))
+    label.set_text(lower_distribution_std2_label, "-Distribution 2stdev " + str.tostring(nround(session_open - (avg_distribution + 2 * std_dev_distribution))))
+
+
+// Extend Lines and Labels Beyond Session
+if bar_index > bar_index[1]
+    if show_session_open
+        line.set_x2(session_open_line, bar_index + projection_offset + 3)
+    if show_session_open_label
+        label.set_x(session_open_label, bar_index + projection_offset + 3)
+    if show_manipulation
+        line.set_x2(upper_manipulation_line, bar_index + projection_offset)
+        line.set_x2(lower_manipulation_line, bar_index + projection_offset)
+        line.set_x2(median_manipulation_upper_line, bar_index + projection_offset)
+        line.set_x2(median_manipulation_lower_line, bar_index + projection_offset)
+        line.set_x2(upper_manipulation_std_line, bar_index + projection_offset)
+        line.set_x2(lower_manipulation_std_line, bar_index + projection_offset)
+    if show_manipulation_label
+        label.set_x(upper_manipulation_label, bar_index + projection_offset)
+        label.set_x(lower_manipulation_label, bar_index + projection_offset)
+        label.set_x(median_manipulation_upper_label, bar_index + projection_offset)
+        label.set_x(median_manipulation_lower_label, bar_index + projection_offset)
+        label.set_x(upper_manipulation_std_label, bar_index + projection_offset)
+        label.set_x(lower_manipulation_std_label, bar_index + projection_offset)
+    if show_distribution
+        line.set_x2(upper_distribution_line, bar_index + projection_offset)
+        line.set_x2(lower_distribution_line, bar_index + projection_offset)
+        line.set_x2(median_distribution_upper_line, bar_index + projection_offset)
+        line.set_x2(median_distribution_lower_line, bar_index + projection_offset)
+        line.set_x2(upper_distribution_std_line, bar_index + projection_offset)
+        line.set_x2(lower_distribution_std_line, bar_index + projection_offset)
+        line.set_x2(upper_distribution_std2_line, bar_index + projection_offset)
+        line.set_x2(lower_distribution_std2_line, bar_index + projection_offset)
+    if show_distribution_label
+        label.set_x(upper_distribution_label, bar_index + projection_offset)
+        label.set_x(lower_distribution_label, bar_index + projection_offset)
+        label.set_x(median_distribution_upper_label, bar_index + projection_offset)
+        label.set_x(median_distribution_lower_label, bar_index + projection_offset)
+        label.set_x(upper_distribution_std_label, bar_index + projection_offset)
+        label.set_x(lower_distribution_std_label, bar_index + projection_offset)
+        label.set_x(upper_distribution_std2_label, bar_index + projection_offset)
+        label.set_x(lower_distribution_std2_label, bar_index + projection_offset)
+
+// Key session levels
+
+// Parameters
+session_type = input.string(defval='Day Session (RTH)', options=['Day Session (RTH)', 'Custom'],
+  title='Select Session Type (no need for stocks)', group='SESSION & INITIAL BALANCE',
+  tooltip='-For futures, select RTH and the script will auto load the corresponding session times for your contract\n-Stocks will auto-set regardless of the selection here\n-Select Custom to override auto selection with the session times you select in the next parameter box.')
+custom_session_times_inp = input.session(defval="0800-1600", title='Custom Session', group='SESSION & INITIAL BALANCE')
+
+todop = input.bool(title='Open RTH Session', defval=true, inline='trthop', group='Today\'s RTH session')
+todopcol = input.color(title='', defval=color.new(color.purple, 20), inline='trthop', group='Today\'s RTH session')
+todopwidth = input.int(title='', defval=2, inline='trthop', group='Today\'s RTH session')
+todmid = input.bool(title='Mid RTH Session', defval=true, inline='trthmi', group='Today\'s RTH session')
+todmidcol = input.color(title='', defval=color.new(color.purple, 20), inline='trthmi', group='Today\'s RTH session')
+todmidwidth = input.int(title='', defval=1, inline='trthmi', group='Today\'s RTH session')
+todhi = input.bool(title='High RTH Session', defval=true, inline='trthhi', group='Today\'s RTH session')
+todhicol = input.color(title='', defval=color.new(color.purple, 20), inline='trthhi', group='Today\'s RTH session')
+todhiwidth = input.int(title='', defval=1, inline='trthhi', group='Today\'s RTH session')
+todlo = input.bool(title='Low RTH Session', defval=true, inline='trthlo', group='Today\'s RTH session')
+todlocol = input.color(title='', defval=color.new(color.purple, 20), inline='trthlo', group='Today\'s RTH session')
+todlowidth = input.int(title='', defval=1, inline='trthlo', group='Today\'s RTH session')
+
+onhi = input.bool(title='High ON Session', defval=true, inline='onhi', group='Today\'s Overnight session')
+onhicol = input.color(title='', defval=color.new(color.gray, 20), inline='onhi', group='Today\'s Overnight session')
+onhiwidth = input.int(title='', defval=1, inline='onhi', group='Today\'s Overnight session')
+onlo = input.bool(title='Low ON Session', defval=true, inline='onlo', group='Today\'s Overnight session')
+onlocol = input.color(title='', defval=color.new(color.gray, 20), inline='onlo', group='Today\'s Overnight session')
+onlowidth = input.int(title='', defval=1, inline='onlo', group='Today\'s Overnight session')
+onmid = input.bool(title='Mid ON Session', defval=true, inline='onmid', group='Today\'s Overnight session')
+onmidcol = input.color(title='', defval=color.new(color.gray, 20), inline='onmid', group='Today\'s Overnight session')
+onmidwidth = input.int(title='', defval=1, inline='onmid', group='Today\'s Overnight session')
+
+rthop = input.bool(title='Open RTH Session', defval=true, inline='yrthop', group='Yesterday\'s RTH session')
+rthopcol = input.color(title='', defval=color.new(color.olive, 20), inline='yrthop', group='Yesterday\'s RTH session')
+rthopwidth = input.int(title='', defval=2, inline='yrthop', group='Yesterday\'s RTH session')
+rthcl = input.bool(title='Close RTH Session', defval=true, inline='yrthcl', group='Yesterday\'s RTH session')
+rthclcol = input.color(title='', defval=color.new(color.olive, 20), inline='yrthcl', group='Yesterday\'s RTH session')
+rthclwidth = input.int(title='', defval=2, inline='yrthcl', group='Yesterday\'s RTH session')
+rthmid = input.bool(title='Mid RTH Session', defval=true, inline='yrthmi', group='Yesterday\'s RTH session')
+rthmidcol = input.color(title='', defval=color.new(color.olive, 20), inline='yrthmi', group='Yesterday\'s RTH session')
+rthmidwidth = input.int(title='', defval=2, inline='yrthmi', group='Yesterday\'s RTH session')
+rthhi = input.bool(title='High RTH Session', defval=true, inline='yrthhi', group='Yesterday\'s RTH session')
+rthhicol = input.color(title='', defval=color.new(color.olive, 20), inline='yrthhi', group='Yesterday\'s RTH session')
+rthhiwidth = input.int(title='', defval=1, inline='yrthhi', group='Yesterday\'s RTH session')
+rthlo = input.bool(title='Low RTH Session', defval=true, inline='yrthlo', group='Yesterday\'s RTH session')
+rthlocol = input.color(title='', defval=color.new(color.olive, 20), inline='yrthlo', group='Yesterday\'s RTH session')
+rthlowidth = input.int(title='', defval=1, inline='yrthlo', group='Yesterday\'s RTH session')
+
+bgON = input.bool(title='Different Background Outside of session times', defval=false, inline='ONcol', group='MORE SETTINGS')
+colON = input.color(title='', defval=color.new(color.gray, 93), inline='ONcol', group='MORE SETTINGS')
+display_value = input.bool(true, title='Show Price Values in Labels', group='MORE SETTINGS')
+nbarsforward = input.int(title='Offset labels N bars to the right of last bar', defval=20, group='MORE SETTINGS')
+multforward = input.float(title="Multiply offset for yesterday's labels by", defval=1, minval=0.25, step=0.25, group='MORE SETTINGS')
+label_size_2 = input.string('small', options=['auto', 'tiny', 'small', 'normal', 'large', 'huge'], title='Label size', group='MORE SETTINGS')
+
+l_size = label_size_2 == 'auto' ? size.auto : label_size_2 == 'tiny' ? size.tiny : label_size_2 == 'small' ? size.small : label_size_2 == 'normal' ? size.normal : label_size_2 == 'large' ? size.large : size.huge
+
+// Variables
+var float rth_op = na
+var float rth_cl = na
+var float rth_hi = na
+var float rth_lo = na
+var float rth_mid = na
+
+var float on_hi = na
+var float on_lo = na
+var float on_mid = na
+
+var float yest_rth_op = na
+var float yest_rth_cl = na
+var float yest_rth_mid = na
+var float yest_rth_hi = na
+var float yest_rth_lo = na
+
+var int index_on_start = na
+var int index_rth_start = na
+
+var yest_offset = math.round(multforward * nbarsforward)
+
+// Try to automatically load session times for futures contracts
+[session_times, session_timezone] = Session.SetSessionTimes(session_type, custom_session_times_inp, syminfo.type, syminfo.root, syminfo.timezone)
+
+// CHECK WHETHER WE ARE IN SESSION
+session = na(time(timeframe.period, session_times)) ? false : true
+
+// Optionally color background outside of RTH session
+color bgcol = na
+if not session and timeframe.isintraday and bgON
+    bgcol := colON
+
+bgcolor(bgcol)
+
+// CALCULATE IF THIS IS AN INTRADAY CHART AND START ONLY 3 DAYS AGO (no need to calculate all bars)
+if timeframe.isintraday and time > last_bar_time - 5 * 24 * 60 * 60 * 1000
+    // If we are inside RTH
+    if session
+        // Calculate RTH values
+        rth_op := na(rth_op) ? open : rth_op
+        rth_hi := na(rth_hi) or high > rth_hi[1] ? high : rth_hi[1]
+        rth_lo := na(rth_lo) or low < rth_lo[1] ? low : rth_lo[1]
+        rth_cl := close
+        rth_mid := (rth_hi + rth_lo) / 2
+        
+        // If this is the first bar of the new RTH session, save its index
+        if not session[1]
+            index_rth_start := bar_index
+        
+        [true]
+    else
+        // We are in ON session
+        // If ON session just started, save RTH levels and reset everything
+        if session[1]
+            index_on_start := bar_index
+            // Turn RTH values into yesterday's
+            yest_rth_op := rth_op
+            yest_rth_cl := rth_cl
+            yest_rth_hi := rth_hi
+            yest_rth_lo := rth_lo
+            yest_rth_mid := rth_mid
+            // Reset variables
+            index_rth_start := na
+            on_hi := na
+            on_lo := na
+            rth_op := na
+            rth_cl := na
+            rth_hi := na
+            rth_lo := na
+            rth_mid := na
+
+        // Calculate ON values
+        on_hi := na(on_hi) or high > on_hi[1] ? high : on_hi[1]
+        on_lo := na(on_lo) or low < on_lo[1] ? low : on_lo[1]
+        on_mid := (on_hi + on_lo) / 2
+
+        [true]
+    
+    // Create all lines and labels in last bar and update their position
+    if barstate.islast
+        // Draw levels
+        // Today's RTH levels
+        var op_line = todop ? line.new(index_rth_start, rth_op, index_rth_start + nbarsforward, rth_op, xloc=xloc.bar_index, color=todopcol, width=todopwidth, style=line.style_dotted) : na
+        var mid_line = todmid ? line.new(index_rth_start, rth_mid, index_rth_start + nbarsforward, rth_mid, xloc=xloc.bar_index, color=todmidcol, width=todmidwidth, style=line.style_dashed) : na
+        var hi_line = todhi ? line.new(index_rth_start, rth_hi, index_rth_start + nbarsforward, rth_hi, xloc=xloc.bar_index, color=todhicol, width=todhiwidth) : na
+        var lo_line = todlo ? line.new(index_rth_start, rth_lo, index_rth_start + nbarsforward, rth_lo, xloc=xloc.bar_index, color=todlocol, width=todlowidth) : na
+        // ON levels
+        var onhi_line = onhi ? line.new(index_on_start, on_hi, index_on_start + nbarsforward, on_hi, xloc=xloc.bar_index, color=onhicol, width=onhiwidth) : na
+        var onlo_line = onlo ? line.new(index_on_start, on_lo, index_on_start + nbarsforward, on_lo, xloc=xloc.bar_index, color=onlocol, width=onlowidth) : na
+        var onmid_line = onmid ? line.new(index_on_start, on_mid, index_on_start + nbarsforward, on_mid, xloc=xloc.bar_index, color=onmidcol, width=onmidwidth, style=line.style_dashed) : na
+        // Yesterday's RTH levels
+        var rthcl_line = rthcl ? line.new(index_on_start, yest_rth_cl, index_on_start + yest_offset, yest_rth_cl, xloc=xloc.bar_index, color=rthclcol, width=rthclwidth) : na
+        var rthop_line = rthop ? line.new(index_on_start, yest_rth_op, index_on_start + yest_offset, yest_rth_op, xloc=xloc.bar_index, color=rthopcol, width=rthopwidth, style=line.style_dotted) : na
+        var rthhi_line = rthhi ? line.new(index_on_start, yest_rth_hi, index_on_start + yest_offset, yest_rth_hi, xloc=xloc.bar_index, color=rthhicol, width=rthhiwidth) : na
+        var rthlo_line = rthlo ? line.new(index_on_start, yest_rth_lo, index_on_start + yest_offset, yest_rth_lo, xloc=xloc.bar_index, color=rthlocol, width=rthlowidth) : na
+        var rthmid_line = rthmid ? line.new(index_on_start, yest_rth_mid, index_on_start + yest_offset, yest_rth_mid, xloc=xloc.bar_index, color=rthmidcol, width=rthmidwidth, style=line.style_dashed) : na
+        
+        // Draw labels
+        // Today
+        var label_op = todop ? label.new(bar_index + nbarsforward, rth_op, xloc=xloc.bar_index, text=display_value ? 'op ' + str.tostring(nround(rth_op)) : 'op', style=label.style_none, textcolor=todopcol, textalign=text.align_left, size=l_size) : na
+        var label_hi = todhi ? label.new(bar_index + nbarsforward, rth_hi, xloc=xloc.bar_index, text=display_value ? 'hi ' + str.tostring(nround(rth_hi)) : 'hi', style=label.style_none, textcolor=todhicol, textalign=text.align_left, size=l_size) : na
+        var label_lo = todlo ? label.new(bar_index + nbarsforward, rth_lo, xloc=xloc.bar_index, text=display_value ? 'lo ' + str.tostring(nround(rth_lo)) : 'lo', style=label.style_none, textcolor=todlocol, textalign=text.align_left, size=l_size) : na
+        var label_mid = todmid ? label.new(bar_index + nbarsforward, rth_mid, xloc=xloc.bar_index, text=display_value ? 'mid ' + str.tostring(nround(rth_mid)) : 'mid', style=label.style_none, textcolor=todmidcol, textalign=text.align_left, size=l_size) : na
+        // Overnight
+        var label_on_hi = onhi ? label.new(bar_index + nbarsforward, on_hi, xloc=xloc.bar_index, text=display_value ? 'ON.hi ' + str.tostring(nround(on_hi)) : 'ON.hi', style=label.style_none, textcolor=onhicol, textalign=text.align_left, size=l_size) : na
+        var label_on_lo = onlo ? label.new(bar_index + nbarsforward, on_lo, xloc=xloc.bar_index, text=display_value ? 'ON.lo ' + str.tostring(nround(on_lo)) : 'ON.lo', style=label.style_none, textcolor=onlocol, textalign=text.align_left, size=l_size) : na
+        var label_on_mid = onmid ? label.new(bar_index + nbarsforward, on_mid, xloc=xloc.bar_index, text=display_value ? 'ON.mid ' + str.tostring(nround(on_mid)) : 'ON.mid', style=label.style_none, textcolor=onmidcol, textalign=text.align_left, size=l_size) : na
+        // Yesterday
+        var label_rth_cl = rthcl ? label.new(bar_index + yest_offset, yest_rth_cl, xloc=xloc.bar_index, text=display_value ? 'y.RTH.cl ' + str.tostring(nround(yest_rth_cl)) : 'y.RTH.cl', style=label.style_none, textcolor=rthclcol, textalign=text.align_left, size=l_size) : na
+        var label_rth_op = rthop ? label.new(bar_index + yest_offset, yest_rth_op, xloc=xloc.bar_index, text=display_value ? 'y.RTH.op ' + str.tostring(nround(yest_rth_op)) : 'y.RTH.op', style=label.style_none, textcolor=rthopcol, textalign=text.align_left, size=l_size) : na
+        var label_rth_hi = rthhi ? label.new(bar_index + yest_offset, yest_rth_hi, xloc=xloc.bar_index, text=display_value ? 'y.RTH.hi ' + str.tostring(nround(yest_rth_hi)) : 'y.RTH.hi', style=label.style_none, textcolor=rthhicol, textalign=text.align_left, size=l_size) : na
+        var label_rth_lo = rthlo ? label.new(bar_index + yest_offset, yest_rth_lo, xloc=xloc.bar_index, text=display_value ? 'y.RTH.lo ' + str.tostring(nround(yest_rth_lo)) : 'y.RTH.lo', style=label.style_none, textcolor=rthlocol, textalign=text.align_left, size=l_size) : na
+        var label_rth_mid = rthmid ? label.new(bar_index + yest_offset, yest_rth_mid, xloc=xloc.bar_index, text=display_value ? 'y.RTH.mid ' + str.tostring(nround(yest_rth_mid)) : 'y.RTH.mid', style=label.style_none, textcolor=rthmidcol, textalign=text.align_left, size=l_size) : na
+        
+        // Update vertical location of lines and labels and label price if displayed
+        // Today's
+        if rth_op != rth_op[1]
+            line.set_y1(op_line, rth_op)
+            line.set_y2(op_line, rth_op)
+            label.set_y(label_op, rth_op)
+            if display_value
+                label.set_text(label_op, 'op ' + str.tostring(nround(rth_op)))
+        if rth_hi != rth_hi[1]
+            line.set_y1(hi_line, rth_hi)
+            line.set_y2(hi_line, rth_hi)
+            label.set_y(label_hi, rth_hi)
+            if display_value
+                label.set_text(label_hi, 'hi ' + str.tostring(nround(rth_hi)))
+        if rth_lo != rth_lo[1]
+            line.set_y1(lo_line, rth_lo)
+            line.set_y2(lo_line, rth_lo)
+            label.set_y(label_lo, rth_lo)
+            if display_value
+                label.set_text(label_lo, 'lo ' + str.tostring(nround(rth_lo)))
+        if rth_mid != rth_mid[1]
+            line.set_y1(mid_line, rth_mid)
+            line.set_y2(mid_line, rth_mid)
+            label.set_y(label_mid, rth_mid)
+            if display_value
+                label.set_text(label_mid, 'mid ' + str.tostring(nround(rth_mid)))
+        // Overnight
+        if on_hi != on_hi[1]
+            line.set_y1(onhi_line, on_hi)
+            line.set_y2(onhi_line, on_hi)
+            label.set_y(label_on_hi, on_hi)
+            if display_value
+                label.set_text(label_on_hi, 'ON.hi ' + str.tostring(nround(on_hi)))
+        if on_lo != on_lo[1]
+            line.set_y1(onlo_line, on_lo)
+            line.set_y2(onlo_line, on_lo)
+            label.set_y(label_on_lo, on_lo)
+            if display_value
+                label.set_text(label_on_lo, 'ON.lo ' + str.tostring(nround(on_lo)))
+        if on_mid != on_mid[1]
+            line.set_y1(onmid_line, on_mid)
+            line.set_y2(onmid_line, on_mid)
+            label.set_y(label_on_mid, on_mid)
+            if display_value
+                label.set_text(label_on_mid, 'ON.mid ' + str.tostring(nround(on_mid)))
+        // Yesterday's
+        if yest_rth_cl != yest_rth_cl[1]
+            line.set_y1(rthcl_line, yest_rth_cl)
+            line.set_y2(rthcl_line, yest_rth_cl)
+            label.set_y(label_rth_cl, yest_rth_cl)
+            if display_value
+                label.set_text(label_rth_cl, 'y.RTH.cl ' + str.tostring(nround(yest_rth_cl)))
+        if yest_rth_op != yest_rth_op[1]
+            line.set_y1(rthop_line, yest_rth_op)
+            line.set_y2(rthop_line, yest_rth_op)
+            label.set_y(label_rth_op, yest_rth_op)
+            if display_value
+                label.set_text(label_rth_op, 'y.RTH.op ' + str.tostring(nround(yest_rth_op)))
+        if yest_rth_hi != yest_rth_hi[1]
+            line.set_y1(rthhi_line, yest_rth_hi)
+            line.set_y2(rthhi_line, yest_rth_hi)
+            label.set_y(label_rth_hi, yest_rth_hi)
+            if display_value
+                label.set_text(label_rth_hi, 'y.RTH.hi ' + str.tostring(nround(yest_rth_hi)))
+        if yest_rth_lo != yest_rth_lo[1]
+            line.set_y1(rthlo_line, yest_rth_lo)
+            line.set_y2(rthlo_line, yest_rth_lo)
+            label.set_y(label_rth_lo, yest_rth_lo)
+            if display_value
+                label.set_text(label_rth_lo, 'y.RTH.lo ' + str.tostring(nround(yest_rth_lo)))
+        if yest_rth_mid != yest_rth_mid[1]
+            line.set_y1(rthmid_line, yest_rth_mid)
+            line.set_y2(rthmid_line, yest_rth_mid)
+            label.set_y(label_rth_mid, yest_rth_mid)
+            if display_value
+                label.set_text(label_rth_mid, 'y.RTH.mid ' + str.tostring(nround(yest_rth_mid)))
+        
+        // Move right end of all lines
+        line.set_x2(op_line, bar_index + nbarsforward)
+        line.set_x2(mid_line, bar_index + nbarsforward)
+        line.set_x2(hi_line, bar_index + nbarsforward)
+        line.set_x2(lo_line, bar_index + nbarsforward)
+        line.set_x2(onhi_line, bar_index + nbarsforward)
+        line.set_x2(onlo_line, bar_index + nbarsforward)
+        line.set_x2(onmid_line, bar_index + nbarsforward)
+        line.set_x2(rthcl_line, bar_index + yest_offset)
+        line.set_x2(rthop_line, bar_index + yest_offset)
+        line.set_x2(rthhi_line, bar_index + yest_offset)
+        line.set_x2(rthlo_line, bar_index + yest_offset)
+        line.set_x2(rthmid_line, bar_index + yest_offset)
+        
+        // Move all labels horizontally
+        label.set_x(label_op, bar_index + nbarsforward)
+        label.set_x(label_hi, bar_index + nbarsforward)
+        label.set_x(label_lo, bar_index + nbarsforward)
+        label.set_x(label_mid, bar_index + nbarsforward)
+        label.set_x(label_on_hi, bar_index + nbarsforward)
+        label.set_x(label_on_lo, bar_index + nbarsforward)
+        label.set_x(label_on_mid, bar_index + nbarsforward)
+        label.set_x(label_rth_cl, bar_index + yest_offset)
+        label.set_x(label_rth_op, bar_index + yest_offset)
+        label.set_x(label_rth_hi, bar_index + yest_offset)
+        label.set_x(label_rth_lo, bar_index + yest_offset)
+        label.set_x(label_rth_mid, bar_index + yest_offset)
+        
+        // Move start of all lines if session changes
+        if index_rth_start != index_rth_start[1]
+            line.set_x1(op_line, index_rth_start)
+            line.set_x1(mid_line, index_rth_start)
+            line.set_x1(hi_line, index_rth_start)
+            line.set_x1(lo_line, index_rth_start)
+        
+        if index_on_start != index_on_start[1]
+            line.set_x1(onhi_line, index_on_start)
+            line.set_x1(onlo_line, index_on_start)
+            line.set_x1(onmid_line, index_on_start)
+            line.set_x1(rthcl_line, index_on_start)
+            line.set_x1(rthop_line, index_on_start)
+            line.set_x1(rthhi_line, index_on_start)
+            line.set_x1(rthlo_line, index_on_start)
+            line.set_x1(rthmid_line, index_on_start)
+
+// Stats for Levels Being Hit (Per Weekday)
+var int mon_sessions = 0
+var int tue_sessions = 0
+var int wed_sessions = 0
+var int thu_sessions = 0
+var int fri_sessions = 0
+
+var int mon_upper_manip_hits = 0
+var int tue_upper_manip_hits = 0
+var int wed_upper_manip_hits = 0
+var int thu_upper_manip_hits = 0
+var int fri_upper_manip_hits = 0
+
+var int mon_lower_manip_hits = 0
+var int tue_lower_manip_hits = 0
+var int wed_lower_manip_hits = 0
+var int thu_lower_manip_hits = 0
+var int fri_lower_manip_hits = 0
+
+var int mon_upper_dist_hits = 0
+var int tue_upper_dist_hits = 0
+var int wed_upper_dist_hits = 0
+var int thu_upper_dist_hits = 0
+var int fri_upper_dist_hits = 0
+
+var int mon_lower_dist_hits = 0
+var int tue_lower_dist_hits = 0
+var int wed_lower_dist_hits = 0
+var int thu_lower_dist_hits = 0
+var int fri_lower_dist_hits = 0
+
+var int mon_upper_dist_std2_hits = 0
+var int tue_upper_dist_std2_hits = 0
+var int wed_upper_dist_std2_hits = 0
+var int thu_upper_dist_std2_hits = 0
+var int fri_upper_dist_std2_hits = 0
+
+var int mon_lower_dist_std2_hits = 0
+var int tue_lower_dist_std2_hits = 0
+var int wed_lower_dist_std2_hits = 0
+var int thu_lower_dist_std2_hits = 0
+var int fri_lower_dist_std2_hits = 0
+
+// Session Data Tracking for Stats
+var float hit_session_open = na
+var float hit_session_high = na
+var float hit_session_low = na
+
+if is_session_start_stats
+    hit_session_open := open
+    hit_session_high := high
+    hit_session_low := low
+else if is_in_session_stats
+    hit_session_high := math.max(hit_session_high, high)
+    hit_session_low := math.min(hit_session_low, low)
+
+// Track First Hits Only (Using Stats Session)
+var bool upper_manipulation_first_hit = false
+var bool lower_manipulation_first_hit = false
+var bool upper_distribution_first_hit = false
+var bool lower_distribution_first_hit = false
+var bool upper_distribution_std2_first_hit = false
+var bool lower_distribution_std2_first_hit = false
+
+// Reset counters at the start of a new week (Monday)
+if is_session_start_stats and dayofweek(time, time_zone) == dayofweek.monday and not (dayofweek(time[1], time_zone) == dayofweek.monday)
+    mon_sessions := 0
+    tue_sessions := 0
+    wed_sessions := 0
+    thu_sessions := 0
+    fri_sessions := 0
+    mon_upper_manip_hits := 0
+    tue_upper_manip_hits := 0
+    wed_upper_manip_hits := 0
+    thu_upper_manip_hits := 0
+    fri_upper_manip_hits := 0
+    mon_lower_manip_hits := 0
+    tue_lower_manip_hits := 0
+    wed_lower_manip_hits := 0
+    thu_lower_manip_hits := 0
+    fri_lower_manip_hits := 0
+    mon_upper_dist_hits := 0
+    tue_upper_dist_hits := 0
+    wed_upper_dist_hits := 0
+    thu_upper_dist_hits := 0
+    fri_upper_dist_hits := 0
+    mon_lower_dist_hits := 0
+    tue_lower_dist_hits := 0
+    wed_lower_dist_hits := 0
+    thu_lower_dist_hits := 0
+    fri_lower_dist_hits := 0
+    mon_upper_dist_std2_hits := 0
+    tue_upper_dist_std2_hits := 0
+    wed_upper_dist_std2_hits := 0
+    thu_upper_dist_std2_hits := 0
+    fri_upper_dist_std2_hits := 0
+    mon_lower_dist_std2_hits := 0
+    tue_lower_dist_std2_hits := 0
+    wed_lower_dist_std2_hits := 0
+    thu_lower_dist_std2_hits := 0
+    fri_lower_dist_std2_hits := 0
+
+// Track hits by weekday
+if is_in_session_stats and not na(avg_manipulation) and not na(avg_distribution) and not na(std_dev_distribution)
+    string current_day = get_weekday()
+    // Upper Manipulation
+    if not upper_manipulation_first_hit and hit_session_high >= hit_session_open + avg_manipulation
+        if current_day == "Monday"
+            mon_upper_manip_hits := mon_upper_manip_hits + 1
+        else if current_day == "Tuesday"
+            tue_upper_manip_hits := tue_upper_manip_hits + 1
+        else if current_day == "Wednesday"
+            wed_upper_manip_hits := wed_upper_manip_hits + 1
+        else if current_day == "Thursday"
+            thu_upper_manip_hits := thu_upper_manip_hits + 1
+        else if current_day == "Friday"
+            fri_upper_manip_hits := fri_upper_manip_hits + 1
+        upper_manipulation_first_hit := true
+    
+    // Lower Manipulation
+    if not lower_manipulation_first_hit and hit_session_low <= hit_session_open - avg_manipulation
+        if current_day == "Monday"
+            mon_lower_manip_hits := mon_lower_manip_hits + 1
+        else if current_day == "Tuesday"
+            tue_lower_manip_hits := tue_lower_manip_hits + 1
+        else if current_day == "Wednesday"
+            wed_lower_manip_hits := wed_lower_manip_hits + 1
+        else if current_day == "Thursday"
+            thu_lower_manip_hits := thu_lower_manip_hits + 1
+        else if current_day == "Friday"
+            fri_lower_manip_hits := fri_lower_manip_hits + 1
+        lower_manipulation_first_hit := true
+    
+    // Upper Distribution
+    if not upper_distribution_first_hit and hit_session_high >= hit_session_open + avg_distribution
+        if current_day == "Monday"
+            mon_upper_dist_hits := mon_upper_dist_hits + 1
+        else if current_day == "Tuesday"
+            tue_upper_dist_hits := tue_upper_dist_hits + 1
+        else if current_day == "Wednesday"
+            wed_upper_dist_hits := wed_upper_dist_hits + 1
+        else if current_day == "Thursday"
+            thu_upper_dist_hits := thu_upper_dist_hits + 1
+        else if current_day == "Friday"
+            fri_upper_dist_hits := fri_upper_dist_hits + 1
+        upper_distribution_first_hit := true
+    
+    // Lower Distribution
+    if not lower_distribution_first_hit and hit_session_low <= hit_session_open - avg_distribution
+        if current_day == "Monday"
+            mon_lower_dist_hits := mon_lower_dist_hits + 1
+        else if current_day == "Tuesday"
+            tue_lower_dist_hits := tue_lower_dist_hits + 1
+        else if current_day == "Wednesday"
+            wed_lower_dist_hits := wed_lower_dist_hits + 1
+        else if current_day == "Thursday"
+            thu_lower_dist_hits := thu_lower_dist_hits + 1
+        else if current_day == "Friday"
+            fri_lower_dist_hits := fri_lower_dist_hits + 1
+        lower_distribution_first_hit := true
+    
+    // Upper ±2σ Distribution
+    if not upper_distribution_std2_first_hit and hit_session_high >= hit_session_open + (avg_distribution + 2 * std_dev_distribution)
+        if current_day == "Monday"
+            mon_upper_dist_std2_hits := mon_upper_dist_std2_hits + 1
+        else if current_day == "Tuesday"
+            tue_upper_dist_std2_hits := tue_upper_dist_std2_hits + 1
+        else if current_day == "Wednesday"
+            wed_upper_dist_std2_hits := wed_upper_dist_std2_hits + 1
+        else if current_day == "Thursday"
+            thu_upper_dist_std2_hits := thu_upper_dist_std2_hits + 1
+        else if current_day == "Friday"
+            fri_upper_dist_std2_hits := fri_upper_dist_std2_hits + 1
+        upper_distribution_std2_first_hit := true
+    
+    // Lower ±2σ Distribution
+    if not lower_distribution_std2_first_hit and hit_session_low <= hit_session_open - (avg_distribution + 2 * std_dev_distribution)
+        if current_day == "Monday"
+            mon_lower_dist_std2_hits := mon_lower_dist_std2_hits + 1
+        else if current_day == "Tuesday"
+            tue_lower_dist_std2_hits := tue_lower_dist_std2_hits + 1
+        else if current_day == "Wednesday"
+            wed_lower_dist_std2_hits := wed_lower_dist_std2_hits + 1
+        else if current_day == "Thursday"
+            thu_lower_dist_std2_hits := thu_lower_dist_std2_hits + 1
+        else if current_day == "Friday"
+            fri_lower_dist_std2_hits := fri_lower_dist_std2_hits + 1
+        lower_distribution_std2_first_hit := true
+
+if is_session_end_stats
+    string current_day = get_weekday()
+    if current_day == "Monday"
+        mon_sessions := mon_sessions + 1
+    else if current_day == "Tuesday"
+        tue_sessions := tue_sessions + 1
+    else if current_day == "Wednesday"
+        wed_sessions := wed_sessions + 1
+    else if current_day == "Thursday"
+        thu_sessions := thu_sessions + 1
+    else if current_day == "Friday"
+        fri_sessions := fri_sessions + 1
+    // Reset first-hit flags for next stats session
+    upper_manipulation_first_hit := false
+    lower_manipulation_first_hit := false
+    upper_distribution_first_hit := false
+    lower_distribution_first_hit := false
+    upper_distribution_std2_first_hit := false
+    lower_distribution_std2_first_hit := false
+
+// Calculate Hit Percentages by Weekday
+float mon_upper_manip_pct = mon_sessions > 0 ? (mon_upper_manip_hits / mon_sessions) * 100 : 0
+float mon_lower_manip_pct = mon_sessions > 0 ? (mon_lower_manip_hits / mon_sessions) * 100 : 0
+float mon_upper_dist_pct = mon_sessions > 0 ? (mon_upper_dist_hits / mon_sessions) * 100 : 0
+float mon_lower_dist_pct = mon_sessions > 0 ? (mon_lower_dist_hits / mon_sessions) * 100 : 0
+float mon_upper_dist_std2_pct = mon_sessions > 0 ? (mon_upper_dist_std2_hits / mon_sessions) * 100 : 0
+float mon_lower_dist_std2_pct = mon_sessions > 0 ? (mon_lower_dist_std2_hits / mon_sessions) * 100 : 0
+
+float tue_upper_manip_pct = tue_sessions > 0 ? (tue_upper_manip_hits / tue_sessions) * 100 : 0
+float tue_lower_manip_pct = tue_sessions > 0 ? (tue_lower_manip_hits / tue_sessions) * 100 : 0
+float tue_upper_dist_pct = tue_sessions > 0 ? (tue_upper_dist_hits / tue_sessions) * 100 : 0
+float tue_lower_dist_pct = tue_sessions > 0 ? (tue_lower_dist_hits / tue_sessions) * 100 : 0
+float tue_upper_dist_std2_pct = tue_sessions > 0 ? (tue_upper_dist_std2_hits / tue_sessions) * 100 : 0
+float tue_lower_dist_std2_pct = tue_sessions > 0 ? (tue_lower_dist_std2_hits / tue_sessions) * 100 : 0
+
+float wed_upper_manip_pct = wed_sessions > 0 ? (wed_upper_manip_hits / wed_sessions) * 100 : 0
+float wed_lower_manip_pct = wed_sessions > 0 ? (wed_lower_manip_hits / wed_sessions) * 100 : 0
+float wed_upper_dist_pct = wed_sessions > 0 ? (wed_upper_dist_hits / wed_sessions) * 100 : 0
+float wed_lower_dist_pct = wed_sessions > 0 ? (wed_lower_dist_hits / wed_sessions) * 100 : 0
+float wed_upper_dist_std2_pct = wed_sessions > 0 ? (wed_upper_dist_std2_hits / wed_sessions) * 100 : 0
+float wed_lower_dist_std2_pct = wed_sessions > 0 ? (wed_lower_dist_std2_hits / wed_sessions) * 100 : 0
+
+float thu_upper_manip_pct = thu_sessions > 0 ? (thu_upper_manip_hits / thu_sessions) * 100 : 0
+float thu_lower_manip_pct = thu_sessions > 0 ? (thu_lower_manip_hits / thu_sessions) * 100 : 0
+float thu_upper_dist_pct = thu_sessions > 0 ? (thu_upper_dist_hits / thu_sessions) * 100 : 0
+float thu_lower_dist_pct = thu_sessions > 0 ? (thu_lower_dist_hits / thu_sessions) * 100 : 0
+float thu_upper_dist_std2_pct = thu_sessions > 0 ? (thu_upper_dist_std2_hits / thu_sessions) * 100 : 0
+float thu_lower_dist_std2_pct = thu_sessions > 0 ? (thu_lower_dist_std2_hits / thu_sessions) * 100 : 0
+
+float fri_upper_manip_pct = fri_sessions > 0 ? (fri_upper_manip_hits / fri_sessions) * 100 : 0
+float fri_lower_manip_pct = fri_sessions > 0 ? (fri_lower_manip_hits / fri_sessions) * 100 : 0
+float fri_upper_dist_pct = fri_sessions > 0 ? (fri_upper_dist_hits / fri_sessions) * 100 : 0
+float fri_lower_dist_pct = fri_sessions > 0 ? (fri_lower_dist_hits / fri_sessions) * 100 : 0
+float fri_upper_dist_std2_pct = fri_sessions > 0 ? (fri_upper_dist_std2_hits / fri_sessions) * 100 : 0
+float fri_lower_dist_std2_pct = fri_sessions > 0 ? (fri_lower_dist_std2_hits / fri_sessions) * 100 : 0
+
+// === Table Display ===
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+var g_TABLE = "Table"
+show_table = input.bool(true, "Show Stats Table", group=g_TABLE)
+table_position = input.string('Top Right', "Table Position", options=['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group=g_TABLE)
+table_size = input.string('Auto', "Text Size", options=['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], group=g_TABLE)
+table_text = input.color(color.black, "Text", group=g_TABLE)
+table_bg = input.color(color.white, "Table Background", group=g_TABLE)
+table_frame = input.color(color.black, "Table Frame", group=g_TABLE)
+table_border = input.color(color.black, "Table Border", group=g_TABLE)
+table_border_width = input.int(1, "Table Border Width", group=g_TABLE)
+table_frame_width = input.int(2, "Table Frame Width", group=g_TABLE)
+
+var table combined_table = na
+if bar_index == 0
+    combined_table := table.new(get_table_position(table_position), 11, 8, bgcolor=table_bg, frame_color=table_frame, frame_width=table_frame_width, border_color=table_border, border_width=table_border_width)
+
+if show_table
+    table_text_size = get_table_text_size(table_size)
+    // Headers
+    table.cell(combined_table, 0, 0, "Level", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 0, "Mon Hits", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 0, "Mon %", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 0, "Tue Hits", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 0, "Tue %", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 0, "Wed Hits", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 0, "Wed %", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 0, "Thu Hits", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 0, "Thu %", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 0, "Fri Hits", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 0, "Fri %", text_color=table_text, text_size=table_text_size)
+
+    // Row 1: Total Sessions
+    table.cell(combined_table, 0, 1, "Total Sessions", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 1, str.tostring(mon_sessions), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 1, "", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 1, str.tostring(tue_sessions), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 1, "", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 1, str.tostring(wed_sessions), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 1, "", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 1, str.tostring(thu_sessions), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 1, "", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 1, str.tostring(fri_sessions), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 1, "", text_color=table_text, text_size=table_text_size)
+
+    // Row 2: Upper Manipulation
+    table.cell(combined_table, 0, 2, "Upper Manipulation", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 2, str.tostring(mon_upper_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 2, str.tostring(math.round(mon_upper_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 2, str.tostring(tue_upper_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 2, str.tostring(math.round(tue_upper_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 2, str.tostring(wed_upper_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 2, str.tostring(math.round(wed_upper_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 2, str.tostring(thu_upper_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 2, str.tostring(math.round(thu_upper_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 2, str.tostring(fri_upper_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 2, str.tostring(math.round(fri_upper_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+
+    // Row 3: Lower Manipulation
+    table.cell(combined_table, 0, 3, "Lower Manipulation", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 3, str.tostring(mon_lower_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 3, str.tostring(math.round(mon_lower_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 3, str.tostring(tue_lower_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 3, str.tostring(math.round(tue_lower_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 3, str.tostring(wed_lower_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 3, str.tostring(math.round(wed_lower_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 3, str.tostring(thu_lower_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 3, str.tostring(math.round(thu_lower_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 3, str.tostring(fri_lower_manip_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 3, str.tostring(math.round(fri_lower_manip_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+
+    // Row 4: Upper Distribution
+    table.cell(combined_table, 0, 4, "Upper Distribution", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 4, str.tostring(mon_upper_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 4, str.tostring(math.round(mon_upper_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 4, str.tostring(tue_upper_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 4, str.tostring(math.round(tue_upper_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 4, str.tostring(wed_upper_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 4, str.tostring(math.round(wed_upper_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 4, str.tostring(thu_upper_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 4, str.tostring(math.round(thu_upper_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 4, str.tostring(fri_upper_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 4, str.tostring(math.round(fri_upper_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+
+    // Row 5: Lower Distribution
+    table.cell(combined_table, 0, 5, "Lower Distribution", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 5, str.tostring(mon_lower_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 5, str.tostring(math.round(mon_lower_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 5, str.tostring(tue_lower_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 5, str.tostring(math.round(tue_lower_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 5, str.tostring(wed_lower_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 5, str.tostring(math.round(wed_lower_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 5, str.tostring(thu_lower_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 5, str.tostring(math.round(thu_lower_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 5, str.tostring(fri_lower_dist_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 5, str.tostring(math.round(fri_lower_dist_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+
+    // Row 6: Upper 2σ Distribution
+    table.cell(combined_table, 0, 6, "Upper 2σ Distribution", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 6, str.tostring(mon_upper_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 6, str.tostring(math.round(mon_upper_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 6, str.tostring(tue_upper_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 6, str.tostring(math.round(tue_upper_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 6, str.tostring(wed_upper_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 6, str.tostring(math.round(wed_upper_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 6, str.tostring(thu_upper_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 6, str.tostring(math.round(thu_upper_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 6, str.tostring(fri_upper_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 6, str.tostring(math.round(fri_upper_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+
+    // Row 7: Lower 2σ Distribution
+    table.cell(combined_table, 0, 7, "Lower 2σ Distribution", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 1, 7, str.tostring(mon_lower_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 2, 7, str.tostring(math.round(mon_lower_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 3, 7, str.tostring(tue_lower_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 4, 7, str.tostring(math.round(tue_lower_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 5, 7, str.tostring(wed_lower_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 6, 7, str.tostring(math.round(wed_lower_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 7, 7, str.tostring(thu_lower_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 8, 7, str.tostring(math.round(thu_lower_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 9, 7, str.tostring(fri_lower_dist_std2_hits), text_color=table_text, text_size=table_text_size)
+    table.cell(combined_table, 10, 7, str.tostring(math.round(fri_lower_dist_std2_pct, 1)) + "%", text_color=table_text, text_size=table_text_size)

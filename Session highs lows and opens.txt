@@ -1,0 +1,846 @@
+//@version=5
+indicator("Session highs, lows & opens", overlay=true)
+
+import PearlDynamicsLLC/PDDrIdrMas7erLib/15 as pd
+
+var g_LEVELS = "================ Session high/low settings ================"
+
+london_sess = input.session("0200-0800", "London Session", group = g_LEVELS, inline = 'London Session')
+inLondonSession = not na(time("", london_sess, "America/New_York"))
+showLondon = input.bool(true, "Show London High/Low", group = g_LEVELS, inline = 'London Session')
+londonHistory = input.bool(true, "History", group = g_LEVELS, inline = 'London Session')
+ldn_col = input.color(color.blue, 'London high/low line colour', group = g_LEVELS, inline = 'London Session')
+ldn_style = input.string("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group = g_LEVELS, inline = 'London Session')
+
+ny_sess = input.session("0800-1700", "NY Session", group = g_LEVELS, inline = 'NY Session')
+inNewYorkSession = not na(time("", ny_sess, "America/New_York"))
+showNewYork = input.bool(true, "Show New York High/Low", group = g_LEVELS, inline = 'NY Session')
+newYorkHistory = input.bool(true, "History", group = g_LEVELS, inline = 'NY Session')
+ny_col = input.color(color.red, 'NY high/low line colour', group = g_LEVELS, inline = 'NY Session')
+ny_style = input.string("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group = g_LEVELS, inline = 'NY Session')
+
+asia_sess = input.session("1800-0200", "Asia Session", group = g_LEVELS, inline = 'Asia Session')
+inAsiaSession = not na(time("", asia_sess, "America/New_York"))
+showAsia = input.bool(true, "Show Asia High/Low", group = g_LEVELS, inline = 'Asia Session')
+asiaHistory = input.bool(true, "History", group = g_LEVELS, inline = 'Asia Session')
+asia_col = input.color(color.teal, 'Asia high/low line colour', group = g_LEVELS, inline = 'Asia Session')
+asia_style = input.string("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group = g_LEVELS, inline = 'Asia Session')
+
+ny_close_sess = input.session("1300-1700", "NY PM Session", group = g_LEVELS, inline = 'NY PM Session')
+inNewYorkCloseSession = not na(time("", ny_close_sess, "America/New_York"))
+showNewYorkClose = input.bool(true, "Show New York PM High/Low", group = g_LEVELS, inline = 'NY PM Session')
+newYorkCloseHistory = input.bool(true, "History", group = g_LEVELS, inline = 'NY PM Session')
+ny_pm_col = input.color(color.purple, 'NY PM high/low line colour', group = g_LEVELS, inline = 'NY PM Session')
+ny_pm_style = input.string("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group = g_LEVELS, inline = 'NY PM Session')
+
+isLondonSessionStart = inLondonSession and not inLondonSession[1]
+isLondonSessionEnd = not inLondonSession and inLondonSession[1]
+
+isNewYorkSessionStart = inNewYorkSession and not inNewYorkSession[1]
+isNewYorkSessionEnd = not inNewYorkSession and inNewYorkSession[1]
+
+isAsiaSessionStart = inAsiaSession and not inAsiaSession[1]
+isAsiaSessionEnd = not inAsiaSession and inAsiaSession[1]
+
+isNewYorkCloseSessionStart = inNewYorkCloseSession and not inNewYorkCloseSession[1]
+isNewYorkCloseSessionEnd = not inNewYorkCloseSession and inNewYorkCloseSession[1]
+
+// Variables for tracking session highs/lows and lines/labels
+var float londonHigh = na
+var float londonLow = na
+var int londonStartTime = na
+var label londonHighLabel = na
+var label londonLowLabel = na
+var line londonHighLine = na
+var line londonLowLine = na
+
+var float newYorkHigh = na
+var float newYorkLow = na
+var int newYorkStartTime = na
+var label newYorkHighLabel = na
+var label newYorkLowLabel = na
+var line newYorkHighLine = na
+var line newYorkLowLine = na
+
+var float asiaHigh = na
+var float asiaLow = na
+var int asiaStartTime = na
+var label asiaHighLabel = na
+var label asiaLowLabel = na
+var line asiaHighLine = na
+var line asiaLowLine = na
+
+var float newYorkCloseHigh = na
+var float newYorkCloseLow = na
+var int newYorkCloseStartTime = na
+var label newYorkCloseHighLabel = na
+var label newYorkCloseLowLabel = na
+var line newYorkCloseHighLine = na
+var line newYorkCloseLowLine = na
+
+// Variables for Previous Day/Week/Month, Week Open, and new 1H/4H
+var line PDH = na
+var line PDL = na
+var line PDM = na
+var label PDHL = na
+var label PDLL = na
+var label PDML = na
+
+var line PWH = na
+var line PWL = na
+var line PWM = na
+var label PWHL = na
+var label PWLL = na
+var label PWML = na
+
+var line PMthH = na
+var line PMthL = na
+var line PMthM = na
+var label PMthHL = na
+var label PMthLL = na
+var label PMthML = na
+
+var line WO = na
+var label WOL = na
+
+var line PH1H = na
+var line PH1L = na
+var label PH1HL = na
+var label PH1LL = na
+
+var line PH4H = na
+var line PH4L = na
+var label PH4HL = na
+var label PH4LL = na
+
+// Function to convert line style string to line.style
+f_get_line_style(style_str) =>
+    style_str == "Solid" ? line.style_solid : style_str == "Dotted" ? line.style_dotted : line.style_dashed
+
+// London Session Logic
+if showLondon and isLondonSessionStart
+    londonHigh := high
+    londonLow := low
+    londonStartTime := time
+else if showLondon and inLondonSession
+    if high > londonHigh
+        londonHigh := high
+    if low < londonLow
+        londonLow := low
+if showLondon and (inLondonSession or isLondonSessionEnd)
+    if barstate.isconfirmed
+        // Delete previous lines and labels
+        line.delete(londonHighLine[1])
+        line.delete(londonLowLine[1])
+        label.delete(londonHighLabel[1])
+        label.delete(londonLowLabel[1])
+        if not londonHistory and isLondonSessionEnd
+            line.delete(londonHighLine)
+            line.delete(londonLowLine)
+            label.delete(londonHighLabel)
+            label.delete(londonLowLabel)
+        else
+            // Draw new lines and labels
+            londonHighLine := line.new(londonStartTime, londonHigh, last_bar_time + 14400000/2, londonHigh, xloc.bar_time, extend.none, ldn_col, f_get_line_style(ldn_style), 1)
+            londonLowLine := line.new(londonStartTime, londonLow, last_bar_time + 14400000/2, londonLow, xloc.bar_time, extend.none, ldn_col, f_get_line_style(ldn_style), 1)
+            londonHighLabel := label.new(last_bar_time + 14400000/2, londonHigh, "London High", xloc.bar_time, yloc.price, color.white, label.style_none, ldn_col, size.small, text.align_right)
+            londonLowLabel := label.new(last_bar_time + 14400000/2, londonLow, "London Low", xloc.bar_time, yloc.price, color.white, label.style_none, ldn_col, size.small, text.align_right)
+
+// New York Session Logic
+if showNewYork and isNewYorkSessionStart
+    newYorkHigh := high
+    newYorkLow := low
+    newYorkStartTime := time
+else if showNewYork and inNewYorkSession
+    if high > newYorkHigh
+        newYorkHigh := high
+    if low < newYorkLow
+        newYorkLow := low
+if showNewYork and (inNewYorkSession or isNewYorkSessionEnd)
+    if barstate.isconfirmed
+        // Delete previous lines and labels
+        line.delete(newYorkHighLine[1])
+        line.delete(newYorkLowLine[1])
+        label.delete(newYorkHighLabel[1])
+        label.delete(newYorkLowLabel[1])
+        if not newYorkHistory and isNewYorkSessionEnd
+            line.delete(newYorkHighLine)
+            line.delete(newYorkLowLine)
+            label.delete(newYorkHighLabel)
+            label.delete(newYorkLowLabel)
+        else
+            // Draw new lines and labels
+            newYorkHighLine := line.new(newYorkStartTime, newYorkHigh, last_bar_time + 14400000/2, newYorkHigh, xloc.bar_time, extend.none, ny_col, f_get_line_style(ny_style), 1)
+            newYorkLowLine := line.new(newYorkStartTime, newYorkLow, last_bar_time + 14400000/2, newYorkLow, xloc.bar_time, extend.none, ny_col, f_get_line_style(ny_style), 1)
+            newYorkHighLabel := label.new(last_bar_time + 14400000/2, newYorkHigh, "New York High", xloc.bar_time, yloc.price, color.white, label.style_none, ny_col, size.small, text.align_right)
+            newYorkLowLabel := label.new(last_bar_time + 14400000/2, newYorkLow, "New York Low", xloc.bar_time, yloc.price, color.white, label.style_none, ny_col, size.small, text.align_right)
+
+// Asia Session Logic
+if showAsia and isAsiaSessionStart
+    asiaHigh := high
+    asiaLow := low
+    asiaStartTime := time
+else if showAsia and inAsiaSession
+    if high > asiaHigh
+        asiaHigh := high
+    if low < asiaLow
+        asiaLow := low
+if showAsia and (inAsiaSession or isAsiaSessionEnd)
+    if barstate.isconfirmed
+        // Delete previous lines and labels
+        line.delete(asiaHighLine[1])
+        line.delete(asiaLowLine[1])
+        label.delete(asiaHighLabel[1])
+        label.delete(asiaLowLabel[1])
+        if not asiaHistory and isAsiaSessionEnd
+            line.delete(asiaHighLine)
+            line.delete(asiaLowLine)
+            label.delete(asiaHighLabel)
+            label.delete(asiaLowLabel)
+        else
+            // Draw new lines and labels
+            asiaHighLine := line.new(asiaStartTime, asiaHigh, last_bar_time + 14400000/2, asiaHigh, xloc.bar_time, extend.none, asia_col, f_get_line_style(asia_style), 1)
+            asiaLowLine := line.new(asiaStartTime, asiaLow, last_bar_time + 14400000/2, asiaLow, xloc.bar_time, extend.none, asia_col, f_get_line_style(asia_style), 1)
+            asiaHighLabel := label.new(last_bar_time + 14400000/2, asiaHigh, "Asia High", xloc.bar_time, yloc.price, color.white, label.style_none, asia_col, size.small, text.align_right)
+            asiaLowLabel := label.new(last_bar_time + 14400000/2, asiaLow, "Asia Low", xloc.bar_time, yloc.price, color.white, label.style_none, asia_col, size.small, text.align_right)
+
+// New York Close Session Logic
+if showNewYorkClose and isNewYorkCloseSessionStart
+    newYorkCloseHigh := high
+    newYorkCloseLow := low
+    newYorkCloseStartTime := time
+else if showNewYorkClose and inNewYorkCloseSession
+    if high > newYorkCloseHigh
+        newYorkCloseHigh := high
+    if low < newYorkCloseLow
+        newYorkCloseLow := low
+if showNewYorkClose and (inNewYorkCloseSession or isNewYorkCloseSessionEnd)
+    if barstate.isconfirmed
+        // Delete previous lines and labels
+        line.delete(newYorkCloseHighLine[1])
+        line.delete(newYorkCloseLowLine[1])
+        label.delete(newYorkCloseHighLabel[1])
+        label.delete(newYorkCloseLowLabel[1])
+        if not newYorkCloseHistory and isNewYorkCloseSessionEnd
+            line.delete(newYorkCloseHighLine)
+            line.delete(newYorkCloseLowLine)
+            label.delete(newYorkCloseHighLabel)
+            label.delete(newYorkCloseLowLabel)
+        else
+            // Draw new lines and labels
+            newYorkCloseHighLine := line.new(newYorkCloseStartTime, newYorkCloseHigh, last_bar_time + 14400000/2, newYorkCloseHigh, xloc.bar_time, extend.none, ny_pm_col, f_get_line_style(ny_pm_style), 1)
+            newYorkCloseLowLine := line.new(newYorkCloseStartTime, newYorkCloseLow, last_bar_time + 14400000/2, newYorkCloseLow, xloc.bar_time, extend.none, ny_pm_col, f_get_line_style(ny_pm_style), 1)
+            newYorkCloseHighLabel := label.new(last_bar_time + 14400000/2, newYorkCloseHigh, "NY Close High", xloc.bar_time, yloc.price, color.white, label.style_none, ny_pm_col, size.small, text.align_right)
+            newYorkCloseLowLabel := label.new(last_bar_time + 14400000/2, newYorkCloseLow, "NY Close Low", xloc.bar_time, yloc.price, color.white, label.style_none, ny_pm_col, size.small, text.align_right)
+
+var g_MIDOPEN = "================ Midnight Open ================"
+
+iMTime    = input.session('0000-0001:1234567', "Session", group=g_MIDOPEN)
+iMStyle   = input.string("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_MIDOPEN)
+iMColor   = input.color(#58A2B0, "Color", group=g_MIDOPEN)
+iMHistory = input.bool(true, "History", group=g_MIDOPEN)
+iMLabel   = input.bool(true, "Show Label", group=g_MIDOPEN)
+
+var g_NYOPEN = "================ New York Session Open ================"
+
+i8Time    = input.session('0800-0801:1234567', "Session", group=g_NYOPEN)
+i8Style   = input.string("Dotted", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_NYOPEN)
+i8Color   = input.color(#58A2B0, "Color", group=g_NYOPEN)
+i8History = input.bool(true, "History", group=g_NYOPEN)
+i8Label   = input.bool(true, "Show Label", group=g_NYOPEN)
+
+tMidnight = time("1", iMTime)
+t830      = time("1", i8Time)
+
+_MStyle   = f_get_line_style(iMStyle)
+_8Style   = f_get_line_style(i8Style)
+
+//==== Midnight Open ====
+var openMidnight = 0.0
+if tMidnight
+    if not tMidnight[1]
+        openMidnight := open
+    else
+        openMidnight := math.max(open, openMidnight)
+
+var label lb = na
+var line lne = na
+if openMidnight != openMidnight[1] and iMLabel
+    if barstate.isconfirmed
+        line.delete(lne[1])
+        label.delete(lb[1])
+        if not iMHistory
+            line.delete(lne)
+            label.delete(lb)
+        else
+            lne := line.new(tMidnight, openMidnight, last_bar_time + 14400000/2, openMidnight, xloc.bar_time, extend.none, iMColor, _MStyle, 1)
+            lb := label.new(last_bar_time + 14400000/2, openMidnight, "Midnight Open", xloc.bar_time, yloc.price, color.white, label.style_none, iMColor, size.small, text.align_right)
+
+//==== NY Open ====
+var open830 = 0.0
+if t830
+    if not t830[1]
+        open830 := open
+    else
+        open830 := math.max(open, open830)
+
+var label lb2 = na
+var line lne2 = na
+if open830 != open830[1] and i8Label
+    if barstate.isconfirmed
+        line.delete(lne2[1])
+        label.delete(lb2[1])
+        if not i8History
+            line.delete(lne2)
+            label.delete(lb2)
+        else
+            lne2 := line.new(t830, open830, last_bar_time + 14400000/2, open830, xloc.bar_time, extend.none, i8Color, _8Style, 1)
+            lb2 := label.new(last_bar_time + 14400000/2, open830, "NY Open", xloc.bar_time, yloc.price, color.white, label.style_none, i8Color, size.small, text.align_right)
+
+abr = input.bool(defval=true, title="Abbreviate Labels", group="Previous timeframe levels", inline="0a")
+labelsz = input.string(defval="small", title="Size", options=["tiny","small","normal","large","huge"], group="Previous timeframe levels", inline="0a")
+sz = labelsz == "tiny" ? size.tiny : labelsz == "small" ? size.small : labelsz == "normal" ? size.normal : labelsz == "large" ? size.large : labelsz == "huge" ? size.huge : size.auto
+
+ShowPrev1H = input.bool(defval=true, title="Show Prev 1H High/Low", group="Previous timeframe levels", inline="1a")
+Prev1HHistory = input.bool(defval=true, title="History", group="Previous timeframe levels", inline="1a")
+LabelPrev1H = input.bool(defval=true, title="Label?", group="Previous timeframe levels", inline="1a")
+Prev1HHighCol = input.color(color.yellow, "High", group="Previous timeframe levels", inline="1c")
+Prev1HLowCol = input.color(color.orange, "Low", group="Previous timeframe levels", inline="1c")
+Prev1HWidth = input.int(defval=1, title="Width", minval=1, maxval=4, group="Previous timeframe levels", inline="1c")
+Prev1HStyle = input.string("Dashed", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Previous timeframe levels", inline="1c")
+
+ShowPrev4H = input.bool(defval=true, title="Show Prev 4H High/Low", group="Previous timeframe levels", inline="2a")
+Prev4HHistory = input.bool(defval=true, title="History", group="Previous timeframe levels", inline="2a")
+LabelPrev4H = input.bool(defval=true, title="Label?", group="Previous timeframe levels", inline="2a")
+Prev4HHighCol = input.color(color.lime, "High", group="Previous timeframe levels", inline="2c")
+Prev4HLowCol = input.color(color.red, "Low", group="Previous timeframe levels", inline="2c")
+Prev4HWidth = input.int(defval=1, title="Width", minval=1, maxval=4, group="Previous timeframe levels", inline="2c")
+Prev4HStyle = input.string("Dashed", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Previous timeframe levels", inline="2c")
+
+ShowPrevDay = input.bool(defval=true, title="Show Prev Day High/Low", group="Previous timeframe levels", inline="3a")
+PrevDayHistory = input.bool(defval=true, title="History", group="Previous timeframe levels", inline="3a")
+LabelPrevDay = input.bool(defval=true, title="Label?", group="Previous timeframe levels", inline="3a")
+MidPrevDay = input.bool(defval=true, title="50%?", group="Previous timeframe levels", inline="3a")
+PrevDayHighCol = input.color(color.rgb(6, 240, 189), "High", group="Previous timeframe levels", inline="3c")
+PrevDayLowCol = input.color(color.fuchsia, "Low", group="Previous timeframe levels", inline="3c")
+PrevDayMidCol = input.color(color.rgb(5, 184, 14), "0.5", group="Previous timeframe levels", inline="3c")
+PrevDayWidth = input.int(defval=1, title="Width", minval=1, maxval=4, group="Previous timeframe levels", inline="3c")
+PrevDayStyle = input.string("Solid", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Previous timeframe levels", inline="3c")
+
+ShowPrevWeek = input.bool(defval=true, title="Show Previous Week High/Low", group="Previous timeframe levels", inline="4a")
+PrevWeekHistory = input.bool(defval=true, title="History", group="Previous timeframe levels", inline="4a")
+LabelPrevWeek = input.bool(defval=true, title="Label?", group="Previous timeframe levels", inline="4a")
+MidPrevWeek = input.bool(defval=false, title="50%?", group="Previous timeframe levels", inline="4a")
+PrevWeekHighCol = input.color(color.rgb(46, 10, 250), "High", group="Previous timeframe levels", inline="4c")
+PrevWeekLowCol = input.color(color.purple, "Low", group="Previous timeframe levels", inline="4c")
+PrevWeekMidCol = input.color(color.teal, "0.5", group="Previous timeframe levels", inline="4c")
+PrevWeekWidth = input.int(defval=1, title="Width", minval=1, maxval=4, group="Previous timeframe levels", inline="4c")
+PrevWeekStyle = input.string("Solid", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Previous timeframe levels", inline="4c")
+
+ShowPrevMth = input.bool(defval=true, title="Show Previous Month High/Low", group="Previous timeframe levels", inline="5a")
+PrevMthHistory = input.bool(defval=true, title="History", group="Previous timeframe levels", inline="5a")
+LabelPrevMth = input.bool(defval=true, title="Label?", group="Previous timeframe levels", inline="5a")
+MidPrevMth = input.bool(defval=false, title="50%?", group="Previous timeframe levels", inline="5a")
+PrevMthHighCol = input.color(color.green, "High", group="Previous timeframe levels", inline="5c")
+PrevMthLowCol = input.color(color.red, "Low", group="Previous timeframe levels", inline="5c")
+PrevMthMidCol = input.color(color.green, "0.5", group="Previous timeframe levels", inline="5c")
+PrevMthWidth = input.int(defval=1, title="Width", minval=1, maxval=4, group="Previous timeframe levels", inline="5c")
+PrevMthStyle = input.string("Solid", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Previous timeframe levels", inline="5c")
+
+ShowWeekOpen = input.bool(defval=false, title="Show Current Week Open", group="Opens", inline="6a")
+WeekOpenHistory = input.bool(defval=true, title="History", group="Opens", inline="6a")
+LabelWeekOpen = input.bool(defval=false, title="Label?", group="Opens", inline="6a")
+WeekOpenCol = input.color(color.blue, "Open", group="Opens", inline="6c")
+WeekOpenWidth = input.int(defval=1, title="Width", minval=1, maxval=4, group="Opens", inline="6c")
+WeekOpenStyle = input.string("Solid", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Opens", inline="6c")
+
+i_show_history = input.bool(defval=false, title='History?', group="Sessions", inline="A")
+i_sess_border_style = input.string("Solid", 'Line Style', options=["Solid", "Dotted", "Dashed"], group="Sessions", inline="B")
+i_sess_border_width = input.int(1, 'Line Width', minval=0, group="Sessions", inline="B")
+i_sess_bgopacity = input.int(80, 'Background Transparency', minval=0, maxval=100, step=1, group="Sessions", tooltip='100 = No Background', inline="C")
+
+ResolutionToSec(res)=>
+    mins = res == "1" ? 1 :
+           res == "3" ? 3 :
+           res == "5" ? 5 :
+           res == "10" ? 10 :
+           res == "15" ? 15 :
+           res == "30" ? 30 :
+           res == "45" ? 45 :
+           res == "60" ? 60 :
+           res == "120" ? 120 :
+           res == "180" ? 180 :
+           res == "240" ? 240 :
+           res == "D" or res == "1D" ? 1440 :
+           res == "W" or res == "1W" ? 10080 :
+           res == "M" or res == "1M" ? 43200 : 0
+    ms = mins * 60 * 1000
+
+bar = ResolutionToSec(timeframe.period)
+
+get_Monday()=>
+    highs= array.new_float(0)
+    lows= array.new_float(0)
+    starttimes= array.new_int(0)
+    for n = 0 to 6
+        array.push(highs, high[n])
+        array.push(lows, low[n])
+        array.push(starttimes, time[n])
+    [highs, lows, starttimes]
+
+get_Weekly()=>
+    highs= array.new_float(0)
+    lows= array.new_float(0)
+    opens = array.new_float(0)
+    starttimes= array.new_int(0)
+    for n = 0 to 1
+        array.push(highs, high[n])
+        array.push(lows, low[n])
+        array.push(opens, open[n])
+        array.push(starttimes, time[n])
+    [highs, lows, opens, starttimes]
+
+get_Monthly()=>
+    highs= array.new_float(0)
+    lows= array.new_float(0)
+    opens = array.new_float(0)
+    starttimes= array.new_int(0)
+    for n = 0 to 1
+        array.push(highs, high[n])
+        array.push(lows, low[n])
+        array.push(opens, open[n])
+        array.push(starttimes, time[n])
+    [highs, lows, opens, starttimes]
+
+get_Hourly()=>
+    highs= array.new_float(0)
+    lows= array.new_float(0)
+    starttimes= array.new_int(0)
+    for n = 0 to 1
+        array.push(highs, high[n])
+        array.push(lows, low[n])
+        array.push(starttimes, time[n])
+    [highs, lows, starttimes]
+
+get_Sessions()=>
+    highs= array.new_float(0)
+    lows= array.new_float(0)
+    starttimes= array.new_int(0)
+    for n = 0 to 96
+        array.push(highs, high[n])
+        array.push(lows, low[n])
+        array.push(starttimes, time[n])
+    [highs, lows, starttimes]
+
+[shighs, slows, sstarttimes] = request.security(syminfo.tickerid, "15", get_Sessions(), lookahead=barmerge.lookahead_off)
+[mhighs, mlows, mstarttimes] = request.security(syminfo.tickerid, "1D", get_Monday(), lookahead=barmerge.lookahead_off)
+[whighs, wlows, wopens, wstarttimes] = request.security(syminfo.tickerid, "1W", get_Weekly(), lookahead=barmerge.lookahead_off)
+[mthhighs, mthlows, mthopens, mthstarttimes] = request.security(syminfo.tickerid, "1M", get_Monthly(), lookahead=barmerge.lookahead_off)
+[h1highs, h1lows, h1starttimes] = request.security(syminfo.tickerid, "60", get_Hourly(), lookahead=barmerge.lookahead_off)
+[h4highs, h4lows, h4starttimes] = request.security(syminfo.tickerid, "240", get_Hourly(), lookahead=barmerge.lookahead_off)
+
+MHt = ""
+MMt = ""
+MLt = ""
+WHt = ""
+WLt = ""
+WMt = ""
+PWHt = ""
+PWLt = ""
+PWMt = ""
+PDHt = ""
+PDLt = ""
+PDMt = ""
+MthHt = ""
+MthLt = ""
+MthMt = ""
+PMthHt = ""
+PMthMt = ""
+PMthLt = ""
+WOt = ""
+MthOt = ""
+PH1Ht = ""
+PH1Lt = ""
+PH4Ht = ""
+PH4Lt = ""
+
+MH_cross = false
+ML_cross = false
+Mm_cross = false
+PDH_cross = false
+PDL_cross = false
+PDm_cross = false
+WH_cross = false
+WL_cross = false
+Wm_cross = false
+WO_cross = false
+PWH_cross = false
+PWL_cross = false
+PWm_cross = false
+PMthH_cross = false
+PMthL_cross = false
+PMthm_cross = false
+MthH_cross = false
+MthL_cross = false
+Mthm_cross = false
+MO_cross = false
+PH1H_cross = false
+PH1L_cross = false
+PH4H_cross = false
+PH4L_cross = false
+
+if (bar_index == last_bar_index)
+    if (abr == true)
+        MHt := "MH"
+        MLt := "ML"
+        MMt := "M.5"
+        WHt := "WH"
+        WLt := "WL"
+        WMt := "W.5"
+        PWHt := "PWH"
+        PWLt := "PWL"
+        PWMt := "PW.5"
+        PDHt := "PDH"
+        PDLt := "PDL"
+        PDMt := "PD.5"
+        MthHt := "MthH"
+        MthLt := "MthL"
+        MthMt := "Mth.5"
+        PMthHt := "PMthH"
+        PMthLt := "PMthL"
+        PMthMt := "PMth.5"
+        WOt := "WO"
+        MthOt := "MthO"
+        PH1Ht := "H1H"
+        PH1Lt := "H1L"
+        PH4Ht := "H4H"
+        PH4Lt := "H4L"
+    else
+        MHt := "Mon High"
+        MLt := "Mon Low"
+        MMt := "Mon 0.5"
+        WHt := "Weekly High"
+        WMt := "Weekly 0.5"
+        WLt := "Weekly Low"
+        PWHt := "Prev Week High"
+        PWMt := "Prev Week 0.5"
+        PWLt := "Prev Week Low"
+        PDHt := "Prev Day High"
+        PDLt := "Prev Day Low"
+        PDMt := "Prev Day 0.5"
+        MthHt := "Month High"
+        MthMt := "Month 0.5"
+        MthLt := "Month Low"
+        PMthHt := "Prev Month High"
+        PMthMt := "Prev Month 0.5"
+        PMthLt := "Prev Month Low"
+        WOt := "Week Open"
+        MthOt := "Month Open"
+        PH1Ht := "Prev 1H High"
+        PH1Lt := "Prev 1H Low"
+        PH4Ht := "Prev 4H High"
+        PH4Lt := "Prev 4H Low"
+
+    if (ShowPrev1H == true)
+        line.delete(PH1H[1])
+        line.delete(PH1L[1])
+        label.delete(PH1HL[1])
+        label.delete(PH1LL[1])
+        if not Prev1HHistory
+            line.delete(PH1H)
+            line.delete(PH1L)
+            label.delete(PH1HL)
+            label.delete(PH1LL)
+        else
+            PH1H := line.new(array.get(h1starttimes, 1), array.get(h1highs, 1), last_bar_time + 14400000/2, array.get(h1highs, 1), xloc.bar_time, extend.none, Prev1HHighCol, f_get_line_style(Prev1HStyle), Prev1HWidth)
+            PH1L := line.new(array.get(h1starttimes, 1), array.get(h1lows, 1), last_bar_time + 14400000/2, array.get(h1lows, 1), xloc.bar_time, extend.none, Prev1HLowCol, f_get_line_style(Prev1HStyle), Prev1HWidth)
+            if (LabelPrev1H == true)
+                PH1HL := label.new(last_bar_time + 14400000/2, array.get(h1highs, 1), PH1Ht, xloc.bar_time, yloc.price, color.white, label.style_none, Prev1HHighCol, sz, text.align_right)
+                PH1LL := label.new(last_bar_time + 14400000/2, array.get(h1lows, 1), PH1Lt, xloc.bar_time, yloc.price, color.white, label.style_none, Prev1HLowCol, sz, text.align_right)
+        PH1H_cross := ta.cross(close, array.get(h1highs, 1))
+        PH1L_cross := ta.cross(close, array.get(h1lows, 1))
+
+    if (ShowPrev4H == true)
+        line.delete(PH4H[1])
+        line.delete(PH4L[1])
+        label.delete(PH4HL[1])
+        label.delete(PH4LL[1])
+        if not Prev4HHistory
+            line.delete(PH4H)
+            line.delete(PH4L)
+            label.delete(PH4HL)
+            label.delete(PH4LL)
+        else
+            PH4H := line.new(array.get(h4starttimes, 1), array.get(h4highs, 1), last_bar_time + 14400000/2, array.get(h4highs, 1), xloc.bar_time, extend.none, Prev4HHighCol, f_get_line_style(Prev4HStyle), Prev4HWidth)
+            PH4L := line.new(array.get(h4starttimes, 1), array.get(h4lows, 1), last_bar_time + 14400000/2, array.get(h4lows, 1), xloc.bar_time, extend.none, Prev4HLowCol, f_get_line_style(Prev4HStyle), Prev4HWidth)
+            if (LabelPrev4H == true)
+                PH4HL := label.new(last_bar_time + 14400000/2, array.get(h4highs, 1), PH4Ht, xloc.bar_time, yloc.price, color.white, label.style_none, Prev4HHighCol, sz, text.align_right)
+                PH4LL := label.new(last_bar_time + 14400000/2, array.get(h4lows, 1), PH4Lt, xloc.bar_time, yloc.price, color.white, label.style_none, Prev4HLowCol, sz, text.align_right)
+        PH4H_cross := ta.cross(close, array.get(h4highs, 1))
+        PH4L_cross := ta.cross(close, array.get(h4lows, 1))
+
+    if (ShowPrevDay == true)
+        line.delete(PDH[1])
+        line.delete(PDL[1])
+        label.delete(PDHL[1])
+        label.delete(PDLL[1])
+        if (MidPrevDay)
+            line.delete(PDM[1])
+            label.delete(PDML[1])
+        if not PrevDayHistory
+            line.delete(PDH)
+            line.delete(PDL)
+            label.delete(PDHL)
+            label.delete(PDLL)
+            if (MidPrevDay)
+                line.delete(PDM)
+                label.delete(PDML)
+        else
+            PDH := line.new(array.get(mstarttimes, 1), array.get(mhighs, 1), last_bar_time + 14400000/2, array.get(mhighs, 1), xloc.bar_time, extend.none, PrevDayHighCol, f_get_line_style(PrevDayStyle), PrevDayWidth)
+            PDL := line.new(array.get(mstarttimes, 1), array.get(mlows, 1), last_bar_time + 14400000/2, array.get(mlows, 1), xloc.bar_time, extend.none, PrevDayLowCol, f_get_line_style(PrevDayStyle), PrevDayWidth)
+            if (LabelPrevDay == true)
+                PDHL := label.new(last_bar_time + 14400000/2, array.get(mhighs, 1), PDHt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevDayHighCol, sz, text.align_right)
+                PDLL := label.new(last_bar_time + 14400000/2, array.get(mlows, 1), PDLt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevDayLowCol, sz, text.align_right)
+            if (MidPrevDay)
+                PDM := line.new(array.get(mstarttimes, 1), array.get(mhighs, 1) - (array.get(mhighs, 1) - array.get(mlows, 1)) / 2, last_bar_time + 14400000/2, array.get(mhighs, 1) - (array.get(mhighs, 1) - array.get(mlows, 1)) / 2, xloc.bar_time, extend.none, PrevDayMidCol, f_get_line_style(PrevDayStyle), PrevDayWidth)
+                if (LabelPrevDay == true)
+                    PDML := label.new(last_bar_time + 14400000/2, array.get(mhighs, 1) - (array.get(mhighs, 1) - array.get(mlows, 1)) / 2, PDMt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevDayMidCol, sz, text.align_right)
+        PDH_cross := ta.cross(close, array.get(mhighs, 1))
+        PDL_cross := ta.cross(close, array.get(mlows, 1))
+        if (MidPrevDay)
+            PDm_cross := ta.cross(close, array.get(mhighs, 1) - (array.get(mhighs, 1) - array.get(mlows, 1)) / 2)
+
+    if (ShowPrevWeek == true)
+        line.delete(PWH[1])
+        line.delete(PWL[1])
+        label.delete(PWHL[1])
+        label.delete(PWLL[1])
+        if (MidPrevWeek)
+            line.delete(PWM[1])
+            label.delete(PWML[1])
+        if not PrevWeekHistory
+            line.delete(PWH)
+            line.delete(PWL)
+            label.delete(PWHL)
+            label.delete(PWLL)
+            if (MidPrevWeek)
+                line.delete(PWM)
+                label.delete(PWML)
+        else
+            PWH := line.new(array.get(wstarttimes, 1), array.get(whighs, 1), last_bar_time + 14400000/2, array.get(whighs, 1), xloc.bar_time, extend.none, PrevWeekHighCol, f_get_line_style(PrevWeekStyle), PrevWeekWidth)
+            PWL := line.new(array.get(wstarttimes, 1), array.get(wlows, 1), last_bar_time + 14400000/2, array.get(wlows, 1), xloc.bar_time, extend.none, PrevWeekLowCol, f_get_line_style(PrevWeekStyle), PrevWeekWidth)
+            if (LabelPrevWeek == true)
+                PWHL := label.new(last_bar_time + 14400000/2, array.get(whighs, 1), PWHt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevWeekHighCol, sz, text.align_right)
+                PWLL := label.new(last_bar_time + 14400000/2, array.get(wlows, 1), PWLt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevWeekLowCol, sz, text.align_right)
+            if (MidPrevWeek)
+                PWM := line.new(array.get(wstarttimes, 1), array.get(whighs, 1) - (array.get(whighs, 1) - array.get(wlows, 1)) / 2, last_bar_time + 14400000/2, array.get(whighs, 1) - (array.get(whighs, 1) - array.get(wlows, 1)) / 2, xloc.bar_time, extend.none, PrevWeekMidCol, f_get_line_style(PrevWeekStyle), PrevWeekWidth)
+                if (LabelPrevWeek == true)
+                    PWML := label.new(last_bar_time + 14400000/2, array.get(whighs, 1) - (array.get(whighs, 1) - array.get(wlows, 1)) / 2, PWMt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevWeekMidCol, sz, text.align_right)
+        PWH_cross := ta.cross(close, array.get(whighs, 1))
+        PWL_cross := ta.cross(close, array.get(wlows, 1))
+        if (MidPrevWeek)
+            PWm_cross := ta.cross(close, array.get(whighs, 1) - (array.get(whighs, 1) - array.get(wlows, 1)) / 2)
+
+    if (ShowPrevMth == true)
+        line.delete(PMthH[1])
+        line.delete(PMthL[1])
+        label.delete(PMthHL[1])
+        label.delete(PMthLL[1])
+        if (MidPrevMth)
+            line.delete(PMthM[1])
+            label.delete(PMthML[1])
+        if not PrevMthHistory
+            line.delete(PMthH)
+            line.delete(PMthL)
+            label.delete(PMthHL)
+            label.delete(PMthLL)
+            if (MidPrevMth)
+                line.delete(PMthM)
+                label.delete(PMthML)
+        else
+            PMthH := line.new(array.get(mthstarttimes, 1), array.get(mthhighs, 1), last_bar_time + 14400000/2, array.get(mthhighs, 1), xloc.bar_time, extend.none, PrevMthHighCol, f_get_line_style(PrevMthStyle), PrevMthWidth)
+            PMthL := line.new(array.get(mthstarttimes, 1), array.get(mthlows, 1), last_bar_time + 14400000/2, array.get(mthlows, 1), xloc.bar_time, extend.none, PrevMthLowCol, f_get_line_style(PrevMthStyle), PrevMthWidth)
+            if (LabelPrevMth == true)
+                PMthHL := label.new(last_bar_time + 14400000/2, array.get(mthhighs, 1), PMthHt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevMthHighCol, sz, text.align_right)
+                PMthLL := label.new(last_bar_time + 14400000/2, array.get(mthlows, 1), PMthLt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevMthLowCol, sz, text.align_right)
+            if (MidPrevMth)
+                PMthM := line.new(array.get(mthstarttimes, 1), array.get(mthhighs, 1) - (array.get(mthhighs, 1) - array.get(mthlows, 1)) / 2, last_bar_time + 14400000/2, array.get(mthhighs, 1) - (array.get(mthhighs, 1) - array.get(mthlows, 1)) / 2, xloc.bar_time, extend.none, PrevMthMidCol, f_get_line_style(PrevMthStyle), PrevMthWidth)
+                if (LabelPrevMth == true)
+                    PMthML := label.new(last_bar_time + 14400000/2, array.get(mthhighs, 1) - (array.get(mthhighs, 1) - array.get(mthlows, 1)) / 2, PMthMt, xloc.bar_time, yloc.price, color.white, label.style_none, PrevMthMidCol, sz, text.align_right)
+        PMthH_cross := ta.cross(close, array.get(mthhighs, 1))
+        PMthL_cross := ta.cross(close, array.get(mthlows, 1))
+        if (MidPrevMth)
+            PMthm_cross := ta.cross(close, array.get(mthhighs, 1) - (array.get(mthhighs, 1) - array.get(mthlows, 1)) / 2)
+
+    if (ShowWeekOpen == true)
+        line.delete(WO[1])
+        label.delete(WOL[1])
+        if not WeekOpenHistory
+            line.delete(WO)
+            label.delete(WOL)
+        else
+            WO := line.new(array.get(wstarttimes, 0), array.get(wopens, 0), last_bar_time + 14400000/2, array.get(wopens, 0), xloc.bar_time, extend.none, WeekOpenCol, f_get_line_style(WeekOpenStyle), WeekOpenWidth)
+            if (LabelWeekOpen == true)
+                WOL := label.new(last_bar_time + 14400000/2, array.get(wopens, 0), WOt, xloc.bar_time, yloc.price, color.white, label.style_none, WeekOpenCol, sz, text.align_right)
+        WO_cross := ta.cross(close, array.get(wopens, 0))
+
+///////////////
+// Defined
+///////////////
+show = true
+pips = syminfo.mintick * 10
+max_bars = 500
+
+fmt_price = '{0,number,#.#####}'
+fmt_pips  = '{0,number,#.#}'
+
+icon_separator = ' • '
+
+c_none = color.new(color.black, 100)
+
+is_weekends = dayofweek == 7 or dayofweek == 1
+
+f_get_time_by_bar(bar_count) => timeframe.multiplier * bar_count * 60 * 1000
+
+f_get_period (_session, _start, _lookback) =>
+    result = math.max(_start, 1)
+    for i = result to _lookback
+        if na(_session[i+1]) and _session[i]
+            result := i+1
+            break
+    result
+
+f_get_label_position (_y, _side) =>
+    switch _y
+        'top'    => _side == 'outside' ? label.style_label_lower_left : label.style_label_upper_left
+        'bottom' => _side == 'outside' ? label.style_label_upper_left : label.style_label_lower_left
+
+f_get_day (n) =>
+    switch n
+        1 => 'Sun'
+        2 => 'Mon'
+        3 => 'Tue'
+        4 => 'Wed'
+        5 => 'Thu'
+        6 => 'Fri'
+        7 => 'Sat'
+
+f_get_started (_session) => na(_session[1]) and _session
+
+f_get_ended (_session) => na(_session) and _session[1]
+
+i_lookback = 12 * 120
+
+f_render_session (_show, _session, _showOpen, _is_started, _is_ended, _color, _openColor, _top, _bottom, _is_extend, _delete_history) =>
+    var box my_box = na
+    var line my_line = na
+    var label my_label = na
+    
+    x0_1 = ta.valuewhen(na(_session[1]) and _session, bar_index, 1)
+    x0_2 = ta.valuewhen(na(_session) and _session[1], bar_index, 0)
+    var x1 = 0
+    var x2 = 0
+    var session_open  = 0.0
+    var session_high  = 0.0
+    var session_low   = 0.0
+
+    if _show
+        if _is_started
+            diff = math.abs(x0_2 - x0_1)
+            x1 := bar_index
+            x2 := bar_index + (math.min(diff, max_bars))
+            my_box := box.new(x1, _top, x2, _bottom, color.new(_color, i_sess_bgopacity/1.1), i_sess_border_width, f_get_line_style(i_sess_border_style), bgcolor=color.new(_color, i_sess_bgopacity))
+            back = 0
+            if (_showOpen == true)
+                my_line := line.new(x1, open, x2, open, color=_openColor, extend=extend.none, style=f_get_line_style(i_sess_border_style), width=i_sess_border_width)
+                my_label := label.new(x=x2-2, y=open, text=(abr == true?"O":"Open"), color=color.white, style=label.style_none, textcolor=_openColor, size=size.small, textalign=text.align_left)
+            
+            session_open := open
+            session_high := _top
+            session_low  := _bottom
+
+            if _is_extend
+                box.set_extend(my_box, extend.right)
+                line.set_extend(my_line, extend.right)
+                
+            if _delete_history
+                box.delete(my_box[1])
+                line.delete(my_line[1])
+                label.delete(my_label[1])
+            else
+                back := ((2000 * 60) / int(str.tonumber(timeframe.period))) >= 5000 ? 4999 : ((2000 * 60) / int(str.tonumber(timeframe.period)))
+                box.delete(my_box[back])
+                
+        else if _session
+            box.set_top(my_box, _top)
+            box.set_bottom(my_box, _bottom)
+
+            session_high := _top
+            session_low  := _bottom
+        
+        else if _is_ended
+            session_open := na
+            box.set_right(my_box, bar_index)
+
+    [x1, x2, session_open, session_high, session_low]
+
+f_render_custom (_show, _session, _is_started, _is_ended, _color, _label, _type, _top, _bottom, _is_extend, _delete_history, custom_style) =>
+    var line my_line = na
+    var label my_label = na
+    
+    x0_1 = ta.valuewhen(na(_session[1]) and _session, bar_index, 1)
+    x0_2 = ta.valuewhen(na(_session) and _session[1], bar_index, 0)
+    var x1 = 0
+    var x2 = 0
+    var session_open  = 0.0
+    var session_high  = 0.0
+    var session_low   = 0.0
+    var level = 0.0
+    if _show
+        level := _type == "high" ? _top : _type == "low" ? _bottom : session_open 
+        if _is_started
+            diff = math.abs(x0_2 - x0_1)
+            x1 := bar_index
+            x2 := bar_index + (math.min(diff, max_bars))
+            my_line := line.new(x1, level, x2, level, color=_color, extend=extend.none, style=f_get_line_style(custom_style), width=i_sess_border_width)
+            my_label := label.new(x=x2-2, y=level, text=_label, color=color.white, style=label.style_none, textcolor=_color, size=sz, textalign=text.align_left)
+            
+            session_open := open
+            session_high := _top
+            session_low  := _bottom
+
+            if _is_extend
+                line.set_extend(my_line, extend.right)
+                
+            if _delete_history
+                line.delete(my_line[1])
+                label.delete(my_label[1])
+            
+        else if _session
+            line.set_y1(my_line, level)
+            line.set_y2(my_line, level)
+            label.set_y(my_label, level)
+            
+            session_high := _top
+            session_low  := _bottom
+        
+        else if _is_ended
+            session_open := na
+            line.set_x2(my_line, bar_index)
+            label.set_x(my_label, bar_index)
+
+    level
+
+draw (_show, _showOpen, _session, _color, _openColor, is_extend, _lookback) =>
+    max = f_get_period(_session, 1, _lookback)
+    top = ta.highest(high, max)
+    bottom = ta.lowest(low, max)
+    
+    is_started = f_get_started(_session)
+    is_ended = f_get_ended(_session)
+    
+    delete_history = (not i_show_history) or is_extend
+
+    [x1, x2, _open, _high, _low] = f_render_session(_show, _session, _showOpen, is_started, is_ended, _color, _openColor, top, bottom, is_extend, delete_history)
+
+    [_session, _open, _high, _low]

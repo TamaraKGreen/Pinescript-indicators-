@@ -1,0 +1,309 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+
+indicator('VP History Widget', 'VP', overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=100, max_bars_back=1000)
+
+//==========================
+// INPUTS
+//==========================
+wGR       = 'VP Widget'
+wShow     = input.bool(true,  'Show Widget',                        group=wGR)
+wOffset   = input.int(10,    'Offset from price (bars)', minval=1, maxval=50,  group=wGR)
+wSlotW    = input.int(10,   'VP Width (bars)',           minval=3, maxval=40,  group=wGR)
+wGapW     = input.int(3,    'Gap between VPs (bars)',    minval=1, maxval=10,  group=wGR)
+wSessions = input.int(5,    'Number of Sessions',        minval=1, maxval=10,  group=wGR)
+wTF       = input.string('Daily', 'Session Timeframe', options=['Daily','Weekly','Monthly'], group=wGR)
+wRes      = input.int(50,   'VP Bins',  minval=5, maxval=50, group=wGR, tooltip='Bins per VP. 20 bins × 10 sessions × 2 = 400 boxes, within the 500 limit.')
+wVAWid    = input.int(70,   'Value Area %', minval=1, maxval=100, group=wGR)
+wVolType  = input.string('Volume', 'Profile Data', options=['Volume','Open Interest'], group=wGR)
+wSmooth   = input.bool(false, 'Smooth Volume', group=wGR)
+
+wBullCol  = input.color(color.rgb(0,  47, 255,  75), 'Up Volume',   group=wGR)
+wBearCol  = input.color(color.rgb(204, 0, 255, 75), 'Down Volume', group=wGR)
+wPocCol   = input.color(color.rgb(255, 80,  80,   0), 'POC Line',    group=wGR)
+wVACol    = input.color(color.rgb(0,   200, 200,  0), 'VAH/VAL',     group=wGR)
+wSepCol   = input.color(color.new(color.gray, 60),    'Separator',   group=wGR)
+wShowPoc  = input.bool(true,  'Show POC',       group=wGR)
+wShowVA   = input.bool(true,  'Show VAH / VAL', group=wGR)
+wShowLbl  = input.bool(true,  'Show Labels',    group=wGR)
+
+//==========================
+// SESSION DETECTION
+//==========================
+wNewSession = switch wTF
+    'Daily'   => dayofweek  != dayofweek[1]
+    'Weekly'  => weekofyear != weekofyear[1]
+    'Monthly' => dayofmonth != dayofmonth[1] + 1 and dayofmonth != dayofmonth[1]
+    => dayofweek != dayofweek[1]
+
+wZoneEnd = wNewSession  // session ends when the next one begins
+
+//==========================
+// INTRADAY VOLUME SOURCE
+//==========================
+string userSymbol = syminfo.prefix + ":" + syminfo.ticker
+string oiTicker   = str.format("{0}_OI", userSymbol)
+string oiTf       = syminfo.type == "futures" and timeframe.isintraday ? "1D" : timeframe.period
+deltaOi           = request.security(oiTicker, oiTf, close - close[1], ignore_invalid_symbol=true)
+
+wVolSrc() =>
+    v = wSmooth ? ta.ema(volume, 5) : volume
+    wVolType == 'Open Interest' ? deltaOi : v
+
+[wLtfO, wLtfC, wLtfH, wLtfL, wLtfV] = request.security_lower_tf(syminfo.tickerid, '', [open, close, high, low, wVolSrc()])
+
+//==========================
+// VP CALCULATION — identical to market_sessions_v2
+//==========================
+get_vol_w(y11, y12, y21, y22, height, v) =>
+    nz(math.max(math.min(math.max(y11,y12),math.max(y21,y22)) - math.max(math.min(y11,y12),math.min(y21,y22)), 0) * v / height)
+
+profileAdd_w(o, h, l, c, v, gap, vGreen, vRed, zBounds, res) =>
+    body_top = math.max(c, o)
+    body_bot = math.min(c, o)
+    itsgreen = c >= o
+    topwick  = h - body_top
+    botwck   = body_bot - l
+    body     = body_top - body_bot
+    denom    = 2*topwick + 2*botwck + body
+    bodyvol  = denom > 0 ? body      * v / denom : 0.0
+    topwvol  = denom > 0 ? 2*topwick * v / denom : 0.0
+    botwvol  = denom > 0 ? 2*botwck  * v / denom : 0.0
+    for i = 0 to res - 1
+        zTop = array.get(zBounds, i)
+        zBot = zTop - gap
+        gAdd = (itsgreen ? get_vol_w(zBot,zTop,body_bot,body_top,body,bodyvol) : 0.0) + get_vol_w(zBot,zTop,body_top,h,topwick,topwvol)/2 + get_vol_w(zBot,zTop,body_bot,l,botwck,botwvol)/2
+        rAdd = (itsgreen ? 0.0 : get_vol_w(zBot,zTop,body_bot,body_top,body,bodyvol)) + get_vol_w(zBot,zTop,body_top,h,topwick,topwvol)/2 + get_vol_w(zBot,zTop,body_bot,l,botwck,botwvol)/2
+        array.set(vGreen, i, array.get(vGreen,i) + gAdd)
+        array.set(vRed,   i, array.get(vRed,  i) + rAdd)
+
+calcSession_w(update, pH, pL, res, ltfO, ltfC, ltfH, ltfL, ltfV, vGreen, vRed, zBounds) =>
+    array.fill(vGreen, 0)
+    array.fill(vRed,   0)
+    if update and not na(pH) and not na(pL) and pH != pL
+        gap = (pH - pL) / res
+        for i = 0 to res - 1
+            array.set(zBounds, i, pH - gap * i)
+        if array.size(ltfO) > 0
+            for j = 0 to array.size(ltfO) - 1
+                profileAdd_w(array.get(ltfO,j), array.get(ltfH,j), array.get(ltfL,j), array.get(ltfC,j), array.get(ltfV,j), gap, vGreen, vRed, zBounds, res)
+
+pocLevel_w(vGreen, vRed, zBounds, res) =>
+    float maxVol = 0.0
+    int   ind    = 0
+    for i = 0 to res - 1
+        tot = array.get(vRed,i) + array.get(vGreen,i)
+        if tot > maxVol
+            maxVol := tot
+            ind    := i
+    float out = na
+    if ind != res - 1
+        out := array.get(zBounds,ind) - (array.get(zBounds,ind) - array.get(zBounds,ind+1)) / 2
+    out
+
+valueLevels_w(poc, pH, pL, vGreen, vRed, zBounds, res, vaWidPct) =>
+    float gap    = (pH - pL) / res
+    float volSum = array.sum(vRed) + array.sum(vGreen)
+    float volCnt = 0.0
+    float vah    = pH
+    float val    = pL
+    int   pocInd = 0
+    for i = 0 to res - 2
+        if array.get(zBounds,i) >= poc and array.get(zBounds,i+1) < poc
+            pocInd := i
+    volCnt += array.get(vRed,pocInd) + array.get(vGreen,pocInd)
+    for i = 1 to res
+        if pocInd + i < res
+            volCnt += array.get(vRed,pocInd+i) + array.get(vGreen,pocInd+i)
+            if volCnt >= volSum * (vaWidPct/100)
+                break
+            else
+                val := array.get(zBounds,pocInd+i) - gap
+        if pocInd - i >= 0
+            volCnt += array.get(vRed,pocInd-i) + array.get(vGreen,pocInd-i)
+            if volCnt >= volSum * (vaWidPct/100)
+                break
+            else
+                vah := array.get(zBounds,pocInd-i)
+    [val, vah]
+
+//==========================
+// SESSION STATE — mirrors market_sessions_v2 prev session pipeline
+//==========================
+var int   wZoneStart  = 0
+var bool  wActiveZone = false
+int       wLookback   = bar_index - wZoneStart
+
+var float[] wVpGreen    = array.new_float(wRes, 0.0)
+var float[] wVpRed      = array.new_float(wRes, 0.0)
+var float[] wZoneBounds = array.new_float(wRes, 0.0)
+var float[] wLtfOa      = array.new_float(0)
+var float[] wLtfCa      = array.new_float(0)
+var float[] wLtfHa      = array.new_float(0)
+var float[] wLtfLa      = array.new_float(0)
+var float[] wLtfVa      = array.new_float(0)
+
+wProfHigh = ta.highest(high, wLookback + 1)[1]
+wProfLow  = ta.lowest(low,   wLookback + 1)[1]
+
+//==========================
+// SNAPSHOT BUFFER
+// MAX_SESS completed sessions stored flat
+// Per slot: wRes green + wRes red + wRes bounds + 5 scalars (H, L, poc, vah, val)
+//==========================
+MAX_SESS = 10
+SNAP_SZ  = wRes * 3 + 5
+
+var float[] snapBuf = array.new_float(MAX_SESS * (50*3+5), na)  // 50 = maxval of wRes
+var int     snapCnt = 0
+
+snapBase(s) => s * SNAP_SZ
+
+//==========================
+// CALC SESSION (runs every bar)
+//==========================
+calcSession_w(wActiveZone or (barstate.islast and wActiveZone),
+     wProfHigh, wProfLow, wRes,
+     wLtfOa, wLtfCa, wLtfHa, wLtfLa, wLtfVa,
+     wVpGreen, wVpRed, wZoneBounds)
+
+//==========================
+// SNAPSHOT on session end
+//==========================
+if wZoneEnd and array.sum(wVpGreen) + array.sum(wVpRed) > 0
+    if snapCnt == MAX_SESS
+        for s = 0 to MAX_SESS - 2
+            srcB = snapBase(s + 1)
+            dstB = snapBase(s)
+            for f = 0 to SNAP_SZ - 1
+                array.set(snapBuf, dstB+f, array.get(snapBuf, srcB+f))
+    else
+        snapCnt += 1
+
+    base = snapBase(snapCnt - 1)
+    for i = 0 to wRes - 1
+        array.set(snapBuf, base+i,        array.get(wVpGreen,    i))
+        array.set(snapBuf, base+wRes+i,   array.get(wVpRed,      i))
+        array.set(snapBuf, base+wRes*2+i, array.get(wZoneBounds, i))
+    array.set(snapBuf, base+wRes*3,   wProfHigh)
+    array.set(snapBuf, base+wRes*3+1, wProfLow)
+    poc = pocLevel_w(wVpGreen, wVpRed, wZoneBounds, wRes)
+    [sv, svh] = valueLevels_w(poc, wProfHigh, wProfLow, wVpGreen, wVpRed, wZoneBounds, wRes, wVAWid)
+    array.set(snapBuf, base+wRes*3+2, poc)
+    array.set(snapBuf, base+wRes*3+3, svh)
+    array.set(snapBuf, base+wRes*3+4, sv)
+
+//==========================
+// RESETS & STATE UPDATES — same order as market_sessions_v2
+//==========================
+if wZoneEnd
+    array.fill(wVpGreen, 0.0)
+    array.fill(wVpRed,   0.0)
+    array.clear(wLtfOa)
+    array.clear(wLtfHa)
+    array.clear(wLtfLa)
+    array.clear(wLtfCa)
+    array.clear(wLtfVa)
+
+if array.size(wLtfO) > 0
+    for i = 0 to array.size(wLtfO) - 1
+        array.push(wLtfOa, array.get(wLtfO,i))
+        array.push(wLtfHa, array.get(wLtfH,i))
+        array.push(wLtfLa, array.get(wLtfL,i))
+        array.push(wLtfCa, array.get(wLtfC,i))
+        array.push(wLtfVa, array.get(wLtfV,i))
+
+if wZoneEnd
+    wActiveZone := false
+if wNewSession
+    wZoneStart  := bar_index
+    wActiveZone := true
+
+//==========================
+// DRAW — last bar only, real price coordinates
+//==========================
+var box[]   vpBoxes  = array.new_box()
+var line[]  vpLines  = array.new_line()
+var label[] vpLabels = array.new_label()
+
+if barstate.islast and wShow and snapCnt > 0
+
+    if array.size(vpBoxes) > 0
+        for i = 0 to array.size(vpBoxes) - 1
+            box.delete(array.get(vpBoxes, i))
+    if array.size(vpLines) > 0
+        for i = 0 to array.size(vpLines) - 1
+            line.delete(array.get(vpLines, i))
+    if array.size(vpLabels) > 0
+        for i = 0 to array.size(vpLabels) - 1
+            label.delete(array.get(vpLabels, i))
+    array.clear(vpBoxes)
+    array.clear(vpLines)
+    array.clear(vpLabels)
+
+    nSlots = math.min(wSessions, snapCnt)
+    startS = snapCnt - nSlots
+
+    for s = 0 to nSlots - 1
+        slot = startS + s
+        base = snapBase(slot)
+
+        sHigh = array.get(snapBuf, base + wRes*3)
+        sLow  = array.get(snapBuf, base + wRes*3 + 1)
+        sPoc  = array.get(snapBuf, base + wRes*3 + 2)
+        sVah  = array.get(snapBuf, base + wRes*3 + 3)
+        sVal  = array.get(snapBuf, base + wRes*3 + 4)
+
+        if na(sHigh) or na(sLow) or sHigh == sLow
+            continue
+
+        gap   = (sHigh - sLow) / wRes
+        xLeft = bar_index + wOffset + s * (wSlotW + wGapW)
+        xRight = xLeft + wSlotW
+
+        float maxVol = 0.0
+        for i = 0 to wRes - 1
+            tot = array.get(snapBuf, base+i) + array.get(snapBuf, base+wRes+i)
+            if tot > maxVol
+                maxVol := tot
+
+        // Separator
+        array.push(vpLines, line.new(xLeft, sHigh, xLeft, sLow, color=wSepCol, width=1))
+
+        // Bins
+        if maxVol > 0
+            for i = 0 to wRes - 1
+                binTop = array.get(snapBuf, base+wRes*2+i)
+                binBot = binTop - gap * 0.92
+                gVol   = array.get(snapBuf, base+i)
+                rVol   = array.get(snapBuf, base+wRes+i)
+                totVol = gVol + rVol
+                totalW = int(wSlotW * totVol / maxVol)
+                gW     = totVol > 0 ? int(totalW * gVol / totVol) : 0
+                rW     = totalW - gW
+                if gW > 0
+                    array.push(vpBoxes, box.new(xLeft, binTop, xLeft+gW, binBot, border_width=0, bgcolor=wBullCol))
+                if rW > 0
+                    array.push(vpBoxes, box.new(xLeft+gW, binTop, xLeft+gW+rW, binBot, border_width=0, bgcolor=wBearCol))
+
+        // POC
+        if wShowPoc and not na(sPoc)
+            array.push(vpLines, line.new(xLeft, sPoc, xRight, sPoc, color=wPocCol, width=1))
+            if wShowLbl
+                array.push(vpLabels, label.new(xRight, sPoc, 'POC', color=color.new(color.black,100), textcolor=wPocCol, style=label.style_label_right, size=size.tiny))
+
+        // VAH / VAL
+        if wShowVA and not na(sVah) and not na(sVal)
+            array.push(vpLines, line.new(xLeft, sVah, xRight, sVah, color=wVACol, width=1, style=line.style_dashed))
+            array.push(vpLines, line.new(xLeft, sVal, xRight, sVal, color=wVACol, width=1, style=line.style_dashed))
+            if wShowLbl
+                array.push(vpLabels, label.new(xRight, sVah, 'VAH', color=color.new(color.black,100), textcolor=wVACol, style=label.style_label_right, size=size.tiny))
+                array.push(vpLabels, label.new(xRight, sVal, 'VAL', color=color.new(color.black,100), textcolor=wVACol, style=label.style_label_right, size=size.tiny))
+
+        // Label
+        if wShowLbl
+            isNewest = s == nSlots - 1
+            lblTxt   = (isNewest ? '▶ ' : '') + wTF + ' -' + str.tostring(nSlots - s)
+            array.push(vpLabels, label.new(xLeft + int(wSlotW/2), sHigh, lblTxt, color=color.new(color.black,100), textcolor=chart.fg_color, style=label.style_label_down, size=size.tiny))

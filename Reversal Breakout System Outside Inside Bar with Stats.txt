@@ -1,0 +1,289 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=6
+indicator(title = "Reversal Breakout System", shorttitle = "RBS", overlay = true, max_labels_count = 500, max_boxes_count = 500, max_lines_count = 500)
+
+// Inside Candle Settings
+var group_ic = "Inside Candle Settings"
+enable_ic = input.bool(true, "Enable Inside Candle Detection", group = group_ic)
+icTimeframe = input.timeframe("15", "Inside Candle Timeframe", group = group_ic)
+var color ic_bull_color = input.color(color.teal, "Bullish Inside Candle Color", group = group_ic)
+var color ic_bear_color = input.color(color.purple, "Bearish Inside Candle Color", group = group_ic)
+show_parent_box = input.bool(true, "Show Parent Candle Box", group = group_ic)
+
+// Box Fill Settings
+var group_box = "Box Fill Settings"
+fill_ic_box = input.bool(true, "Fill Inside Candle Box", group = group_box)
+fill_parent_box = input.bool(true, "Fill Parent Candle Box", group = group_box)
+ic_box_transp = input.int(90, "Inside Candle Fill Transparency", minval = 0, maxval = 100, group = group_box)
+parent_box_transp = input.int(90, "Parent Candle Fill Transparency", minval = 0, maxval = 100, group = group_box)
+ic_border_transp = input.int(50, "Inside Candle Border Transparency", minval = 0, maxval = 100, group = group_box)
+parent_border_transp = input.int(50, "Parent Candle Border Transparency", minval = 0, maxval = 100, group = group_box)
+
+// Fibonacci and Range Settings
+var fibSetting = "Fibonacci and Range Settings"
+fib_line_width = input.int(1, title = "Line Width", minval = 1, maxval = 5, group = fibSetting)
+fib_line_length = input.int(6, title = "Line Length (Bars)", minval = 1, maxval = 50, group = fibSetting)
+show_fib_ic = input.bool(true, title = "Show Fibonacci for Inside Candles", group = fibSetting)
+show_range_lines = input.bool(true, "Show Mother Candle Range Lines", group = fibSetting)
+
+// Statistics Settings
+var statsSetting = "Statistics Settings"
+show_stats = input.bool(true, title = "Show Statistics", group = statsSetting)
+reset_stats = input.bool(false, title = "Reset Statistics", group = statsSetting, tooltip = "Enable this to reset stats, then disable it again")
+
+// Table Appearance Settings
+var tableAppearance = "Table Appearance Settings"
+tablePosition = input.string("Top Right", "Table Position", 
+     options=["Top Right", "Bottom Right", "Middle Right", "Bottom Center", "Middle Left"], 
+     group = tableAppearance)
+tableTextSize = input.string("Small", "Table Text Size",
+     options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"],
+     tooltip="Sets the text size for the table cells",
+     group = tableAppearance)
+     
+// Table Colors
+tableBgColor = input.color(color.new(color.white, 100), "Table Background", group = tableAppearance)
+tableHeaderBgColor = input.color(color.rgb(0, 0, 0), "Header Background", group = tableAppearance)
+tableHeaderTextColor = input.color(color.white, "Header Text", group = tableAppearance)
+tableLabelTextColor = input.color(color.black, "Label Text", group = tableAppearance)
+tableValueTextColor = input.color(color.black, "Value Text", group = tableAppearance)
+tableSecondaryTextColor = input.color(color.gray, "Secondary Text", group = tableAppearance, tooltip="Used for percentage values")
+tableBorderColor = input.color(color.gray, "Border Color", group = tableAppearance)
+tableBorderWidth = input.int(1, "Border Width", minval=0, maxval=3, group = tableAppearance)
+tableFrameWidth = input.int(1, "Frame Width", minval=0, maxval=3, group = tableAppearance)
+
+
+// Stats Variables
+var int bullish_mother_count = 0
+var int bearish_mother_count = 0
+var int bull_break_high_count = 0
+var int bull_break_low_count = 0
+var int bear_break_high_count = 0
+var int bear_break_low_count = 0
+
+// Arrays to store historical high/low levels for tracking breakouts
+var mother_highs = array.new_float(0)
+var mother_lows = array.new_float(0)
+var mother_times = array.new_int(0)
+var is_bullish_array = array.new_bool(0)
+
+// Reset stats if requested
+if reset_stats
+    bullish_mother_count := 0
+    bearish_mother_count := 0
+    bull_break_high_count := 0
+    bull_break_low_count := 0
+    bear_break_high_count := 0
+    bear_break_low_count := 0
+    array.clear(mother_highs)
+    array.clear(mother_lows)
+    array.clear(mother_times)
+    array.clear(is_bullish_array)
+
+// Inside Candle Detection Function
+detectInsideCandle(_high, _low, _open, _close, _time, _prev_high, _prev_low) =>
+    // Inside Candle Detection (Stricter: high < prev_high and low > prev_low)
+    is_ic = _high < _prev_high and _low > _prev_low
+    is_bullish = _close > _open
+    [is_ic, is_bullish]
+
+// Visualization Function (separate from detection to avoid modifying globals in functions)
+visualizeInsideCandle(_high, _low, _open, _close, _time, _prev_high, _prev_low, bull_color, bear_color, is_htf) =>
+    [is_ic, is_bullish] = detectInsideCandle(_high, _low, _open, _close, _time, _prev_high, _prev_low)
+    ic_color = is_bullish ? bull_color : bear_color
+    
+    if is_ic and enable_ic
+        xPos = _time
+        if (_time != time) // for htf label pos
+            xPos := _time + (time - _time) / 2
+        label.new(x = xPos, y = is_bullish ? _high : _low, text = "IC", xloc = xloc.bar_time, color = color.new(ic_color, 100), textcolor = ic_color, style = is_bullish ? label.style_label_down : label.style_label_up)
+        if show_fib_ic
+            fib_30 = _low + (_high - _low) * 0.3
+            fib_50 = _low + (_high - _low) * 0.5
+            fib_70 = _low + (_high - _low) * 0.7
+            line.new(x1=bar_index, y1=fib_30, x2=bar_index + fib_line_length, y2=fib_30, color=ic_color, width=fib_line_width, style=line.style_dotted)
+            line.new(x1=bar_index, y1=fib_50, x2=bar_index + fib_line_length, y2=fib_50, color=ic_color, width=fib_line_width, style=line.style_dotted)
+            line.new(x1=bar_index, y1=fib_70, x2=bar_index + fib_line_length, y2=fib_70, color=ic_color, width=fib_line_width, style=line.style_dotted)
+        if is_htf
+            // Inside candle box with fill option
+            box.new(_time, _high, time, _low, border_color = color.new(ic_color, ic_border_transp), bgcolor = fill_ic_box ? color.new(ic_color, ic_box_transp) : color.rgb(0, 0, 0, 100), xloc = xloc.bar_time)
+            
+            // Parent/mother candle box with fill option
+            if show_parent_box
+                box.new(_time - (time - _time), _prev_high, _time, _prev_low,  border_color = color.new(ic_color, parent_border_transp), bgcolor = fill_parent_box ? color.new(ic_color, parent_box_transp) : color.rgb(0, 0, 0, 100), xloc = xloc.bar_time)
+                        
+            if show_range_lines
+                mother_range = _prev_high - _prev_low
+                line.new(x1=bar_index, y1=_prev_high, x2=bar_index + fib_line_length, y2=_prev_high, color=ic_color, width=fib_line_width, style=line.style_dashed)
+                line.new(x1=bar_index, y1=_prev_low, x2=bar_index + fib_line_length, y2=_prev_low, color=ic_color, width=fib_line_width, style=line.style_dashed)
+                line.new(x1=bar_index, y1=_prev_high + mother_range, x2=bar_index + fib_line_length, y2=_prev_high + mother_range, color=ic_color, width=fib_line_width, style=line.style_dashed)
+                line.new(x1=bar_index, y1=_prev_low - mother_range, x2=bar_index + fib_line_length, y2=_prev_low - mother_range, color=ic_color, width=fib_line_width, style=line.style_dashed)
+
+    // Return pattern type
+    is_ic and enable_ic ? (is_bullish ? 2 : -2) : 0
+
+// Variables to track breakouts for plotting diamonds
+var bool broke_high_today = false
+var bool broke_low_today = false
+var int high_break_index = 0
+var int low_break_index = 0
+var float high_break_level = na
+var float low_break_level = na
+var bool is_bull_high_break = false
+var bool is_bull_low_break = false
+
+// Inside Candle (MTF)
+var int ic_result = 0
+changeIC = ta.change(time(icTimeframe)) != 0
+
+if enable_ic and changeIC
+    [_h, _l, _o, _c, _t, _ph, _pl] = request.security(syminfo.tickerid, icTimeframe, [high[1], low[1], open[1], close[1], time[1], high[2], low[2]], lookahead = barmerge.lookahead_on)
+    
+    // Detect if we have an inside candle
+    [is_ic, is_bullish] = detectInsideCandle(_h, _l, _o, _c, _t, _ph, _pl)
+    
+    // Visualize the inside candle
+    ic_result := visualizeInsideCandle(_h, _l, _o, _c, _t, _ph, _pl, ic_bull_color, ic_bear_color, true)
+    
+    // For statistics tracking, store mother candle levels
+    if is_ic and enable_ic and show_stats
+        // Store mother candle info for tracking
+        array.push(mother_highs, _ph)
+        array.push(mother_lows, _pl)
+        array.push(mother_times, _t)
+        array.push(is_bullish_array, is_bullish)
+        
+        // Update mother candle counter
+        if is_bullish
+            bullish_mother_count := bullish_mother_count + 1
+        else
+            bearish_mother_count := bearish_mother_count + 1
+
+// Reset breakout flags on each new bar
+if barstate.isfirst or barstate.isrealtime
+    broke_high_today := false
+    broke_low_today := false
+
+// Check for breakouts of previous mother candle levels and update stats
+if show_stats and array.size(mother_highs) > 0
+    i = 0
+    while i < array.size(mother_highs)
+        m_high = array.get(mother_highs, i)
+        m_low = array.get(mother_lows, i)
+        m_time = array.get(mother_times, i)
+        m_is_bullish = array.get(is_bullish_array, i)
+        
+        // Check for breakouts (close above high or below low)
+        if time > m_time  // Only check after the mother candle
+            if close > m_high  // Broke above high
+                if m_is_bullish
+                    bull_break_high_count := bull_break_high_count + 1
+                else
+                    bear_break_high_count := bear_break_high_count + 1
+                    
+                // Only track the first breakout on a bar for visualization
+                if not broke_high_today
+                    broke_high_today := true
+                    high_break_index := bar_index
+                    high_break_level := m_high
+                    is_bull_high_break := m_is_bullish
+                
+                // Remove this mother candle from tracking
+                array.remove(mother_highs, i)
+                array.remove(mother_lows, i)
+                array.remove(mother_times, i)
+                array.remove(is_bullish_array, i)
+                continue  // Skip increment, as we removed an item
+            
+            if close < m_low  // Broke below low
+                if m_is_bullish
+                    bull_break_low_count := bull_break_low_count + 1
+                else
+                    bear_break_low_count := bear_break_low_count + 1
+                    
+                // Only track the first breakout on a bar for visualization
+                if not broke_low_today
+                    broke_low_today := true
+                    low_break_index := bar_index
+                    low_break_level := m_low
+                    is_bull_low_break := m_is_bullish
+                
+                // Remove this mother candle from tracking
+                array.remove(mother_highs, i)
+                array.remove(mother_lows, i)
+                array.remove(mother_times, i)
+                array.remove(is_bullish_array, i)
+                continue  // Skip increment, as we removed an item
+                
+            // We no longer remove entries based on lookback period
+            // All entries remain until they trigger a breakout
+        
+        i := i + 1
+
+// Calculate statistics
+if barstate.islast and show_stats
+    bull_break_high_pct = bullish_mother_count > 0 ? math.round(bull_break_high_count / bullish_mother_count * 100, 1) : 0.0
+    bull_break_low_pct = bullish_mother_count > 0 ? math.round(bull_break_low_count / bullish_mother_count * 100, 1) : 0.0
+    bear_break_high_pct = bearish_mother_count > 0 ? math.round(bear_break_high_count / bearish_mother_count * 100, 1) : 0.0
+    bear_break_low_pct = bearish_mother_count > 0 ? math.round(bear_break_low_count / bearish_mother_count * 100, 1) : 0.0
+    
+    // Convert input position to table position
+    var position_type = position.top_right
+    switch tablePosition
+        "Top Right" => position_type := position.top_right
+        "Bottom Right" => position_type := position.bottom_right
+        "Middle Right" => position_type := position.middle_right
+        "Bottom Center" => position_type := position.bottom_center
+        "Middle Left" => position_type := position.middle_left
+    
+    // Convert input text size
+    var text_size = size.small
+    switch tableTextSize
+        "Auto" => text_size := size.auto
+        "Tiny" => text_size := size.tiny
+        "Small" => text_size := size.small
+        "Normal" => text_size := size.normal
+        "Large" => text_size := size.large
+        "Huge" => text_size := size.huge
+    
+    // Create table with customizable appearance
+    var stats_table = table.new(
+             position = position_type, 
+             columns = 2, 
+             rows = 7, 
+             bgcolor = tableBgColor, 
+             border_width = tableBorderWidth, 
+             border_color = tableBorderColor,
+             frame_width = tableFrameWidth,
+             frame_color = tableBorderColor
+         )
+    
+    // Header
+    table.cell(stats_table, 0, 0, text = "Breakout Statistics", bgcolor = tableHeaderBgColor, text_color = tableHeaderTextColor, text_size = text_size, text_halign = text.align_center)
+    table.cell(stats_table, 1, 0, text = "", bgcolor = tableHeaderBgColor)
+    
+    // Bullish Stats
+    table.cell(stats_table, 0, 1, text = "Bullish Mother Candles", text_color = tableLabelTextColor, text_size = text_size)
+    table.cell(stats_table, 1, 1, text = str.tostring(bullish_mother_count), text_color = tableValueTextColor, text_size = text_size)
+    table.cell(stats_table, 0, 2, text = "  High Breaks", text_color = tableLabelTextColor, text_size = text_size)
+    table.cell(stats_table, 1, 2, text = str.tostring(bull_break_high_count) + " (" + str.tostring(bull_break_high_pct) + "%)", text_color = tableSecondaryTextColor, text_size = text_size)
+    table.cell(stats_table, 0, 3, text = "  Low Breaks", text_color = tableLabelTextColor, text_size = text_size)
+    table.cell(stats_table, 1, 3, text = str.tostring(bull_break_low_count) + " (" + str.tostring(bull_break_low_pct) + "%)", text_color = tableSecondaryTextColor, text_size = text_size)
+    
+    // Bearish Stats
+    table.cell(stats_table, 0, 4, text = "Bearish Mother Candles", text_color = tableLabelTextColor, text_size = text_size)
+    table.cell(stats_table, 1, 4, text = str.tostring(bearish_mother_count), text_color = tableValueTextColor, text_size = text_size)
+    table.cell(stats_table, 0, 5, text = "  High Breaks", text_color = tableLabelTextColor, text_size = text_size)
+    table.cell(stats_table, 1, 5, text = str.tostring(bear_break_high_count) + " (" + str.tostring(bear_break_high_pct) + "%)", text_color = tableSecondaryTextColor, text_size = text_size)
+    table.cell(stats_table, 0, 6, text = "  Low Breaks", text_color = tableLabelTextColor, text_size = text_size)
+    table.cell(stats_table, 1, 6, text = str.tostring(bear_break_low_count) + " (" + str.tostring(bear_break_low_pct) + "%)", text_color = tableSecondaryTextColor, text_size = text_size)
+
+// Alerts for MTF Inside Candles
+alertcondition(ic_result == 2, "Inside Candle Bullish", "HTF IC Bullish")
+alertcondition(ic_result == -2, "Inside Candle Bearish", "HTF IC Bearish")
+
+// New alerts for breakouts
+alertcondition(broke_high_today, "Price Crossed Above Mother High", "Price crossed above mother candle high")
+alertcondition(broke_low_today, "Price Crossed Below Mother Low", "Price crossed below mother candle low")

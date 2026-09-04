@@ -1,0 +1,784 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("NQ Stats helper", "Sessions profiler", true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------- Inputs --------------------------------------------------
+
+// Previous Day Data
+var g_PREV = "========== Previous Day Data =========="
+showPreviousDayData = input(true, title="Show Previous Day Levels", group=g_PREV)
+prev_day_high_col = input.color(color.rgb(162, 0, 255), 'Previous Day High', group=g_PREV)
+prev_day_low_col = input.color(color.rgb(17, 0, 255), 'Previous Day Low', group=g_PREV)
+prev_day_mid_col = input.color(color.teal, 'Previous Day 50%', group=g_PREV)
+
+// Trading Sessions
+var g_SESS = "========= Trading Sessions =========="
+show_sesa = input(true, '', inline='sesa', group=g_SESS)
+sesa_txt = input('New York', '', inline='sesa', group=g_SESS)
+sesa_ses = input.session('1300-2200', '', inline='sesa', group=g_SESS)
+sesa_css = input.color(color.rgb(255, 0, 55), '', inline='sesa', group=g_SESS)
+sesa_range = input(true, 'Range', inline='sesa_overlays', group=g_SESS)
+sesa_maxmin = input(true, 'Max/Min', inline='sesa_overlays', group=g_SESS)
+sesa_fib_levels = input(true, 'Show NY 50% Level', inline='sesa_overlays', group=g_SESS)
+
+show_sesb = input(true, '', inline='sesb', group=g_SESS)
+sesb_txt = input('London', '', inline='sesb', group=g_SESS)
+sesb_ses = input.session('0700-1245', '', inline='sesb', group=g_SESS)
+sesb_css = input.color(color.rgb(33, 87, 243), '', inline='sesb', group=g_SESS)
+sesb_range = input(true, 'Range', inline='sesb_overlays', group=g_SESS)
+sesb_maxmin = input(true, 'Max/Min', inline='sesb_overlays', group=g_SESS)
+sesb_fib_levels = input(true, 'Show London 50% Level', inline='sesb_overlays', group=g_SESS)
+
+show_sesc = input(true, '', inline='sesc', group=g_SESS)
+sesc_txt = input('Asia', '', inline='sesc', group=g_SESS)
+sesc_ses = input.session('0000-0700', '', inline='sesc', group=g_SESS)
+sesc_css = input.color(color.rgb(255, 152, 0), '', inline='sesc', group=g_SESS)
+sesc_range = input(true, 'Range', inline='sesc_overlays', group=g_SESS)
+sesc_maxmin = input(true, 'Max/Min', inline='sesc_overlays', group=g_SESS)
+sesc_fib_levels = input(true, 'Show Asian 50% Level', inline='sesc_overlays', group=g_SESS)
+
+tz_incr = input.int(0, 'UTC (+/-)', group=g_SESS)
+use_exchange = input(false, 'Use Exchange Timezone', group=g_SESS)
+bg_transp = input.float(90, 'Range Area Transparency', group=g_SESS)
+show_outline = input(true, 'Range Outline', group=g_SESS)
+show_txt = input(true, 'Range Label', group=g_SESS)
+
+// TIme based Levels
+var g_TIME = "====== Time Based Open ======"
+iMTime    = input.session ('0000-0001:1234567', "Session", group=g_TIME)
+iMStyle   = input.string  ("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_TIME)
+iMColor   = input.color   (color.teal, "Color", group=g_TIME)
+iMLabel   = input.bool    (false, "Show first time based level", group=g_TIME)
+iMTime2    = input.session ('0800-0801:1234567', "Session", group=g_TIME)
+iMStyle2   = input.string  ("Dashed", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_TIME)
+iMColor2   = input.color   (color.purple, "Color", group=g_TIME)
+iMLabel2   = input.bool    (false, "Show second time based level", group=g_TIME)
+
+// RTH Session Settings
+var g_RTH = "========= RTH Session Settings ========="
+session_type = input.string(defval='Day Session (RTH)', options=['Day Session (RTH)', 'Custom'], title='Session Type', group=g_RTH)
+custom_session_times = input.session(defval="0930-1600", title='Custom Session', group=g_RTH)
+
+// Today's RTH
+todop = input.bool(true, 'Open', inline='trthop', group="Today's RTH Session")
+todopcol = input.color(color.new(color.purple, 20), '', inline='trthop', group="Today's RTH Session")
+todopwidth = input.int(2, '', inline='trthop', group="Today's RTH Session")
+todmid = input.bool(true, 'Mid', inline='trthmi', group="Today's RTH Session")
+todmidcol = input.color(color.new(color.purple, 20), '', inline='trthmi', group="Today's RTH Session")
+todmidwidth = input.int(1, '', inline='trthmi', group="Today's RTH Session")
+todhi = input.bool(true, 'High', inline='trthhi', group="Today's RTH Session")
+todhicol = input.color(color.new(color.purple, 20), '', inline='trthhi', group="Today's RTH Session")
+todhiwidth = input.int(1, '', inline='trthhi', group="Today's RTH Session")
+todlo = input.bool(true, 'Low', inline='trthlo', group="Today's RTH Session")
+todlocol = input.color(color.new(color.purple, 20), '', inline='trthlo', group="Today's RTH Session")
+todlowidth = input.int(1, '', inline='trthlo', group="Today's RTH Session")
+
+// Yesterday's RTH
+rthop = input.bool(true, 'Open', inline='yrthop', group="Yesterday's RTH Session")
+rthopcol = input.color(color.new(color.olive, 20), '', inline='yrthop', group="Yesterday's RTH Session")
+rthopwidth = input.int(2, '', inline='yrthop', group="Yesterday's RTH Session")
+rthcl = input.bool(true, 'Close', inline='yrthcl', group="Yesterday's RTH Session")
+rthclcol = input.color(color.new(color.olive, 20), '', inline='yrthcl', group="Yesterday's RTH Session")
+rthclwidth = input.int(2, '', inline='yrthcl', group="Yesterday's RTH Session")
+rthmid = input.bool(true, 'Mid', inline='yrthmi', group="Yesterday's RTH Session")
+rthmidcol = input.color(color.new(color.olive, 20), '', inline='yrthmi', group="Yesterday's RTH Session")
+rthmidwidth = input.int(2, '', inline='yrthmi', group="Yesterday's RTH Session")
+rthhi = input.bool(true, 'High', inline='yrthhi', group="Yesterday's RTH Session")
+rthhicol = input.color(color.new(color.olive, 20), '', inline='yrthhi', group="Yesterday's RTH Session")
+rthhiwidth = input.int(1, '', inline='yrthhi', group="Yesterday's RTH Session")
+rthlo = input.bool(true, 'Low', inline='yrthlo', group="Yesterday's RTH Session")
+rthlocol = input.color(color.new(color.olive, 20), '', inline='yrthlo', group="Yesterday's RTH Session")
+rthlowidth = input.int(1, '', inline='yrthlo', group="Yesterday's RTH Session")
+
+// Additional Settings
+nbarsforward = input.int(20, 'Offset Labels N Bars Right', group="More Settings")
+multforward = input.float(1, "Multiply Offset for Yesterday's Labels", minval=0.25, step=0.25, group="More Settings")
+label_size = input.string('small', options=['auto', 'tiny', 'small', 'normal', 'large', 'huge'], title='Label Size', group="More Settings")
+
+// Table Settings
+var g_TABLES = "========= Table Settings ========="
+show_stats_table = input(true, "Show Session Stats Table", group=g_TABLES)
+stats_table_pos = input.string("Top Right", "Stats Table Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+stats_table_size = input.string("Small", "Stats Table Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+stats_table_style = input.string("Light", "Stats Table Style", options=["Light", "Dark"], group=g_TABLES)
+
+show_pos_table = input(true, "Show Correlation Matrix", group=g_TABLES)
+pos_table_pos = input.string("Bottom Right", "Correlation Matrix Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+pos_table_size = input.string("Small", "Correlation Matrix Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+pos_table_style = input.string("Light", "Correlation Matrix Style", options=["Light", "Dark"], group=g_TABLES)
+
+show_filtered_table = input(true, "Show Filtered Correlation Matrix", group=g_TABLES)
+filtered_table_pos = input.string("Middle Right", "Filtered Correlation Matrix Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+filtered_table_size = input.string("Small", "Filtered Correlation Matrix Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+filtered_table_style = input.string("Light", "Filtered Correlation Matrix Style", options=["Light", "Dark"], group=g_TABLES)
+filter_direction = input.string("Above", "Filter Direction", options=["Above", "Below", "Between Yesterday's RTH High and Low"], group=g_TABLES)
+filter_level = input.string("Midnight open", "Filter Level (Used with Above/Below)", options=["Midnight open", "Other time based open", "London high", "London low", "London mid", "Asia high", "Asia low", "Asia mid", "Previous day low", "Previous day high", "Previous day 50%", "Previous week high", "Previous week low", "Previous week 50%"], tooltip='Level the RTH open should be above/below', group=g_TABLES)
+
+// New Inputs for Current Session State Table
+show_current_state_table = input(true, "Show Current Session State Table", group=g_TABLES)
+current_state_table_pos = input.string("Top Center", "Current Session State Table Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLES)
+current_table_size = input.string("Small", "Current Session State Table Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLES)
+current_state_table_style = input.string("Light", "Current Session State Table Style", options=["Light", "Dark"], group=g_TABLES)
+
+// ---------------------------------------------- Functions --------------------------------------------------
+
+// ---------------------------------------------- Time based levels logic ------------------------------------
+
+tMidnight = time          ("1", iMTime)
+t0800     = time          ("1", iMTime2)
+
+_MStyle   = iMStyle  ==    "Solid" ? line.style_solid : iMStyle == "Dotted" ? line.style_dotted : line.style_dashed
+_MStyle2  = iMStyle2 ==    "Solid" ? line.style_solid : iMStyle == "Dotted" ? line.style_dotted : line.style_dashed
+
+
+var line lne = na
+var openMidnight  = 0.0
+var line lne2 = na
+var open0800  = 0.0
+
+if tMidnight
+    if not tMidnight[1]
+        openMidnight  := open
+    else
+        openMidnight := math.max(open, openMidnight)
+if openMidnight != openMidnight[1] and iMLabel
+    if barstate.isconfirmed
+        line.set_x2(lne, tMidnight)
+        lne := line.new(tMidnight, openMidnight, last_bar_time + 14400000/2, openMidnight, xloc.bar_time, extend.none, iMColor, _MStyle, 1)
+
+if t0800
+    if not t0800[1]
+        open0800  := open
+    else
+        open0800 := math.max(open, open0800)
+if open0800 != open0800[1] and iMLabel2
+    if barstate.isconfirmed
+        line.set_x2(lne2, t0800)
+        lne := line.new(t0800, open0800, last_bar_time + 14400000/2, open0800, xloc.bar_time, extend.none, iMColor2, _MStyle2, 1)
+
+// ---------------------------------------------- Time based levels logic ------------------------------------
+
+// Previous Day Levels
+calculateFibLevel(high, low) =>
+    (high + low) / 2
+
+// Session Range Function
+get_range(session, session_name, session_css, high_array, low_array)=>
+    var t = 0 
+    var max = high
+    var min = low
+    var box bx = na
+    var label lbl = na 
+    var int start_idx = na
+    var float vol = 0.0
+    var float atr_sum = 0.0
+    var int bar_count = 0
+    
+    if session > session[1]
+        t := time
+        max := high
+        min := low
+        start_idx := bar_index
+        vol := 0.0
+        atr_sum := 0.0
+        bar_count := 0
+        bx := box.new(bar_index, max, bar_index, min, bgcolor=color.new(session_css, bg_transp), border_color=show_outline ? session_css : na, border_style=line.style_dotted)
+        if show_txt
+            lbl := label.new(t, max, session_name, xloc=xloc.bar_time, textcolor=session_css, style=label.style_label_down, color=color.new(color.white, 100), size=size.tiny)
+    
+    if session and session == session[1]
+        max := math.max(high, max)
+        min := math.min(low, min)
+        vol := vol + volume
+        atr_sum := atr_sum + (high - low)
+        bar_count := bar_count + 1
+        box.set_top(bx, max)
+        box.set_rightbottom(bx, bar_index, min)
+        if show_txt
+            label.set_xy(lbl, int(math.avg(t, time)), max)
+    
+    if session[1] and not session
+        array.push(high_array, max)
+        array.push(low_array, min)
+    
+    [session ? na : max, session ? na : min, start_idx, session ? na : vol, session ? na : (bar_count > 0 ? atr_sum / bar_count : na)]
+
+// Fibonacci Midpoint
+get_fibonacci_midpoint(high_price, low_price) =>
+    (high_price + low_price) / 2
+
+// Session Position Classification
+get_session_position(curr_high, curr_low, prev_high, prev_low) =>
+    if curr_high > prev_high and curr_low < prev_low
+        "Full Engulfing"
+    else if curr_high > prev_high and curr_low >= prev_low
+        "Partial Engulfing Up"
+    else if curr_high <= prev_high and curr_low < prev_low
+        "Partial Engulfing Down"
+    else
+        "Full Inside"
+
+// Table Position Function
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+// Table Text Size Function
+get_table_text_size(size) =>
+    result = switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+// Function to Get Filter Levels
+get_filter_level(level, sesa_high, sesa_low, sesb_high, sesb_low, sesc_high, sesc_low, rth_open) =>
+    sesa_mid = get_fibonacci_midpoint(sesa_high, sesa_low)
+    sesb_mid = get_fibonacci_midpoint(sesb_high, sesb_low)
+    sesc_mid = get_fibonacci_midpoint(sesc_high, sesc_low)
+    prev_day_high = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+    prev_day_low = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+    prev_day_mid = (prev_day_high + prev_day_low) / 2
+    prev_week_high = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+    prev_week_low = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+    prev_week_mid = (prev_week_high + prev_week_low) / 2
+    
+    switch level
+        "London high" => sesb_high
+        "London low" => sesb_low
+        "London mid" => sesb_mid
+        "Asia high" => sesc_high
+        "Asia low" => sesc_low
+        "Asia mid" => sesc_mid
+        "Midnight open" => openMidnight
+        "Other time based open" => open0800
+        "Previous day high" => prev_day_high
+        "Previous day low" => prev_day_low
+        "Previous day 50%" => prev_day_mid
+        "Previous week high" => prev_week_high
+        "Previous week low" => prev_week_low
+        "Previous week 50%" => prev_week_mid
+
+// ---------------------------------------------- Logic --------------------------------------------------
+// Previous Day Data
+prevHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prevLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+previousDayFibLevel = calculateFibLevel(prevHigh, prevLow)
+
+// Session Timezone
+tf = timeframe.period
+var tz = use_exchange ? syminfo.timezone : str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
+is_sesa = math.sign(nz(time(tf, sesa_ses, tz)))
+is_sesb = math.sign(nz(time(tf, sesb_ses, tz)))
+is_sesc = math.sign(nz(time(tf, sesc_ses, tz)))
+
+// Session Variables
+var float max_sesa = na
+var float min_sesa = na
+var float vol_sesa = na
+var float atr_sesa = na
+var int sesa_start_idx = na
+var sesa_highs = array.new_float(0)
+var sesa_lows = array.new_float(0)
+
+var float max_sesb = na
+var float min_sesb = na
+var float vol_sesb = na
+var float atr_sesb = na
+var int sesb_start_idx = na
+var sesb_highs = array.new_float(0)
+var sesb_lows = array.new_float(0)
+
+var float max_sesc = na
+var float min_sesc = na
+var float vol_sesc = na
+var float atr_sesc = na
+var int sesc_start_idx = na
+var sesc_highs = array.new_float(0)
+var sesc_lows = array.new_float(0)
+
+// Session Ranges and Stats
+if show_sesa and sesa_range
+    [max, min, start, vol, atr] = get_range(is_sesa, sesa_txt, sesa_css, sesa_highs, sesa_lows)
+    max_sesa := max
+    min_sesa := min
+    sesa_start_idx := start
+    vol_sesa := vol
+    atr_sesa := atr
+
+if show_sesb and sesb_range
+    [max, min, start, vol, atr] = get_range(is_sesb, sesb_txt, sesb_css, sesb_highs, sesb_lows)
+    max_sesb := max
+    min_sesb := min
+    sesb_start_idx := start
+    vol_sesb := vol
+    atr_sesb := atr
+
+if show_sesc and sesc_range
+    [max, min, start, vol, atr] = get_range(is_sesc, sesc_txt, sesc_css, sesc_highs, sesc_lows)
+    max_sesc := max
+    min_sesc := min
+    sesc_start_idx := start
+    vol_sesc := vol
+    atr_sesc := atr
+
+// RTH Logic
+session_times = session_type == "Custom" ? custom_session_times : "0800-1600"
+session = na(time(timeframe.period, session_times)) ? false : true
+
+var float rth_op = na
+var float rth_cl = na
+var float rth_hi = na
+var float rth_lo = na
+var float rth_mid = na
+var float yest_rth_op = na
+var float yest_rth_cl = na
+var float yest_rth_mid = na
+var float yest_rth_hi = na
+var float yest_rth_lo = na
+var int index_rth_start = na
+var int index_on_start = na
+var yest_offset = math.round(multforward * nbarsforward)
+
+if timeframe.isintraday and time > last_bar_time - 5 * 24 * 60 * 60 * 1000
+    if session
+        rth_op := na(rth_op) ? open : rth_op
+        rth_hi := na(rth_hi) or high > rth_hi[1] ? high : rth_hi[1]
+        rth_lo := na(rth_lo) or low < rth_lo[1] ? low : rth_lo[1]
+        rth_cl := close
+        rth_mid := (rth_hi + rth_lo) / 2
+        if not session[1]
+            index_rth_start := bar_index
+    else
+        if session[1]
+            index_on_start := bar_index
+            yest_rth_op := rth_op
+            yest_rth_cl := rth_cl
+            yest_rth_hi := rth_hi
+            yest_rth_lo := rth_lo
+            yest_rth_mid := rth_mid
+            rth_op := na
+            rth_cl := na
+            rth_hi := na
+            rth_lo := na
+            rth_mid := na
+
+// Drawing and Tables
+l_size = label_size == 'auto' ? size.auto : label_size == 'tiny' ? size.tiny : label_size == 'small' ? size.small : label_size == 'normal' ? size.normal : label_size == 'large' ? size.large : size.huge
+stats_pos = get_table_position(stats_table_pos)
+stats_size = get_table_text_size(stats_table_size)
+pos_pos = get_table_position(pos_table_pos)
+pos_size = get_table_text_size(pos_table_size)
+stats_bg = stats_table_style == "Light" ? color.white : color.gray
+pos_bg = pos_table_style == "Dark" ? color.gray : color.white
+
+if barstate.islast
+    // Previous Day Levels
+    if showPreviousDayData
+        var line prev_hi_line = line.new(bar_index - 1, prevHigh, bar_index + nbarsforward, prevHigh, xloc=xloc.bar_index, color=prev_day_high_col, width=1, style=line.style_dotted)
+        var line prev_lo_line = line.new(bar_index - 1, prevLow, bar_index + nbarsforward, prevLow, xloc=xloc.bar_index, color=prev_day_low_col, width=1, style=line.style_dotted)
+        var line prev_mid_line = line.new(bar_index - 1, previousDayFibLevel, bar_index + nbarsforward, previousDayFibLevel, xloc=xloc.bar_index, color=prev_day_mid_col, width=1, style=line.style_dashed)
+        var label prev_hi_label = label.new(bar_index + nbarsforward, prevHigh, "Prev Hi " + str.tostring(prevHigh), style=label.style_none, textcolor=prev_day_high_col, size=l_size)
+        var label prev_lo_label = label.new(bar_index + nbarsforward, prevLow, "Prev Lo " + str.tostring(prevLow), style=label.style_none, textcolor=prev_day_low_col, size=l_size)
+        var label prev_mid_label = label.new(bar_index + nbarsforward, previousDayFibLevel, "Prev 50% " + str.tostring(previousDayFibLevel), style=label.style_none, textcolor=prev_day_mid_col, size=l_size)
+
+    // New York Session
+    if sesa_maxmin and not na(max_sesa) and not na(sesa_start_idx)
+        var line sesa_hi_line = line.new(sesa_start_idx, max_sesa, bar_index + nbarsforward, max_sesa, xloc=xloc.bar_index, color=sesa_css, width=1)
+        var line sesa_lo_line = line.new(sesa_start_idx, min_sesa, bar_index + nbarsforward, min_sesa, xloc=xloc.bar_index, color=sesa_css, width=1)
+        var label sesa_hi_label = label.new(bar_index + nbarsforward, max_sesa, "NY Hi " + str.tostring(max_sesa), style=label.style_none, textcolor=sesa_css, size=l_size)
+        var label sesa_lo_label = label.new(bar_index + nbarsforward, min_sesa, "NY Lo " + str.tostring(min_sesa), style=label.style_none, textcolor=sesa_css, size=l_size)
+    if sesa_fib_levels and not na(max_sesa) and not na(min_sesa) and not na(sesa_start_idx)
+        sesa_fib_midpoint = get_fibonacci_midpoint(max_sesa, min_sesa)
+        var line sesa_mid_line = line.new(sesa_start_idx, sesa_fib_midpoint, bar_index + nbarsforward, sesa_fib_midpoint, xloc=xloc.bar_index, color=sesa_css, width=1, style=line.style_dashed)
+        var label sesa_mid_label = label.new(bar_index + nbarsforward, sesa_fib_midpoint, "NY 50% " + str.tostring(sesa_fib_midpoint), style=label.style_none, textcolor=sesa_css, size=l_size)
+
+    // London Session
+    if sesb_maxmin and not na(max_sesb) and not na(sesb_start_idx)
+        var line sesb_hi_line = line.new(sesb_start_idx, max_sesb, bar_index + nbarsforward, max_sesb, xloc=xloc.bar_index, color=sesb_css, width=1)
+        var line sesb_lo_line = line.new(sesb_start_idx, min_sesb, bar_index + nbarsforward, min_sesb, xloc=xloc.bar_index, color=sesb_css, width=1)
+        var label sesb_hi_label = label.new(bar_index + nbarsforward, max_sesb, "Lon Hi " + str.tostring(max_sesb), style=label.style_none, textcolor=sesb_css, size=l_size)
+        var label sesb_lo_label = label.new(bar_index + nbarsforward, min_sesb, "Lon Lo " + str.tostring(min_sesb), style=label.style_none, textcolor=sesb_css, size=l_size)
+    if sesb_fib_levels and not na(max_sesb) and not na(min_sesb) and not na(sesb_start_idx)
+        sesb_fib_midpoint = get_fibonacci_midpoint(max_sesb, min_sesb)
+        var line sesb_mid_line = line.new(sesb_start_idx, sesb_fib_midpoint, bar_index + nbarsforward, sesb_fib_midpoint, xloc=xloc.bar_index, color=sesb_css, width=1, style=line.style_dashed)
+        var label sesb_mid_label = label.new(bar_index + nbarsforward, sesb_fib_midpoint, "Lon 50% " + str.tostring(sesb_fib_midpoint), style=label.style_none, textcolor=sesb_css, size=l_size)
+
+    // Asia Session
+    if sesc_maxmin and not na(max_sesc) and not na(sesc_start_idx)
+        var line sesc_hi_line = line.new(sesc_start_idx, max_sesc, bar_index + nbarsforward, max_sesc, xloc=xloc.bar_index, color=sesc_css, width=1)
+        var line sesc_lo_line = line.new(sesc_start_idx, min_sesc, bar_index + nbarsforward, min_sesc, xloc=xloc.bar_index, color=sesc_css, width=1)
+        var label sesc_hi_label = label.new(bar_index + nbarsforward, max_sesc, "Asia Hi " + str.tostring(max_sesc), style=label.style_none, textcolor=sesc_css, size=l_size)
+        var label sesc_lo_label = label.new(bar_index + nbarsforward, min_sesc, "Asia Lo " + str.tostring(min_sesc), style=label.style_none, textcolor=sesc_css, size=l_size)
+    if sesc_fib_levels and not na(max_sesc) and not na(min_sesc) and not na(sesc_start_idx)
+        sesc_fib_midpoint = get_fibonacci_midpoint(max_sesc, min_sesc)
+        var line sesc_mid_line = line.new(sesc_start_idx, sesc_fib_midpoint, bar_index + nbarsforward, sesc_fib_midpoint, xloc=xloc.bar_index, color=sesc_css, width=1, style=line.style_dashed)
+        var label sesc_mid_label = label.new(bar_index + nbarsforward, sesc_fib_midpoint, "Asia 50% " + str.tostring(sesc_fib_midpoint), style=label.style_none, textcolor=sesc_css, size=l_size)
+
+    // Today's RTH
+    var op_line = todop ? line.new(index_rth_start, rth_op, bar_index + nbarsforward, rth_op, xloc=xloc.bar_index, color=todopcol, width=todopwidth, style=line.style_dotted) : na
+    var mid_line = todmid ? line.new(index_rth_start, rth_mid, bar_index + nbarsforward, rth_mid, xloc=xloc.bar_index, color=todmidcol, width=todmidwidth, style=line.style_dashed) : na
+    var hi_line = todhi ? line.new(index_rth_start, rth_hi, bar_index + nbarsforward, rth_hi, xloc=xloc.bar_index, color=todhicol, width=todhiwidth) : na
+    var lo_line = todlo ? line.new(index_rth_start, rth_lo, bar_index + nbarsforward, rth_lo, xloc=xloc.bar_index, color=todlocol, width=todlowidth) : na
+    var label_op = todop ? label.new(bar_index + nbarsforward, rth_op, "RTH Op " + str.tostring(rth_op), style=label.style_none, textcolor=todopcol, size=l_size) : na
+    var label_mid = todmid ? label.new(bar_index + nbarsforward, rth_mid, "RTH Mid " + str.tostring(rth_mid), style=label.style_none, textcolor=todmidcol, size=l_size) : na
+    var label_hi = todhi ? label.new(bar_index + nbarsforward, rth_hi, "RTH Hi " + str.tostring(rth_hi), style=label.style_none, textcolor=todhicol, size=l_size) : na
+    var label_lo = todlo ? label.new(bar_index + nbarsforward, rth_lo, "RTH Lo " + str.tostring(rth_lo), style=label.style_none, textcolor=todlocol, size=l_size) : na
+    
+    // Yesterday's RTH
+    var rthcl_line = rthcl ? line.new(index_on_start, yest_rth_cl, bar_index + yest_offset, yest_rth_cl, xloc=xloc.bar_index, color=rthclcol, width=rthclwidth) : na
+    var rthop_line = rthop ? line.new(index_on_start, yest_rth_op, bar_index + yest_offset, yest_rth_op, xloc=xloc.bar_index, color=rthopcol, width=rthopwidth, style=line.style_dotted) : na
+    var rthhi_line = rthhi ? line.new(index_on_start, yest_rth_hi, bar_index + yest_offset, yest_rth_hi, xloc=xloc.bar_index, color=rthhicol, width=rthhiwidth) : na
+    var rthlo_line = rthlo ? line.new(index_on_start, yest_rth_lo, bar_index + yest_offset, yest_rth_lo, xloc=xloc.bar_index, color=rthlocol, width=rthlowidth) : na
+    var rthmid_line = rthmid ? line.new(index_on_start, yest_rth_mid, bar_index + yest_offset, yest_rth_mid, xloc=xloc.bar_index, color=rthmidcol, width=rthmidwidth, style=line.style_dashed) : na
+    var label_rth_cl = rthcl ? label.new(bar_index + yest_offset, yest_rth_cl, "Y.Cl " + str.tostring(yest_rth_cl), style=label.style_none, textcolor=rthclcol, size=l_size) : na
+    var label_rth_op = rthop ? label.new(bar_index + yest_offset, yest_rth_op, "Y.Op " + str.tostring(yest_rth_op), style=label.style_none, textcolor=rthopcol, size=l_size) : na
+    var label_rth_hi = rthhi ? label.new(bar_index + yest_offset, yest_rth_hi, "Y.Hi " + str.tostring(yest_rth_hi), style=label.style_none, textcolor=rthhicol, size=l_size) : na
+    var label_rth_lo = rthlo ? label.new(bar_index + yest_offset, yest_rth_lo, "Y.Lo " + str.tostring(yest_rth_lo), style=label.style_none, textcolor=rthlocol, size=l_size) : na
+    var label_rth_mid = rthmid ? label.new(bar_index + yest_offset, yest_rth_mid, "Y.Mid " + str.tostring(yest_rth_mid), style=label.style_none, textcolor=rthmidcol, size=l_size) : na
+    
+    // Update Today's RTH
+    if rth_op != rth_op[1]
+        line.set_y1(op_line, rth_op)
+        line.set_y2(op_line, rth_op)
+        label.set_y(label_op, rth_op)
+        label.set_text(label_op, "RTH Op " + str.tostring(rth_op))
+    if rth_mid != rth_mid[1]
+        line.set_y1(mid_line, rth_mid)
+        line.set_y2(mid_line, rth_mid)
+        label.set_y(label_mid, rth_mid)
+        label.set_text(label_mid, "RTH Mid " + str.tostring(rth_mid))
+    if rth_hi != rth_hi[1]
+        line.set_y1(hi_line, rth_hi)
+        line.set_y2(hi_line, rth_hi)
+        label.set_y(label_hi, rth_hi)
+        label.set_text(label_hi, "RTH Hi " + str.tostring(rth_hi))
+    if rth_lo != rth_lo[1]
+        line.set_y1(lo_line, rth_lo)
+        line.set_y2(lo_line, rth_lo)
+        label.set_y(label_lo, rth_lo)
+        label.set_text(label_lo, "RTH Lo " + str.tostring(rth_lo))
+    
+    // Update Yesterday's RTH
+    if yest_rth_cl != yest_rth_cl[1]
+        line.set_y1(rthcl_line, yest_rth_cl)
+        line.set_y2(rthcl_line, yest_rth_cl)
+        label.set_y(label_rth_cl, yest_rth_cl)
+        label.set_text(label_rth_cl, "Y.Cl " + str.tostring(yest_rth_cl))
+    if yest_rth_op != yest_rth_op[1]
+        line.set_y1(rthop_line, yest_rth_op)
+        line.set_y2(rthop_line, yest_rth_op)
+        label.set_y(label_rth_op, yest_rth_op)
+        label.set_text(label_rth_op, "Y.Op " + str.tostring(yest_rth_op))
+    if yest_rth_hi != yest_rth_hi[1]
+        line.set_y1(rthhi_line, yest_rth_hi)
+        line.set_y2(rthhi_line, yest_rth_hi)
+        label.set_y(label_rth_hi, yest_rth_hi)
+        label.set_text(label_rth_hi, "Y.Hi " + str.tostring(yest_rth_hi))
+    if yest_rth_lo != yest_rth_lo[1]
+        line.set_y1(rthlo_line, yest_rth_lo)
+        line.set_y2(rthlo_line, yest_rth_lo)
+        label.set_y(label_rth_lo, yest_rth_lo)
+        label.set_text(label_rth_lo, "Y.Lo " + str.tostring(yest_rth_lo))
+    if yest_rth_mid != yest_rth_mid[1]
+        line.set_y1(rthmid_line, yest_rth_mid)
+        line.set_y2(rthmid_line, yest_rth_mid)
+        label.set_y(label_rth_mid, yest_rth_mid)
+        label.set_text(label_rth_mid, "Y.Mid " + str.tostring(yest_rth_mid))
+    
+    // Move Ends
+    line.set_x2(op_line, bar_index + nbarsforward)
+    line.set_x2(mid_line, bar_index + nbarsforward)
+    line.set_x2(hi_line, bar_index + nbarsforward)
+    line.set_x2(lo_line, bar_index + nbarsforward)
+    line.set_x2(rthcl_line, bar_index + yest_offset)
+    line.set_x2(rthop_line, bar_index + yest_offset)
+    line.set_x2(rthhi_line, bar_index + yest_offset)
+    line.set_x2(rthlo_line, bar_index + yest_offset)
+    line.set_x2(rthmid_line, bar_index + yest_offset)
+    
+    // Move Labels
+    label.set_x(label_op, bar_index + nbarsforward)
+    label.set_x(label_mid, bar_index + nbarsforward)
+    label.set_x(label_hi, bar_index + nbarsforward)
+    label.set_x(label_lo, bar_index + nbarsforward)
+    label.set_x(label_rth_cl, bar_index + yest_offset)
+    label.set_x(label_rth_op, bar_index + yest_offset)
+    label.set_x(label_rth_hi, bar_index + yest_offset)
+    label.set_x(label_rth_lo, bar_index + yest_offset)
+    label.set_x(label_rth_mid, bar_index + yest_offset)
+
+    // Session Stats Table
+    if show_stats_table
+        var table stats_table = table.new(stats_pos, 7, 4, bgcolor=stats_bg, border_width=1, border_color=color.black)
+        table.cell(stats_table, 0, 0, "Session", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+        table.cell(stats_table, 1, 0, "Range", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+        table.cell(stats_table, 2, 0, "Volume", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+        table.cell(stats_table, 3, 0, "ATR", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+        table.cell(stats_table, 4, 0, "High", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+        table.cell(stats_table, 5, 0, "Mid", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+        table.cell(stats_table, 6, 0, "Low", text_color=color.black, bgcolor=color.silver, text_size=stats_size)
+
+        table.cell(stats_table, 0, 1, sesc_txt, text_color=sesc_css, text_size=stats_size)
+        table.cell(stats_table, 1, 1, not na(max_sesc) ? str.tostring(max_sesc - min_sesc) : "-", text_color=sesc_css, text_size=stats_size)
+        table.cell(stats_table, 2, 1, not na(vol_sesc) ? str.tostring(math.round(vol_sesc)) : "-", text_color=sesc_css, text_size=stats_size)
+        table.cell(stats_table, 3, 1, not na(atr_sesc) ? str.tostring(math.round(atr_sesc)) : "-", text_color=sesc_css, text_size=stats_size)
+        table.cell(stats_table, 4, 1, not na(max_sesc) ? str.tostring(max_sesc) : "-", text_color=sesc_css, text_size=stats_size)
+        table.cell(stats_table, 5, 1, not na(max_sesc) ? str.tostring(get_fibonacci_midpoint(max_sesc, min_sesc)) : "-", text_color=sesc_css, text_size=stats_size)
+        table.cell(stats_table, 6, 1, not na(min_sesc) ? str.tostring(min_sesc) : "-", text_color=sesc_css, text_size=stats_size)
+
+        table.cell(stats_table, 0, 2, sesb_txt, text_color=sesb_css, text_size=stats_size)
+        table.cell(stats_table, 1, 2, not na(max_sesb) ? str.tostring(max_sesb - min_sesb) : "-", text_color=sesb_css, text_size=stats_size)
+        table.cell(stats_table, 2, 2, not na(vol_sesb) ? str.tostring(math.round(vol_sesb)) : "-", text_color=sesb_css, text_size=stats_size)
+        table.cell(stats_table, 3, 2, not na(atr_sesb) ? str.tostring(math.round(atr_sesb)) : "-", text_color=sesb_css, text_size=stats_size)
+        table.cell(stats_table, 4, 2, not na(max_sesb) ? str.tostring(max_sesb) : "-", text_color=sesb_css, text_size=stats_size)
+        table.cell(stats_table, 5, 2, not na(max_sesb) ? str.tostring(get_fibonacci_midpoint(max_sesb, min_sesb)) : "-", text_color=sesb_css, text_size=stats_size)
+        table.cell(stats_table, 6, 2, not na(min_sesb) ? str.tostring(min_sesb) : "-", text_color=sesb_css, text_size=stats_size)
+
+        table.cell(stats_table, 0, 3, sesa_txt, text_color=sesa_css, text_size=stats_size)
+        table.cell(stats_table, 1, 3, not na(max_sesa) ? str.tostring(max_sesa - min_sesa) : "-", text_color=sesa_css, text_size=stats_size)
+        table.cell(stats_table, 2, 3, not na(vol_sesa) ? str.tostring(math.round(vol_sesa)) : "-", text_color=sesa_css, text_size=stats_size)
+        table.cell(stats_table, 3, 3, not na(atr_sesa) ? str.tostring(atr_sesa) : "-", text_color=sesa_css, text_size=stats_size)
+        table.cell(stats_table, 4, 3, not na(max_sesa) ? str.tostring(max_sesa) : "-", text_color=sesa_css, text_size=stats_size)
+        table.cell(stats_table, 5, 3, not na(max_sesa) ? str.tostring(get_fibonacci_midpoint(max_sesa, min_sesa)) : "-", text_color=sesa_css, text_size=stats_size)
+        table.cell(stats_table, 6, 3, not na(min_sesa) ? str.tostring(min_sesa) : "-", text_color=sesa_css, text_size=stats_size)
+
+ // Correlation Matrix with Total Trading Days
+// Additional Variables for Filter Levels
+var float prevWHigh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+var float prevWLow = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+var float previousWeekFibLevel = (prevWHigh + prevWLow) / 2
+var sesa_fib_midpoint = get_fibonacci_midpoint(max_sesa, min_sesa)
+var sesb_fib_midpoint = get_fibonacci_midpoint(max_sesb, min_sesb)
+var sesc_fib_midpoint = get_fibonacci_midpoint(max_sesc, min_sesc)
+
+// Drawing and Tables
+filtered_pos = get_table_position(filtered_table_pos)
+filtered_size = get_table_text_size(filtered_table_size)
+current_pos = get_table_position(current_state_table_pos)
+current_state_table_size = get_table_text_size(current_table_size)
+filtered_bg = filtered_table_style == "Dark" ? color.gray : color.white
+current_state_bg = current_state_table_style == "Dark" ? color.gray : color.white
+
+if barstate.islast
+    // [Previous drawing logic for Previous Day Levels, Sessions, and RTH remains unchanged]
+
+    // Correlation Matrix
+    if show_pos_table
+        var int lon_full_ny_full = 0
+        var int lon_full_ny_part_up = 0
+        var int lon_full_ny_part_down = 0
+        var int lon_full_ny_inside = 0
+        
+        var int lon_part_up_ny_full = 0
+        var int lon_part_up_ny_part_up = 0
+        var int lon_part_up_ny_part_down = 0
+        var int lon_part_up_ny_inside = 0
+        
+        var int lon_part_down_ny_full = 0
+        var int lon_part_down_ny_part_up = 0
+        var int lon_part_down_ny_part_down = 0
+        var int lon_part_down_ny_inside = 0
+        
+        var int lon_inside_ny_full = 0
+        var int lon_inside_ny_part_up = 0
+        var int lon_inside_ny_part_down = 0
+        var int lon_inside_ny_inside = 0
+
+        min_size = math.min(array.size(sesa_highs), math.min(array.size(sesb_highs), array.size(sesc_highs)))
+        for i = 0 to min_size - 1
+            london_vs_asia = get_session_position(array.get(sesb_highs, i), array.get(sesb_lows, i), array.get(sesc_highs, i), array.get(sesc_lows, i))
+            ny_vs_london = get_session_position(array.get(sesa_highs, i), array.get(sesa_lows, i), array.get(sesb_highs, i), array.get(sesb_lows, i))
+            
+            if london_vs_asia == "Full Engulfing"
+                lon_full_ny_full := lon_full_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                lon_full_ny_part_up := lon_full_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                lon_full_ny_part_down := lon_full_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                lon_full_ny_inside := lon_full_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+            
+            if london_vs_asia == "Partial Engulfing Up"
+                lon_part_up_ny_full := lon_part_up_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                lon_part_up_ny_part_up := lon_part_up_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                lon_part_up_ny_part_down := lon_part_up_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                lon_part_up_ny_inside := lon_part_up_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+            
+            if london_vs_asia == "Partial Engulfing Down"
+                lon_part_down_ny_full := lon_part_down_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                lon_part_down_ny_part_up := lon_part_down_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                lon_part_down_ny_part_down := lon_part_down_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                lon_part_down_ny_inside := lon_part_down_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+            
+            if london_vs_asia == "Full Inside"
+                lon_inside_ny_full := lon_inside_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                lon_inside_ny_part_up := lon_inside_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                lon_inside_ny_part_down := lon_inside_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                lon_inside_ny_inside := lon_inside_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+
+        var table pos_table = table.new(pos_pos, 5, 6, bgcolor=pos_bg, border_width=1, border_color=color.black)
+        table.cell(pos_table, 0, 0, "Lon vs Asia \\ NY vs Lon", text_color=color.black, bgcolor=color.silver, text_size=pos_size)
+        table.cell(pos_table, 1, 0, "NY Full", text_color=sesa_css, bgcolor=color.silver, text_size=pos_size)
+        table.cell(pos_table, 2, 0, "NY Part Up", text_color=sesa_css, bgcolor=color.silver, text_size=pos_size)
+        table.cell(pos_table, 3, 0, "NY Part Down", text_color=sesa_css, bgcolor=color.silver, text_size=pos_size)
+        table.cell(pos_table, 4, 0, "NY Inside", text_color=sesa_css, bgcolor=color.silver, text_size=pos_size)
+
+        table.cell(pos_table, 0, 1, "Lon Full", text_color=sesb_css, text_size=pos_size)
+        table.cell(pos_table, 1, 1, str.tostring(lon_full_ny_full), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 2, 1, str.tostring(lon_full_ny_part_up), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 3, 1, str.tostring(lon_full_ny_part_down), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 4, 1, str.tostring(lon_full_ny_inside), text_color=color.black, text_size=pos_size)
+
+        table.cell(pos_table, 0, 2, "Lon Part Up", text_color=sesb_css, text_size=pos_size)
+        table.cell(pos_table, 1, 2, str.tostring(lon_part_up_ny_full), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 2, 2, str.tostring(lon_part_up_ny_part_up), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 3, 2, str.tostring(lon_part_up_ny_part_down), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 4, 2, str.tostring(lon_part_up_ny_inside), text_color=color.black, text_size=pos_size)
+
+        table.cell(pos_table, 0, 3, "Lon Part Down", text_color=sesb_css, text_size=pos_size)
+        table.cell(pos_table, 1, 3, str.tostring(lon_part_down_ny_full), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 2, 3, str.tostring(lon_part_down_ny_part_up), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 3, 3, str.tostring(lon_part_down_ny_part_down), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 4, 3, str.tostring(lon_part_down_ny_inside), text_color=color.black, text_size=pos_size)
+
+        table.cell(pos_table, 0, 4, "Lon Inside", text_color=sesb_css, text_size=pos_size)
+        table.cell(pos_table, 1, 4, str.tostring(lon_inside_ny_full), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 2, 4, str.tostring(lon_inside_ny_part_up), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 3, 4, str.tostring(lon_inside_ny_part_down), text_color=color.black, text_size=pos_size)
+        table.cell(pos_table, 4, 4, str.tostring(lon_inside_ny_inside), text_color=color.black, text_size=pos_size)
+
+        table.cell(pos_table, 0, 5, "Total Trading Days: " + str.tostring(min_size), text_color=color.black, text_size=pos_size, width=5)
+
+    // Filtered Correlation Matrix
+    if show_filtered_table
+        var int filt_lon_full_ny_full = 0
+        var int filt_lon_full_ny_part_up = 0
+        var int filt_lon_full_ny_part_down = 0
+        var int filt_lon_full_ny_inside = 0
+        
+        var int filt_lon_part_up_ny_full = 0
+        var int filt_lon_part_up_ny_part_up = 0
+        var int filt_lon_part_up_ny_part_down = 0
+        var int filt_lon_part_up_ny_inside = 0
+        
+        var int filt_lon_part_down_ny_full = 0
+        var int filt_lon_part_down_ny_part_up = 0
+        var int filt_lon_part_down_ny_part_down = 0
+        var int filt_lon_part_down_ny_inside = 0
+        
+        var int filt_lon_inside_ny_full = 0
+        var int filt_lon_inside_ny_part_up = 0
+        var int filt_lon_inside_ny_part_down = 0
+        var int filt_lon_inside_ny_inside = 0
+        
+        var int filt_total_days = 0
+        
+        min_size = math.min(array.size(sesa_highs), math.min(array.size(sesb_highs), array.size(sesc_highs)))
+        for i = 0 to min_size - 1
+            sesa_high = array.get(sesa_highs, i)
+            sesa_low = array.get(sesa_lows, i)
+            sesb_high = array.get(sesb_highs, i)
+            sesb_low = array.get(sesb_lows, i)
+            sesc_high = array.get(sesc_highs, i)
+            sesc_low = array.get(sesc_lows, i)
+            rth_open = i == 0 ? rth_op : array.get(sesa_highs, i)  // Proxy for historical RTH open
+            yest_rth_high = i == 0 ? yest_rth_hi : array.get(sesa_highs, math.min(i + 1, min_size - 1))  // Proxy for yesterday’s RTH high
+            yest_rth_low = i == 0 ? yest_rth_lo : array.get(sesa_lows, math.min(i + 1, min_size - 1))    // Proxy for yesterday’s RTH low
+            
+            filter_value = get_filter_level(filter_level, sesa_high, sesa_low, sesb_high, sesb_low, sesc_high, sesc_low, rth_open)
+            condition_met = filter_direction == "Above" ? rth_open > filter_value and not na(filter_value) :
+                           filter_direction == "Below" ? rth_open < filter_value and not na(filter_value) :
+                           filter_direction == "Between Yesterday's RTH High and Low" ? rth_open > yest_rth_low and rth_open < yest_rth_high and not na(yest_rth_low) and not na(yest_rth_high) : false
+            
+            if condition_met
+                filt_total_days := filt_total_days + 1
+                london_vs_asia = get_session_position(sesb_high, sesb_low, sesc_high, sesc_low)
+                ny_vs_london = get_session_position(sesa_high, sesa_low, sesb_high, sesb_low)
+                
+                if london_vs_asia == "Full Engulfing"
+                    filt_lon_full_ny_full := filt_lon_full_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                    filt_lon_full_ny_part_up := filt_lon_full_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                    filt_lon_full_ny_part_down := filt_lon_full_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                    filt_lon_full_ny_inside := filt_lon_full_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+                
+                if london_vs_asia == "Partial Engulfing Up"
+                    filt_lon_part_up_ny_full := filt_lon_part_up_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                    filt_lon_part_up_ny_part_up := filt_lon_part_up_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                    filt_lon_part_up_ny_part_down := filt_lon_part_up_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                    filt_lon_part_up_ny_inside := filt_lon_part_up_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+                
+                if london_vs_asia == "Partial Engulfing Down"
+                    filt_lon_part_down_ny_full := filt_lon_part_down_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                    filt_lon_part_down_ny_part_up := filt_lon_part_down_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                    filt_lon_part_down_ny_part_down := filt_lon_part_down_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                    filt_lon_part_down_ny_inside := filt_lon_part_down_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+                
+                if london_vs_asia == "Full Inside"
+                    filt_lon_inside_ny_full := filt_lon_inside_ny_full + (ny_vs_london == "Full Engulfing" ? 1 : 0)
+                    filt_lon_inside_ny_part_up := filt_lon_inside_ny_part_up + (ny_vs_london == "Partial Engulfing Up" ? 1 : 0)
+                    filt_lon_inside_ny_part_down := filt_lon_inside_ny_part_down + (ny_vs_london == "Partial Engulfing Down" ? 1 : 0)
+                    filt_lon_inside_ny_inside := filt_lon_inside_ny_inside + (ny_vs_london == "Full Inside" ? 1 : 0)
+
+        header_text = filter_direction == "Between Yesterday's RTH High and Low" ? "Lon vs Asia \\ NY vs Lon (RTH Open Between Yest RTH H/L)" : "Lon vs Asia \\ NY vs Lon (RTH Open " + (filter_direction == "Above" ? ">" : "<") + " " + filter_level + ")"
+        var table filtered_table = table.new(filtered_pos, 5, 6, bgcolor=filtered_bg, border_width=1, border_color=color.black)
+        table.cell(filtered_table, 0, 0, header_text, text_color=color.black, bgcolor=color.silver, text_size=filtered_size)
+        table.cell(filtered_table, 1, 0, "NY Full", text_color=sesa_css, bgcolor=color.silver, text_size=filtered_size)
+        table.cell(filtered_table, 2, 0, "NY Part Up", text_color=sesa_css, bgcolor=color.silver, text_size=filtered_size)
+        table.cell(filtered_table, 3, 0, "NY Part Down", text_color=sesa_css, bgcolor=color.silver, text_size=filtered_size)
+        table.cell(filtered_table, 4, 0, "NY Inside", text_color=sesa_css, bgcolor=color.silver, text_size=filtered_size)
+
+        table.cell(filtered_table, 0, 1, "Lon Full", text_color=sesb_css, text_size=filtered_size)
+        table.cell(filtered_table, 1, 1, str.tostring(filt_lon_full_ny_full), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 2, 1, str.tostring(filt_lon_full_ny_part_up), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 3, 1, str.tostring(filt_lon_full_ny_part_down), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 4, 1, str.tostring(filt_lon_full_ny_inside), text_color=color.black, text_size=filtered_size)
+
+        table.cell(filtered_table, 0, 2, "Lon Part Up", text_color=sesb_css, text_size=filtered_size)
+        table.cell(filtered_table, 1, 2, str.tostring(filt_lon_part_up_ny_full), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 2, 2, str.tostring(filt_lon_part_up_ny_part_up), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 3, 2, str.tostring(filt_lon_part_up_ny_part_down), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 4, 2, str.tostring(filt_lon_part_up_ny_inside), text_color=color.black, text_size=filtered_size)
+
+        table.cell(filtered_table, 0, 3, "Lon Part Down", text_color=sesb_css, text_size=filtered_size)
+        table.cell(filtered_table, 1, 3, str.tostring(filt_lon_part_down_ny_full), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 2, 3, str.tostring(filt_lon_part_down_ny_part_up), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 3, 3, str.tostring(filt_lon_part_down_ny_part_down), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 4, 3, str.tostring(filt_lon_part_down_ny_inside), text_color=color.black, text_size=filtered_size)
+
+        table.cell(filtered_table, 0, 4, "Lon Inside", text_color=sesb_css, text_size=filtered_size)
+        table.cell(filtered_table, 1, 4, str.tostring(filt_lon_inside_ny_full), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 2, 4, str.tostring(filt_lon_inside_ny_part_up), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 3, 4, str.tostring(filt_lon_inside_ny_part_down), text_color=color.black, text_size=filtered_size)
+        table.cell(filtered_table, 4, 4, str.tostring(filt_lon_inside_ny_inside), text_color=color.black, text_size=filtered_size)
+
+        table.cell(filtered_table, 0, 5, "Filtered Days: " + str.tostring(filt_total_days), text_color=color.black, text_size=filtered_size, width=5)
+
+ // Current Session State Table
+    if show_current_state_table
+        current_london_vs_asia = get_session_position(max_sesb, min_sesb, max_sesc, min_sesc)
+        ny_open_inside_yest_rth = not na(rth_op) and not na(yest_rth_hi) and not na(yest_rth_lo) and rth_op > yest_rth_lo and rth_op < yest_rth_hi ? "Yes" : "No"
+        
+        var table current_state_table = table.new(current_pos, 2, 3, bgcolor=current_state_bg, border_width=1, border_color=color.black)
+        table.cell(current_state_table, 0, 0, "Current Session State", text_color=color.black, bgcolor=color.silver, text_size=current_state_table_size)
+        table.cell(current_state_table, 1, 0, "", text_color=color.black, bgcolor=color.silver, text_size=current_state_table_size)
+        
+        table.cell(current_state_table, 0, 1, "London vs Asia", text_color=sesb_css, text_size=current_state_table_size)
+        table.cell(current_state_table, 1, 1, not na(current_london_vs_asia) ? current_london_vs_asia : "N/A", text_color=color.black, text_size=current_state_table_size)
+        
+        table.cell(current_state_table, 0, 2, "NY Open in Yest RTH Range", text_color=sesa_css, text_size=current_state_table_size)
+        table.cell(current_state_table, 1, 2, ny_open_inside_yest_rth, text_color=color.black, text_size=current_state_table_size)
+// ---------------------------------------------- Notes --------------------------------------------------
+
+// ATR is calculated as the average high-low range per bar in the session.
+// Correlation matrix shows counts of NY outcomes given London vs Asia conditions.
+// Filtered Correlation Matrix shows counts when RTH Open meets the selected condition (Above, Below, or Between Yesterday’s RTH High and Low).

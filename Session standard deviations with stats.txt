@@ -1,0 +1,786 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=6
+indicator("Session standard deviations with stats", overlay=true)
+
+// === Input Groups ===
+var g_session_settings = "Session Settings"
+var g_projections = "Projection Settings"
+var g_display = "Display Settings"
+
+// === Inputs ===
+session_time = input.string("0000-1600", "Session Time (HHMM-HHMM)", group=g_session_settings, tooltip="Specify the time range for the session (e.g., 0400-0800 for 4:00 AM to 8:00 AM)")
+time_zone = input.string("America/New_York", "Time Zone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"], group=g_session_settings, tooltip="Select the timezone for session timing")
+hist_sessions = input.int(20, "Historical Sessions", minval=1, group=g_session_settings, tooltip="Number of past sessions to calculate standard deviation")
+projection_offset = input.int(0, "Offset (Bars)", minval=0, group=g_display, tooltip="Number of bars to extend lines beyond the current bar")
+
+// Open Line Settings
+show_open = input.bool(true, "s0.00", inline="open", group=g_display, tooltip="Toggle visibility of the session open line")
+open_line_style = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="open", group=g_display, tooltip="Line style for session open line")
+open_line_color = input.color(color.gray, "Color", inline="open", group=g_display, tooltip="Color for session open line")
+open_line_width = input.int(1, "Width", minval=1, maxval=4, inline="open", group=g_display, tooltip="Line width for session open line")
+
+// Label Size
+label_size = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_display, tooltip="Size of labels for projections and open line")
+
+// Projection Settings
+show_05_sd = input.bool(true, "0.5 SD", inline="05", group=g_projections, tooltip="Toggle visibility of ±0.5 SD projection lines")
+projection_05_style = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="05", group=g_projections)
+projection_05_color = input.color(color.red, "Color", inline="05", group=g_projections)
+projection_05_width = input.int(1, "Width", minval=1, maxval=4, inline="05", group=g_projections)
+
+show_10_sd = input.bool(true, "1.0 SD", inline="10", group=g_projections, tooltip="Toggle visibility of ±1.0 SD projection lines")
+projection_10_style = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="10", group=g_projections)
+projection_10_color = input.color(color.blue, "Color", inline="10", group=g_projections)
+projection_10_width = input.int(1, "Width", minval=1, maxval=4, inline="10", group=g_projections)
+
+show_20_sd = input.bool(true, "2.0 SD", inline="20", group=g_projections, tooltip="Toggle visibility of ±2.0 SD projection lines")
+projection_20_style = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="20", group=g_projections)
+projection_20_color = input.color(color.gray, "Color", inline="20", group=g_projections)
+projection_20_width = input.int(1, "Width", minval=1, maxval=4, inline="20", group=g_projections)
+
+show_30_sd = input.bool(true, "3.0 SD", inline="30", group=g_projections, tooltip="Toggle visibility of ±3.0 SD projection lines")
+projection_30_style = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="30", group=g_projections)
+projection_30_color = input.color(color.gray, "Color", inline="30", group=g_projections)
+projection_30_width = input.int(1, "Width", minval=1, maxval=4, inline="30", group=g_projections)
+
+show_40_sd = input.bool(true, "4.0 SD", inline="40", group=g_projections, tooltip="Toggle visibility of ±4.0 SD projection lines")
+projection_40_style = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="40", group=g_projections)
+projection_40_color = input.color(color.gray, "Color", inline="40", group=g_projections)
+projection_40_width = input.int(1, "Width", minval=1, maxval=4, inline="40", group=g_projections)
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_label_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size_string == "Normal" ? size.normal : size.large
+
+get_label_style() =>
+    label.style_label_left
+
+is_newbar(sess) =>
+    t = time('D', sess, timezone=time_zone)
+    na(t[1]) and not na(t) or t[1] < t
+
+is_session(sess) =>
+    not na(time('D', sess, timezone=time_zone))
+
+get_weekday() =>
+    day = dayofweek(time, time_zone)
+    day == dayofweek.monday ? "Monday" : day == dayofweek.tuesday ? "Tuesday" : day == dayofweek.wednesday ? "Wednesday" : day == dayofweek.thursday ? "Thursday" : day == dayofweek.friday ? "Friday" : "Other"
+
+get_table_position(pos) =>
+    switch pos
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Middle Left" => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        "Bottom Right" => position.bottom_right
+
+get_table_text_size(size) =>
+    switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+
+
+
+// === Persistent Variables ===
+var float[] historical_data = array.new_float(0)
+var int[] session_sizes = array.new_int(0)
+var float current_open = na
+var float[] current_data = array.new_float(0)
+var int session_start_bar = na
+var float sd = na
+
+// Define Lines and Labels (Created Once)
+var line open_line = na
+var label open_label = na
+var line upper_05_line = na
+var label upper_05_label = na
+var line lower_05_line = na
+var label lower_05_label = na
+var line upper_10_line = na
+var label upper_10_label = na
+var line lower_10_line = na
+var label lower_10_label = na
+var line upper_20_line = na
+var label upper_20_label = na
+var line lower_20_line = na
+var label lower_20_label = na
+var line upper_30_line = na
+var label upper_30_label = na
+var line lower_30_line = na
+var label lower_30_label = na
+var line upper_40_line = na
+var label upper_40_label = na
+var line lower_40_line = na
+var label lower_40_label = na
+
+// Initialize Lines and Labels at Script Start
+if bar_index == 0
+    open_line := line.new(bar_index, na, bar_index + 1, na, color=open_line_color, style=get_line_style(open_line_style), width=open_line_width)
+    open_label := label.new(bar_index, na, "s0.00", style=get_label_style(), color=color.new(color.black, 100), textcolor=open_line_color, size=get_label_size(label_size))
+    
+    upper_05_line := line.new(bar_index, na, bar_index + 1, na, color=projection_05_color, style=get_line_style(projection_05_style), width=projection_05_width)
+    upper_05_label := label.new(bar_index, na, "+0.5", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_05_color, size=get_label_size(label_size))
+    lower_05_line := line.new(bar_index, na, bar_index + 1, na, color=projection_05_color, style=get_line_style(projection_05_style), width=projection_05_width)
+    lower_05_label := label.new(bar_index, na, "-0.5", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_05_color, size=get_label_size(label_size))
+    
+    upper_10_line := line.new(bar_index, na, bar_index + 1, na, color=projection_10_color, style=get_line_style(projection_10_style), width=projection_10_width)
+    upper_10_label := label.new(bar_index, na, "+1.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_10_color, size=get_label_size(label_size))
+    lower_10_line := line.new(bar_index, na, bar_index + 1, na, color=projection_10_color, style=get_line_style(projection_10_style), width=projection_10_width)
+    lower_10_label := label.new(bar_index, na, "-1.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_10_color, size=get_label_size(label_size))
+    
+    upper_20_line := line.new(bar_index, na, bar_index + 1, na, color=projection_20_color, style=get_line_style(projection_20_style), width=projection_20_width)
+    upper_20_label := label.new(bar_index, na, "+2.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_20_color, size=get_label_size(label_size))
+    lower_20_line := line.new(bar_index, na, bar_index + 1, na, color=projection_20_color, style=get_line_style(projection_20_style), width=projection_20_width)
+    lower_20_label := label.new(bar_index, na, "-2.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_20_color, size=get_label_size(label_size))
+    
+    upper_30_line := line.new(bar_index, na, bar_index + 1, na, color=projection_30_color, style=get_line_style(projection_30_style), width=projection_30_width)
+    upper_30_label := label.new(bar_index, na, "+3.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_30_color, size=get_label_size(label_size))
+    lower_30_line := line.new(bar_index, na, bar_index + 1, na, color=projection_30_color, style=get_line_style(projection_30_style), width=projection_30_width)
+    lower_30_label := label.new(bar_index, na, "-3.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_30_color, size=get_label_size(label_size))
+    
+    upper_40_line := line.new(bar_index, na, bar_index + 1, na, color=projection_40_color, style=get_line_style(projection_40_style), width=projection_40_width)
+    upper_40_label := label.new(bar_index, na, "+4.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_40_color, size=get_label_size(label_size))
+    lower_40_line := line.new(bar_index, na, bar_index + 1, na, color=projection_40_color, style=get_line_style(projection_40_style), width=projection_40_width)
+    lower_40_label := label.new(bar_index, na, "-4.0", style=get_label_style(), color=color.new(color.black, 100), textcolor=projection_40_color, size=get_label_size(label_size))
+
+// === Main Logic ===
+if is_newbar(session_time)
+    if not na(current_open) and array.size(current_data) > 0
+        for i = 0 to array.size(current_data) - 1
+            array.push(historical_data, array.get(current_data, i))
+        array.push(session_sizes, array.size(current_data))
+    
+    if array.size(session_sizes) > hist_sessions
+        while array.size(session_sizes) > hist_sessions
+            if array.size(session_sizes) > 0
+                int session_size = array.get(session_sizes, 0)
+                for i = 1 to session_size
+                    if array.size(historical_data) > 0
+                        array.shift(historical_data)
+                array.shift(session_sizes)
+            else
+                break
+    
+    current_open := open
+    current_data := array.new_float(0)
+    session_start_bar := bar_index
+    sd := array.size(historical_data) >= 2 ? array.stdev(historical_data) : na
+    
+    if not na(current_open) and not na(sd)
+        if show_open
+            line.set_xy1(open_line, session_start_bar, current_open)
+            line.set_xy2(open_line, session_start_bar + projection_offset + 5, current_open)
+            label.set_xy(open_label, session_start_bar + projection_offset + 5, current_open)
+        
+        if show_05_sd
+            line.set_xy1(upper_05_line, session_start_bar, current_open + 0.5 * sd)
+            line.set_xy2(upper_05_line, session_start_bar + projection_offset, current_open + 0.5 * sd)
+            line.set_xy1(lower_05_line, session_start_bar, current_open - 0.5 * sd)
+            line.set_xy2(lower_05_line, session_start_bar + projection_offset, current_open - 0.5 * sd)
+            label.set_xy(upper_05_label, session_start_bar + projection_offset, current_open + 0.5 * sd)
+            label.set_xy(lower_05_label, session_start_bar + projection_offset, current_open - 0.5 * sd)
+        
+        if show_10_sd
+            line.set_xy1(upper_10_line, session_start_bar, current_open + 1.0 * sd)
+            line.set_xy2(upper_10_line, session_start_bar + projection_offset, current_open + 1.0 * sd)
+            line.set_xy1(lower_10_line, session_start_bar, current_open - 1.0 * sd)
+            line.set_xy2(lower_10_line, session_start_bar + projection_offset, current_open - 1.0 * sd)
+            label.set_xy(upper_10_label, session_start_bar + projection_offset, current_open + 1.0 * sd)
+            label.set_xy(lower_10_label, session_start_bar + projection_offset, current_open - 1.0 * sd)
+        
+        if show_20_sd
+            line.set_xy1(upper_20_line, session_start_bar, current_open + 2.0 * sd)
+            line.set_xy2(upper_20_line, session_start_bar + projection_offset, current_open + 2.0 * sd)
+            line.set_xy1(lower_20_line, session_start_bar, current_open - 2.0 * sd)
+            line.set_xy2(lower_20_line, session_start_bar + projection_offset, current_open - 2.0 * sd)
+            label.set_xy(upper_20_label, session_start_bar + projection_offset, current_open + 2.0 * sd)
+            label.set_xy(lower_20_label, session_start_bar + projection_offset, current_open - 2.0 * sd)
+        
+        if show_30_sd
+            line.set_xy1(upper_30_line, session_start_bar, current_open + 3.0 * sd)
+            line.set_xy2(upper_30_line, session_start_bar + projection_offset, current_open + 3.0 * sd)
+            line.set_xy1(lower_30_line, session_start_bar, current_open - 3.0 * sd)
+            line.set_xy2(lower_30_line, session_start_bar + projection_offset, current_open - 3.0 * sd)
+            label.set_xy(upper_30_label, session_start_bar + projection_offset, current_open + 3.0 * sd)
+            label.set_xy(lower_30_label, session_start_bar + projection_offset, current_open - 3.0 * sd)
+        
+        if show_40_sd
+            line.set_xy1(upper_40_line, session_start_bar, current_open + 4.0 * sd)
+            line.set_xy2(upper_40_line, session_start_bar + projection_offset, current_open + 4.0 * sd)
+            line.set_xy1(lower_40_line, session_start_bar, current_open - 4.0 * sd)
+            line.set_xy2(lower_40_line, session_start_bar + projection_offset, current_open - 4.0 * sd)
+            label.set_xy(upper_40_label, session_start_bar + projection_offset, current_open + 4.0 * sd)
+            label.set_xy(lower_40_label, session_start_bar + projection_offset, current_open - 4.0 * sd)
+
+if is_session(session_time)
+    array.push(current_data, close - current_open)
+    int current_end = bar_index + projection_offset
+    if show_open and not na(open_line)
+        line.set_x2(open_line, current_end + 3)
+        label.set_x(open_label, current_end + 3)
+    if not na(sd)
+        if show_05_sd
+            line.set_x2(upper_05_line, current_end)
+            line.set_x2(lower_05_line, current_end)
+            label.set_x(upper_05_label, current_end)
+            label.set_x(lower_05_label, current_end)
+        if show_10_sd
+            line.set_x2(upper_10_line, current_end)
+            line.set_x2(lower_10_line, current_end)
+            label.set_x(upper_10_label, current_end)
+            label.set_x(lower_10_label, current_end)
+        if show_20_sd
+            line.set_x2(upper_20_line, current_end)
+            line.set_x2(lower_20_line, current_end)
+            label.set_x(upper_20_label, current_end)
+            label.set_x(lower_20_label, current_end)
+        if show_30_sd
+            line.set_x2(upper_30_line, current_end)
+            line.set_x2(lower_30_line, current_end)
+            label.set_x(upper_30_label, current_end)
+            label.set_x(lower_30_label, current_end)
+        if show_40_sd
+            line.set_x2(upper_40_line, current_end)
+            line.set_x2(lower_40_line, current_end)
+            label.set_x(upper_40_label, current_end)
+            label.set_x(lower_40_label, current_end)
+
+// === Stats Inputs ===
+var g_stats = "Stats Settings"
+show_stats = input.bool(true, "Show Stats Table", group=g_stats)
+table_position = input.string("Top Right", "Table Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=g_stats)
+table_text_size = input.string("Small", "Text Size", options=["Tiny", "Small", "Normal", "Large"], group=g_stats)
+
+// === Stats Variables ===
+var int mon_sessions = 0
+var int tue_sessions = 0
+var int wed_sessions = 0
+var int thu_sessions = 0
+var int fri_sessions = 0
+
+var int mon_upper_05_touches = 0
+var int mon_lower_05_touches = 0
+var int mon_upper_10_touches = 0
+var int mon_lower_10_touches = 0
+var int mon_upper_20_touches = 0
+var int mon_lower_20_touches = 0
+var int mon_upper_30_touches = 0
+var int mon_lower_30_touches = 0
+var int mon_upper_40_touches = 0
+var int mon_lower_40_touches = 0
+
+var int tue_upper_05_touches = 0
+var int tue_lower_05_touches = 0
+var int tue_upper_10_touches = 0
+var int tue_lower_10_touches = 0
+var int tue_upper_20_touches = 0
+var int tue_lower_20_touches = 0
+var int tue_upper_30_touches = 0
+var int tue_lower_30_touches = 0
+var int tue_upper_40_touches = 0
+var int tue_lower_40_touches = 0
+
+var int wed_upper_05_touches = 0
+var int wed_lower_05_touches = 0
+var int wed_upper_10_touches = 0
+var int wed_lower_10_touches = 0
+var int wed_upper_20_touches = 0
+var int wed_lower_20_touches = 0
+var int wed_upper_30_touches = 0
+var int wed_lower_30_touches = 0
+var int wed_upper_40_touches = 0
+var int wed_lower_40_touches = 0
+
+var int thu_upper_05_touches = 0
+var int thu_lower_05_touches = 0
+var int thu_upper_10_touches = 0
+var int thu_lower_10_touches = 0
+var int thu_upper_20_touches = 0
+var int thu_lower_20_touches = 0
+var int thu_upper_30_touches = 0
+var int thu_lower_30_touches = 0
+var int thu_upper_40_touches = 0
+var int thu_lower_40_touches = 0
+
+var int fri_upper_05_touches = 0
+var int fri_lower_05_touches = 0
+var int fri_upper_10_touches = 0
+var int fri_lower_10_touches = 0
+var int fri_upper_20_touches = 0
+var int fri_lower_20_touches = 0
+var int fri_upper_30_touches = 0
+var int fri_lower_30_touches = 0
+var int fri_upper_40_touches = 0
+var int fri_lower_40_touches = 0
+
+// First Touch Flags per Session
+var bool upper_05_touched = false
+var bool lower_05_touched = false
+var bool upper_10_touched = false
+var bool lower_10_touched = false
+var bool upper_20_touched = false
+var bool lower_20_touched = false
+var bool upper_30_touched = false
+var bool lower_30_touched = false
+var bool upper_40_touched = false
+var bool lower_40_touched = false
+
+// Table Variable
+var table stats_table = na
+
+// Initialize Table (11 columns, 10 rows: Headers, Sessions, ±0.5, ±1, ±2, ±3, ±4)
+if bar_index == 0
+    stats_table := table.new(get_table_position(table_position), 50, 50, bgcolor=color.white, frame_color=color.black, frame_width=1, border_color=color.black, border_width=1)
+
+// === Stats Logic ===
+if is_newbar(session_time)
+    string current_day = get_weekday()
+    if current_day == "Monday"
+        mon_sessions := mon_sessions + 1
+    else if current_day == "Tuesday"
+        tue_sessions := tue_sessions + 1
+    else if current_day == "Wednesday"
+        wed_sessions := wed_sessions + 1
+    else if current_day == "Thursday"
+        thu_sessions := thu_sessions + 1
+    else if current_day == "Friday"
+        fri_sessions := fri_sessions + 1
+    
+    upper_05_touched := false
+    lower_05_touched := false
+    upper_10_touched := false
+    lower_10_touched := false
+    upper_20_touched := false
+    lower_20_touched := false
+    upper_30_touched := false
+    lower_30_touched := false
+    upper_40_touched := false
+    lower_40_touched := false
+
+if is_session(session_time) and not na(current_open) and not na(sd)
+    string current_day = get_weekday()
+    
+    float upper_05_level = current_open + 0.5 * sd
+    float lower_05_level = current_open - 0.5 * sd
+    if not upper_05_touched and high >= upper_05_level
+        if current_day == "Monday"
+            mon_upper_05_touches := mon_upper_05_touches + 1
+        else if current_day == "Tuesday"
+            tue_upper_05_touches := tue_upper_05_touches + 1
+        else if current_day == "Wednesday"
+            wed_upper_05_touches := wed_upper_05_touches + 1
+        else if current_day == "Thursday"
+            thu_upper_05_touches := thu_upper_05_touches + 1
+        else if current_day == "Friday"
+            fri_upper_05_touches := fri_upper_05_touches + 1
+        upper_05_touched := true
+    if not lower_05_touched and low <= lower_05_level
+        if current_day == "Monday"
+            mon_lower_05_touches := mon_lower_05_touches + 1
+        else if current_day == "Tuesday"
+            tue_lower_05_touches := tue_lower_05_touches + 1
+        else if current_day == "Wednesday"
+            wed_lower_05_touches := wed_lower_05_touches + 1
+        else if current_day == "Thursday"
+            thu_lower_05_touches := thu_lower_05_touches + 1
+        else if current_day == "Friday"
+            fri_lower_05_touches := fri_lower_05_touches + 1
+        lower_05_touched := true
+    
+    float upper_10_level = current_open + 1.0 * sd
+    float lower_10_level = current_open - 1.0 * sd
+    if not upper_10_touched and high >= upper_10_level
+        if current_day == "Monday"
+            mon_upper_10_touches := mon_upper_10_touches + 1
+        else if current_day == "Tuesday"
+            tue_upper_10_touches := tue_upper_10_touches + 1
+        else if current_day == "Wednesday"
+            wed_upper_10_touches := wed_upper_10_touches + 1
+        else if current_day == "Thursday"
+            thu_upper_10_touches := thu_upper_10_touches + 1
+        else if current_day == "Friday"
+            fri_upper_10_touches := fri_upper_10_touches + 1
+        upper_10_touched := true
+    if not lower_10_touched and low <= lower_10_level
+        if current_day == "Monday"
+            mon_lower_10_touches := mon_lower_10_touches + 1
+        else if current_day == "Tuesday"
+            tue_lower_10_touches := tue_lower_10_touches + 1
+        else if current_day == "Wednesday"
+            wed_lower_10_touches := wed_lower_10_touches + 1
+        else if current_day == "Thursday"
+            thu_lower_10_touches := thu_lower_10_touches + 1
+        else if current_day == "Friday"
+            fri_lower_10_touches := fri_lower_10_touches + 1
+        lower_10_touched := true
+    
+    float upper_20_level = current_open + 2.0 * sd
+    float lower_20_level = current_open - 2.0 * sd
+    if not upper_20_touched and high >= upper_20_level
+        if current_day == "Monday"
+            mon_upper_20_touches := mon_upper_20_touches + 1
+        else if current_day == "Tuesday"
+            tue_upper_20_touches := tue_upper_20_touches + 1
+        else if current_day == "Wednesday"
+            wed_upper_20_touches := wed_upper_20_touches + 1
+        else if current_day == "Thursday"
+            thu_upper_20_touches := thu_upper_20_touches + 1
+        else if current_day == "Friday"
+            fri_upper_20_touches := fri_upper_20_touches + 1
+        upper_20_touched := true
+    if not lower_20_touched and low <= lower_20_level
+        if current_day == "Monday"
+            mon_lower_20_touches := mon_lower_20_touches + 1
+        else if current_day == "Tuesday"
+            tue_lower_20_touches := tue_lower_20_touches + 1
+        else if current_day == "Wednesday"
+            wed_lower_20_touches := wed_lower_20_touches + 1
+        else if current_day == "Thursday"
+            thu_lower_20_touches := thu_lower_20_touches + 1
+        else if current_day == "Friday"
+            fri_lower_20_touches := fri_lower_20_touches + 1
+        lower_20_touched := true
+    
+    float upper_30_level = current_open + 3.0 * sd
+    float lower_30_level = current_open - 3.0 * sd
+    if not upper_30_touched and high >= upper_30_level
+        if current_day == "Monday"
+            mon_upper_30_touches := mon_upper_30_touches + 1
+        else if current_day == "Tuesday"
+            tue_upper_30_touches := tue_upper_30_touches + 1
+        else if current_day == "Wednesday"
+            wed_upper_30_touches := wed_upper_30_touches + 1
+        else if current_day == "Thursday"
+            thu_upper_30_touches := thu_upper_30_touches + 1
+        else if current_day == "Friday"
+            fri_upper_30_touches := fri_upper_30_touches + 1
+        upper_30_touched := true
+    if not lower_30_touched and low <= lower_30_level
+        if current_day == "Monday"
+            mon_lower_30_touches := mon_lower_30_touches + 1
+        else if current_day == "Tuesday"
+            tue_lower_30_touches := tue_lower_30_touches + 1
+        else if current_day == "Wednesday"
+            wed_lower_30_touches := wed_lower_30_touches + 1
+        else if current_day == "Thursday"
+            thu_lower_30_touches := thu_lower_30_touches + 1
+        else if current_day == "Friday"
+            fri_lower_30_touches := fri_lower_30_touches + 1
+        lower_30_touched := true
+    
+    float upper_40_level = current_open + 4.0 * sd
+    float lower_40_level = current_open - 4.0 * sd
+    if not upper_40_touched and high >= upper_40_level
+        if current_day == "Monday"
+            mon_upper_40_touches := mon_upper_40_touches + 1
+        else if current_day == "Tuesday"
+            tue_upper_40_touches := tue_upper_40_touches + 1
+        else if current_day == "Wednesday"
+            wed_upper_40_touches := wed_upper_40_touches + 1
+        else if current_day == "Thursday"
+            thu_upper_40_touches := thu_upper_40_touches + 1
+        else if current_day == "Friday"
+            fri_upper_40_touches := fri_upper_40_touches + 1
+        upper_40_touched := true
+    if not lower_40_touched and low <= lower_40_level
+        if current_day == "Monday"
+            mon_lower_40_touches := mon_lower_40_touches + 1
+        else if current_day == "Tuesday"
+            tue_lower_40_touches := tue_lower_40_touches + 1
+        else if current_day == "Wednesday"
+            wed_lower_40_touches := wed_lower_40_touches + 1
+        else if current_day == "Thursday"
+            thu_lower_40_touches := thu_lower_40_touches + 1
+        else if current_day == "Friday"
+            fri_lower_40_touches := fri_lower_40_touches + 1
+        lower_40_touched := true
+
+// Display Stats Table
+if show_stats
+    ts = get_table_text_size(table_text_size)
+    table.cell(stats_table, 0, 0, "Level", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 0, "Mon #", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 0, "Mon %", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 0, "Tue #", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 0, "Tue %", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 0, "Wed #", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 0, "Wed %", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 0, "Thu #", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 0, "Thu %", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 0, "Fri #", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 0, "Fri %", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 1, "Sessions", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 1, str.tostring(mon_sessions), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 1, "", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 1, str.tostring(tue_sessions), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 1, "", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 1, str.tostring(wed_sessions), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 1, "", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 1, str.tostring(thu_sessions), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 1, "", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 1, str.tostring(fri_sessions), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 1, "", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 2, "+0.5 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 2, str.tostring(mon_upper_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 2, mon_sessions > 0 ? str.tostring(math.round(mon_upper_05_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 2, str.tostring(tue_upper_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 2, tue_sessions > 0 ? str.tostring(math.round(tue_upper_05_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 2, str.tostring(wed_upper_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 2, wed_sessions > 0 ? str.tostring(math.round(wed_upper_05_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 2, str.tostring(thu_upper_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 2, thu_sessions > 0 ? str.tostring(math.round(thu_upper_05_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 2, str.tostring(fri_upper_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 2, fri_sessions > 0 ? str.tostring(math.round(fri_upper_05_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 3, "-0.5 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 3, str.tostring(mon_lower_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 3, mon_sessions > 0 ? str.tostring(math.round(mon_lower_05_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 3, str.tostring(tue_lower_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 3, tue_sessions > 0 ? str.tostring(math.round(tue_lower_05_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 3, str.tostring(wed_lower_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 3, wed_sessions > 0 ? str.tostring(math.round(wed_lower_05_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 3, str.tostring(thu_lower_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 3, thu_sessions > 0 ? str.tostring(math.round(thu_lower_05_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 3, str.tostring(fri_lower_05_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 3, fri_sessions > 0 ? str.tostring(math.round(fri_lower_05_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 4, "+1.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 4, str.tostring(mon_upper_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 4, mon_sessions > 0 ? str.tostring(math.round(mon_upper_10_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 4, str.tostring(tue_upper_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 4, tue_sessions > 0 ? str.tostring(math.round(tue_upper_10_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 4, str.tostring(wed_upper_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 4, wed_sessions > 0 ? str.tostring(math.round(wed_upper_10_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 4, str.tostring(thu_upper_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 4, thu_sessions > 0 ? str.tostring(math.round(thu_upper_10_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 4, str.tostring(fri_upper_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 4, fri_sessions > 0 ? str.tostring(math.round(fri_upper_10_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 5, "-1.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 5, str.tostring(mon_lower_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 5, mon_sessions > 0 ? str.tostring(math.round(mon_lower_10_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 5, str.tostring(tue_lower_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 5, tue_sessions > 0 ? str.tostring(math.round(tue_lower_10_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 5, str.tostring(wed_lower_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 5, wed_sessions > 0 ? str.tostring(math.round(wed_lower_10_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 5, str.tostring(thu_lower_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 5, thu_sessions > 0 ? str.tostring(math.round(thu_lower_10_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 5, str.tostring(fri_lower_10_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 5, fri_sessions > 0 ? str.tostring(math.round(fri_lower_10_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 6, "+2.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 6, str.tostring(mon_upper_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 6, mon_sessions > 0 ? str.tostring(math.round(mon_upper_20_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 6, str.tostring(tue_upper_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 6, tue_sessions > 0 ? str.tostring(math.round(tue_upper_20_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 6, str.tostring(wed_upper_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 6, wed_sessions > 0 ? str.tostring(math.round(wed_upper_20_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 6, str.tostring(thu_upper_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 6, thu_sessions > 0 ? str.tostring(math.round(thu_upper_20_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 6, str.tostring(fri_upper_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 6, fri_sessions > 0 ? str.tostring(math.round(fri_upper_20_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 7, "-2.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 7, str.tostring(mon_lower_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 7, mon_sessions > 0 ? str.tostring(math.round(mon_lower_20_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 7, str.tostring(tue_lower_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 7, tue_sessions > 0 ? str.tostring(math.round(tue_lower_20_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 7, str.tostring(wed_lower_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 7, wed_sessions > 0 ? str.tostring(math.round(wed_lower_20_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 7, str.tostring(thu_lower_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 7, thu_sessions > 0 ? str.tostring(math.round(thu_lower_20_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 7, str.tostring(fri_lower_20_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 7, fri_sessions > 0 ? str.tostring(math.round(fri_lower_20_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 8, "+3.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 8, str.tostring(mon_upper_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 8, mon_sessions > 0 ? str.tostring(math.round(mon_upper_30_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 8, str.tostring(tue_upper_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 8, tue_sessions > 0 ? str.tostring(math.round(tue_upper_30_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 8, str.tostring(wed_upper_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 8, wed_sessions > 0 ? str.tostring(math.round(wed_upper_30_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 8, str.tostring(thu_upper_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 8, thu_sessions > 0 ? str.tostring(math.round(thu_upper_30_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 8, str.tostring(fri_upper_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 8, fri_sessions > 0 ? str.tostring(math.round(fri_upper_30_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 9, "-3.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 9, str.tostring(mon_lower_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 9, mon_sessions > 0 ? str.tostring(math.round(mon_lower_30_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 9, str.tostring(tue_lower_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 9, tue_sessions > 0 ? str.tostring(math.round(tue_lower_30_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 9, str.tostring(wed_lower_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 9, wed_sessions > 0 ? str.tostring(math.round(wed_lower_30_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 9, str.tostring(thu_lower_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 9, thu_sessions > 0 ? str.tostring(math.round(thu_lower_30_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 9, str.tostring(fri_lower_30_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 9, fri_sessions > 0 ? str.tostring(math.round(fri_lower_30_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    
+    table.cell(stats_table, 0, 10, "+4.0 SD", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 1, 10, str.tostring(mon_upper_40_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 2, 10, mon_sessions > 0 ? str.tostring(math.round(mon_upper_40_touches / mon_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 3, 10, str.tostring(tue_upper_40_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 4, 10, tue_sessions > 0 ? str.tostring(math.round(tue_upper_40_touches / tue_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 5, 10, str.tostring(wed_upper_40_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 6, 10, wed_sessions > 0 ? str.tostring(math.round(wed_upper_40_touches / wed_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 7, 10, str.tostring(thu_upper_40_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 8, 10, thu_sessions > 0 ? str.tostring(math.round(thu_upper_40_touches / thu_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+    table.cell(stats_table, 9, 10, str.tostring(fri_upper_40_touches), text_color=color.black, text_size=ts)
+    table.cell(stats_table, 10, 10, fri_sessions > 0 ? str.tostring(math.round(fri_upper_40_touches / fri_sessions * 100, 1)) + "%" : "0%", text_color=color.black, text_size=ts)
+
+// === Reversal Stats Inputs ===
+var g_reversal_stats = "Reversal Stats Settings"
+show_reversal_stats = input.bool(true, "Show Reversal Stats Table", group=g_reversal_stats)
+reversal_table_position = input.string("Bottom Left", "Reversal Table Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=g_reversal_stats)
+reversal_table_text_size = input.string("Small", "Reversal Table Text Size", options=["Tiny", "Small", "Normal", "Large"], group=g_reversal_stats)
+
+// === Reversal Stats Variables ===
+var float[] sd_levels = array.new_float(11, na)
+if bar_index == 0
+    array.set(sd_levels, 0, -4.0)
+    array.set(sd_levels, 1, -3.0)
+    array.set(sd_levels, 2, -2.0)
+    array.set(sd_levels, 3, -1.0)
+    array.set(sd_levels, 4, -0.5)
+    array.set(sd_levels, 5, 0.0)
+    array.set(sd_levels, 6, 0.5)
+    array.set(sd_levels, 7, 1.0)
+    array.set(sd_levels, 8, 2.0)
+    array.set(sd_levels, 9, 3.0)
+    array.set(sd_levels, 10, 4.0)
+
+var int[] total_hits = array.new_int(9, 0)
+var int total_days = 0
+var int last_day = na
+
+var int[] from_m40 = array.new_int(9, 0)
+var int[] from_m30 = array.new_int(9, 0)
+var int[] from_m20 = array.new_int(9, 0)
+var int[] from_m10 = array.new_int(9, 0)
+var int[] from_m05 = array.new_int(9, 0)
+var int[] from_00  = array.new_int(9, 0)
+var int[] from_p05 = array.new_int(9, 0)
+var int[] from_p10 = array.new_int(9, 0)
+var int[] from_p20 = array.new_int(9, 0)
+var int[] from_p30 = array.new_int(9, 0)
+var int[] from_p40 = array.new_int(9, 0)
+
+var bool[] hit_flags = array.new_bool(9, false)
+var bool[] reversal_flags_m40 = array.new_bool(9, false)
+var bool[] reversal_flags_m30 = array.new_bool(9, false)
+var bool[] reversal_flags_m20 = array.new_bool(9, false)
+var bool[] reversal_flags_m10 = array.new_bool(9, false)
+var bool[] reversal_flags_m05 = array.new_bool(9, false)
+var bool[] reversal_flags_00  = array.new_bool(9, false)
+var bool[] reversal_flags_p05 = array.new_bool(9, false)
+var bool[] reversal_flags_p10 = array.new_bool(9, false)
+var bool[] reversal_flags_p20 = array.new_bool(9, false)
+var bool[] reversal_flags_p30 = array.new_bool(9, false)
+var bool[] reversal_flags_p40 = array.new_bool(9, false)
+
+var table reversal_stats_table = na
+
+if bar_index == 0
+    reversal_stats_table := table.new(get_table_position(reversal_table_position), 50, 50, bgcolor=color.white, frame_color=color.black, frame_width=1, border_color=color.black, border_width=1)
+
+// === Reversal Stats Logic ===
+if is_newbar(session_time)
+    int current_day = dayofmonth(time, time_zone)
+    if na(last_day) or current_day != last_day
+        total_days := total_days + 1
+        last_day := current_day
+    
+    for i = 0 to 8
+        array.set(hit_flags, i, false)
+        array.set(reversal_flags_m40, i, false)
+        array.set(reversal_flags_m30, i, false)
+        array.set(reversal_flags_m20, i, false)
+        array.set(reversal_flags_m10, i, false)
+        array.set(reversal_flags_m05, i, false)
+        array.set(reversal_flags_00, i, false)
+        array.set(reversal_flags_p05, i, false)
+        array.set(reversal_flags_p10, i, false)
+        array.set(reversal_flags_p20, i, false)
+        array.set(reversal_flags_p30, i, false)
+        array.set(reversal_flags_p40, i, false)
+
+if is_session(session_time) and not na(current_open) and not na(sd)
+    float[] price_levels = array.new_float(9, na)
+    for i = 0 to 8
+        array.set(price_levels, i, current_open + array.get(sd_levels, i) * sd)
+    
+    for i = 0 to 8
+        float level = array.get(price_levels, i)
+        if not array.get(hit_flags, i)
+            if (i <= 4 and low <= level) or (i > 4 and high >= level)
+                array.set(hit_flags, i, true)
+                array.set(total_hits, i, array.get(total_hits, i) + 1)
+    
+    for i = 0 to 8
+        if array.get(hit_flags, i)
+            var int[] current_counts = na
+            var bool[] current_flags = na
+            switch i
+                0 => current_counts := from_m40, current_flags := reversal_flags_m40
+                1 => current_counts := from_m30, current_flags := reversal_flags_m30
+                2 => current_counts := from_m20, current_flags := reversal_flags_m20
+                3 => current_counts := from_m10, current_flags := reversal_flags_m10
+                4 => current_counts := from_m05, current_flags := reversal_flags_m05
+                5 => current_counts := from_00,  current_flags := reversal_flags_00
+                6 => current_counts := from_p05, current_flags := reversal_flags_p05
+                7 => current_counts := from_p10, current_flags := reversal_flags_p10
+                8 => current_counts := from_p20, current_flags := reversal_flags_p20
+                9 => current_counts := from_p30, current_flags := reversal_flags_p30
+                10 => current_counts := from_p40, current_flags := reversal_flags_p40
+            
+            for j = 0 to 8
+                float target_level = array.get(price_levels, j)
+                if not array.get(current_flags, j)
+                    if (j <= 4 and low <= target_level) or (j > 4 and high >= target_level)
+                        array.set(current_counts, j, array.get(current_counts, j) + 1)
+                        array.set(current_flags, j, true)
+
+// Display Reversal Stats Table
+if show_reversal_stats
+    ts = get_table_text_size(reversal_table_text_size)
+    table.cell(reversal_stats_table, 0, 0, "From Level", text_color=color.black, text_size=ts)
+    for j = 0 to 8
+        table.cell(reversal_stats_table, j + 1, 0, "To " + str.tostring(array.get(sd_levels, j)), text_color=color.black, text_size=ts)
+    table.cell(reversal_stats_table, 11, 0, "Total Days", text_color=color.black, text_size=ts)
+    
+    for i = 0 to 8
+        table.cell(reversal_stats_table, 0, i + 1, "From " + str.tostring(array.get(sd_levels, i)), text_color=color.black, text_size=ts)
+        int hits = array.get(total_hits, i)
+        var int[] current_counts = na
+        switch i
+            0 => current_counts := from_m40
+            1 => current_counts := from_m30
+            2 => current_counts := from_m20
+            3 => current_counts := from_m10
+            4 => current_counts := from_m05
+            5 => current_counts := from_00
+            6 => current_counts := from_p05
+            7 => current_counts := from_p10
+            8 => current_counts := from_p20
+            9 => current_counts := from_p30
+            10 => current_counts := from_p40
+        
+        for j = 0 to 8
+            int reversals = array.get(current_counts, j)
+            string percentage = hits > 0 ? str.tostring(math.round(reversals / hits * 100, 1)) + "% [" + str.tostring(reversals) + "]" : "0% [0]"
+            table.cell(reversal_stats_table, j + 1, i + 1, percentage, text_color=color.black, text_size=ts)
+    
+    table.cell(reversal_stats_table, 11, 10, str.tostring(total_days), text_color=color.black, text_size=ts)

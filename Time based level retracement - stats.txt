@@ -1,0 +1,297 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Time based retracement - stats", "Retracement", true, max_lines_count = 500)
+
+get_line_type(string style) =>
+    result = switch style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+    result
+
+
+// Level 1
+open_time_1 = input.session("0000-0001", "Open time Level 1", group="Level 1")
+ret_time_1 = input.session("0800-1600", "Retracement during Level 1", group="Level 1")
+ret_pct_1 = input.int(50, "Retracement % Level 1", group="Level 1")
+ret_pc_col_1 = input.color(color.rgb(98, 1, 255), 'Retracement % color Level 1', group="Level 1")
+open_col_1 = input.color(color.rgb(98, 1, 255), 'Open time color Level 1', group="Level 1")
+show_1 = input.bool(true, 'Show level 1 plots on the chart', group = 'Level 1')
+style_1 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 1'))
+
+// Level 2
+open_time_2 = input.session("0100-0101", "Open time Level 2", group="Level 2")
+ret_time_2 = input.session("0800-1600", "Retracement during Level 2", group="Level 2")
+ret_pct_2 = input.int(50, "Retracement % Level 2", group="Level 2")
+ret_pc_col_2 = input.color(color.rgb(195, 0, 255), 'Retracement % color Level 2', group="Level 2")
+open_col_2 = input.color(color.rgb(195, 0, 255), 'Open time color Level 2', group="Level 2")
+show_2 = input.bool(true, 'Show level 2 plots on the chart', group = 'Level 2')
+style_2 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 2'))
+
+
+// Level 3
+open_time_3 = input.session("0300-0301", "Open time Level 3", group="Level 3")
+ret_time_3 = input.session("0800-1600", "Retracement during Level 3", group="Level 3")
+ret_pct_3 = input.int(50, "Retracement % Level 3", group="Level 3")
+ret_pc_col_3 = input.color(color.rgb(255, 0, 221), 'Retracement % color Level 3', group="Level 3")
+open_col_3 = input.color(color.rgb(255, 0, 221), 'Open time color Level 3', group="Level 3")
+show_3 = input.bool(true, 'Show level 3 plots on the chart', group = 'Level 3')
+style_3 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 3'))
+
+
+
+// Level 4
+open_time_4 = input.session("0400-0401", "Open time Level 4", group="Level 4")
+ret_time_4 = input.session("0800-1600", "Retracement during Level 4", group="Level 4")
+ret_pct_4 = input.int(50, "Retracement % Level 4", group="Level 4")
+ret_pc_col_4 = input.color(color.rgb(0, 4, 255), 'Retracement % color Level 4', group="Level 4")
+open_col_4 = input.color(color.rgb(0, 4, 255), 'Open time color Level 4', group="Level 4")
+show_4 = input.bool(true, 'Show level 4 plots on the chart', group = 'Level 4')
+style_4 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 4'))
+
+
+// Level 5
+open_time_5 = input.session("0700-0501", "Open time Level 5", group="Level 5")
+ret_time_5 = input.session("0800-1600", "Retracement during Level 5", group="Level 5")
+ret_pct_5 = input.int(50, "Retracement % Level 5", group="Level 5")
+ret_pc_col_5 = input.color(color.rgb(0, 183, 255), 'Retracement % color Level 5', group="Level 5")
+open_col_5 = input.color(color.rgb(0, 183, 255), 'Open time color Level 5', group="Level 5")
+show_5 = input.bool(true, 'Show level 5 plots on the chart', group = 'Level 5')
+style_5 = get_line_type(input.string("Dotted", "Target retracement line style", options = ['Solid','Dashed','Dotted'], group = 'Level 5'))
+
+
+// Time checks for each level
+t1 = not na(time("", open_time_1, "America/New_York"))
+t2 = not na(time("", open_time_2, "America/New_York"))
+t3 = not na(time("", open_time_3, "America/New_York"))
+t4 = not na(time("", open_time_4, "America/New_York"))
+t5 = not na(time("", open_time_5, "America/New_York"))
+ret_t_1 = not na(time("", ret_time_1, "America/New_York"))
+ret_t_2 = not na(time("", ret_time_2, "America/New_York"))
+ret_t_3 = not na(time("", ret_time_3, "America/New_York"))
+ret_t_4 = not na(time("", ret_time_4, "America/New_York"))
+ret_t_5 = not na(time("", ret_time_5, "America/New_York"))
+
+// Struct for tracking retracement stats
+type tracking
+    float[] ret_distance
+    line open_line
+    line ret_open_line
+    line ret_line
+    float open_price
+    float ret_price
+    bool returned = false
+    int count_returned = 0
+    int count_sessions = 0
+
+// Create tracking instances for both levels
+var track_1 = tracking.new(array.new_float())
+var track_2 = tracking.new(array.new_float())
+var track_3 = tracking.new(array.new_float())
+var track_4 = tracking.new(array.new_float())
+var track_5 = tracking.new(array.new_float())
+
+// Open price logic for each level
+if t1 and not t1[1]
+    track_1.open_price := open
+    track_1.returned := false
+    track_1.ret_price := na
+    track_1.count_sessions += 1
+    if show_1
+        track_1.open_line := line.new(time, open, time+timeframe.in_seconds("D")*1000, open, xloc=xloc.bar_time, color=open_col_1, style = style_1, width=2)
+
+if t2 and not t2[1]
+    track_2.open_price := open
+    track_2.returned := false
+    track_2.ret_price := na
+    track_2.count_sessions += 1
+    if show_2
+        track_2.open_line := line.new(time, open, time+timeframe.in_seconds("D")*1000, open, xloc=xloc.bar_time, color=open_col_2, style = style_2, width=2)
+
+if t3 and not t3[1]
+    track_3.open_price := open
+    track_3.returned := false
+    track_3.ret_price := na
+    track_3.count_sessions += 1
+    if show_3
+        track_3.open_line := line.new(time, open, time+timeframe.in_seconds("D")*1000, open, xloc=xloc.bar_time, color=open_col_3, style = style_3, width=2)
+
+if t4 and not t4[1]
+    track_4.open_price := open
+    track_4.returned := false
+    track_4.ret_price := na
+    track_4.count_sessions += 1
+    if show_4
+        track_4.open_line := line.new(time, open, time+timeframe.in_seconds("D")*1000, open, xloc=xloc.bar_time, color=open_col_4, style = style_4, width=2)
+
+if t5 and not t5[1]
+    track_5.open_price := open
+    track_5.returned := false
+    track_5.ret_price := na
+    track_5.count_sessions += 1
+    if show_5
+        track_5.open_line := line.new(time, open, time+timeframe.in_seconds("D")*1000, open, xloc=xloc.bar_time, color=open_col_5, style = style_5, width=2)
+
+// Retracement logic for each level
+if ret_t_1
+    if not ret_t_1[1]
+        offset1 = math.abs(open - track_1.open_price) * ret_pct_1 / 100
+        above1 = open > track_1.open_price
+        track_1.ret_price := above1 ? (open - offset1) : (open + offset1)
+        track_1.ret_distance.unshift(offset1)
+        if show_1
+            track_1.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_1, width=2)
+            track_1.ret_line := line.new(time, track_1.ret_price, time + timeframe.in_seconds("D") * 1000, track_1.ret_price, xloc=xloc.bar_time, color=ret_pc_col_1, width=2, style = style_1)
+    if not track_1.returned and high >= track_1.ret_price and low <= track_1.ret_price
+        track_1.returned := true
+        track_1.count_returned += 1
+
+if ret_t_2
+    if not ret_t_2[1]
+        offset2 = math.abs(open - track_2.open_price) * ret_pct_2 / 100
+        above2 = open > track_2.open_price
+        track_2.ret_price := above2 ? (open - offset2) : (open + offset2)
+        track_2.ret_distance.unshift(offset2)
+        if show_2
+            track_2.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_2, width=2)
+            track_2.ret_line := line.new(time, track_2.ret_price, time + timeframe.in_seconds("D") * 1000, track_2.ret_price, xloc=xloc.bar_time, color=ret_pc_col_2, width=2, style = style_2)
+    if not track_2.returned and high >= track_2.ret_price and low <= track_2.ret_price
+        track_2.returned := true
+        track_2.count_returned += 1
+
+if ret_t_3
+    if not ret_t_3[1]
+        offset3 = math.abs(open - track_3.open_price) * ret_pct_3 / 100
+        above3 = open > track_3.open_price
+        track_3.ret_price := above3 ? (open - offset3) : (open + offset3)
+        track_3.ret_distance.unshift(offset3)
+        if show_3
+            track_3.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_3, width=2)
+            track_3.ret_line := line.new(time, track_3.ret_price, time + timeframe.in_seconds("D") * 1000, track_3.ret_price, xloc=xloc.bar_time, color=ret_pc_col_3, width=2, style = style_3)
+    if not track_3.returned and high >= track_3.ret_price and low <= track_3.ret_price
+        track_3.returned := true
+        track_3.count_returned += 1
+
+if ret_t_4
+    if not ret_t_4[1]
+        offset4 = math.abs(open - track_4.open_price) * ret_pct_4 / 100
+        above4 = open > track_4.open_price
+        track_4.ret_price := above4 ? (open - offset4) : (open + offset4)
+        track_4.ret_distance.unshift(offset4)
+        if show_4
+            track_4.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_4, width=2)
+            track_4.ret_line := line.new(time, track_4.ret_price, time + timeframe.in_seconds("D") * 1000, track_4.ret_price, xloc=xloc.bar_time, color=ret_pc_col_4, width=2, style = style_4)
+    if not track_4.returned and high >= track_4.ret_price and low <= track_4.ret_price
+        track_4.returned := true
+        track_4.count_returned += 1
+
+if ret_t_5
+    if not ret_t_5[1]
+        offset5 = math.abs(open - track_5.open_price) * ret_pct_5 / 100
+        above5 = open > track_5.open_price
+        track_5.ret_price := above5 ? (open - offset5) : (open + offset5)
+        track_5.ret_distance.unshift(offset5)
+        if show_5
+            track_5.ret_open_line := line.new(time, open, time + timeframe.in_seconds("D") * 1000, open, xloc=xloc.bar_time, color=open_col_5, width=2)
+            track_5.ret_line := line.new(time, track_5.ret_price, time + timeframe.in_seconds("D") * 1000, track_5.ret_price, xloc=xloc.bar_time, color=ret_pc_col_5, width=2, style = style_5)
+    if not track_5.returned and high >= track_5.ret_price and low <= track_5.ret_price
+        track_5.returned := true
+        track_5.count_returned += 1
+
+// Table setup for both levels
+tablePosition = input.string("top_center", title="Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"])
+tableTextSize = input.string("small", title="Text Size", options=["tiny", "small", "normal", "large"])
+text_color = input.color(color.white, title="Text color")
+bd_color = input.color(color.teal, title="Border color")
+bg_color = input.color(color.rgb(40, 40, 40), title="Background color")
+fr_color = input.color(color.teal, title="Frame color")
+
+getTablePosition(positionStr) =>
+    switch positionStr
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+
+getTableTextSize(sizeStr) =>
+    switch sizeStr
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+
+tablePositionValue = getTablePosition(tablePosition)
+tableTextSizeValue = getTableTextSize(tableTextSize)
+
+level1_label = str.tostring(open_time_1)
+level2_label = str.tostring(open_time_2)
+level3_label = str.tostring(open_time_3)
+level4_label = str.tostring(open_time_4)
+level5_label = str.tostring(open_time_5)
+retracement_time_1 = str.tostring(ret_time_1)
+retracement_time_2 = str.tostring(ret_time_2)
+retracement_time_3 = str.tostring(ret_time_3)
+retracement_time_4 = str.tostring(ret_time_4)
+retracement_time_5 = str.tostring(ret_time_5)
+
+if barstate.islast
+    var tbl = table.new(tablePositionValue, 10, 10, bgcolor=bg_color, frame_color=fr_color, frame_width=2, border_color=bd_color, border_width=1, force_overlay=true)
+
+    // Column headers
+    table.cell(tbl, 0, 0, 'Session\nfor retracement\nto occur', text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 1, 0, 'Time of level\nretracing to', text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 2, 0, "Avgerage distance\nfrom open\nto target", text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 3, 0, "Sample size", text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 4, 0, "Targeted\nretracement %", text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 5, 0, "Successful retracements", text_color=text_color, text_size = tableTextSizeValue)
+
+    // Row for Level 1
+    table.cell(tbl, 2, 1, str.format("{0,number,#.#}", track_1.ret_distance.avg()), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 3, 1, str.format("{0,number,#}", track_1.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 4, 1, str.format("{0,number,percent}", ret_pct_1 / 100), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 5, 1, str.format("{0,number,percent}", track_1.count_returned / track_1.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+
+    // Row for Level 2
+    table.cell(tbl, 2, 2, str.format("{0,number,#.#}", track_2.ret_distance.avg()), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 3, 2, str.format("{0,number,#}", track_2.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 4, 2, str.format("{0,number,percent}", ret_pct_2 / 100), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 5, 2, str.format("{0,number,percent}", track_2.count_returned / track_2.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+
+    // Row for Level 3
+    table.cell(tbl, 2, 3, str.format("{0,number,#.#}", track_3.ret_distance.avg()), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 3, 3, str.format("{0,number,#}", track_3.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 4, 3, str.format("{0,number,percent}", ret_pct_3 / 100), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 5, 3, str.format("{0,number,percent}", track_3.count_returned / track_3.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+
+    // Row for Level 4
+    table.cell(tbl, 2, 4, str.format("{0,number,#.#}", track_4.ret_distance.avg()), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 3, 4, str.format("{0,number,#}", track_4.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 4, 4, str.format("{0,number,percent}", ret_pct_4 / 100), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 5, 4, str.format("{0,number,percent}", track_4.count_returned / track_4.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+
+    // Row for Level 5
+    table.cell(tbl, 2, 5, str.format("{0,number,#.#}", track_5.ret_distance.avg()), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 3, 5, str.format("{0,number,#}", track_5.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 4, 5, str.format("{0,number,percent}", ret_pct_5 / 100), text_color=text_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 5, 5, str.format("{0,number,percent}", track_5.count_returned / track_5.count_sessions), text_color=text_color, text_size = tableTextSizeValue)
+
+    // Row titles
+
+    table.cell(tbl, 1, 1, level1_label, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 1, 2, level2_label, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 1, 3, level3_label, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 1, 4, level4_label, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 1, 5, level5_label, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+
+    table.cell(tbl, 0, 1, retracement_time_1, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 0, 2, retracement_time_2, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 0, 3, retracement_time_3, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 0, 4, retracement_time_4, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)
+    table.cell(tbl, 0, 5, retracement_time_5, text_color=text_color, bgcolor=bg_color, text_size = tableTextSizeValue)

@@ -1,0 +1,552 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("Time based ranges with stats", "Sessions", true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+// Function to get table position
+get_table_pos(string pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+    result
+
+// Global settings
+var g_SESSIONS = "Global Settings"
+show_open_lines = input.bool(true, "Show Session Open Lines", group = g_SESSIONS)
+show_high_low_lines = input.bool(true, "Show Avg High/Low Lines", group = g_SESSIONS)
+expected_range_line_color = input.color(color.red, "Expected Range Line Color", group = g_SESSIONS)
+show_dist_boxes = input.bool(true, "Show High-Low Boxes", group = g_SESSIONS)
+fill_dist_boxes = input.bool(true, "Fill High-Low Boxes", group = g_SESSIONS)
+show_likely_boxes = input.bool(true, "Show Likely Range Boxes", group = g_SESSIONS)
+fill_likely_boxes = input.bool(true, "Fill Likely Range Boxes", group = g_SESSIONS)
+show_dist_labels = input.bool(true, "Show Session Avg/Actual Price Labels", group = g_SESSIONS)
+c1 = input.color(color.new(color.gray, 50), "Session box fill colour", group = g_SESSIONS)
+
+// Session enable/disable inputs
+show_s1 = input.bool(true, "Enable Session 1", inline = "S1", group = g_SESSIONS)
+show_s2 = input.bool(true, "Enable Session 2", inline = "S2", group = g_SESSIONS)
+show_s3 = input.bool(true, "Enable Session 3", inline = "S3", group = g_SESSIONS)
+show_s4 = input.bool(true, "Enable Session 4", inline = "S4", group = g_SESSIONS)
+show_s5 = input.bool(true, "Enable Session 5", inline = "S5", group = g_SESSIONS)
+show_s6 = input.bool(true, "Enable Session 6", inline = "S6", group = g_SESSIONS)
+show_s7 = input.bool(true, "Enable Session 7", inline = "S7", group = g_SESSIONS)
+show_s8 = input.bool(true, "Enable Session 8", inline = "S8", group = g_SESSIONS)
+show_s9 = input.bool(true, "Enable Session 9", inline = "S9", group = g_SESSIONS)
+show_s10 = input.bool(true, "Enable Session 10", inline = "S10", group = g_SESSIONS)
+show_s11 = input.bool(true, "Enable Session 11", inline = "S11", group = g_SESSIONS)
+show_s12 = input.bool(true, "Enable Session 12", inline = "S12", group = g_SESSIONS)
+
+// Define sessions
+s1 = input.session("1800-1901", "Session 1", inline = "S1", group = g_SESSIONS)
+s2 = input.session("1901-2304", "Session 2", inline = "S2", group = g_SESSIONS)
+s3 = input.session("2304-0300", "Session 3", inline = "S3", group = g_SESSIONS)
+s4 = input.session("0300-0344", "Session 4", inline = "S4", group = g_SESSIONS)
+s5 = input.session("0344-0520", "Session 5", inline = "S5", group = g_SESSIONS)
+s6 = input.session("0520-0639", "Session 6", inline = "S6", group = g_SESSIONS)
+s7 = input.session("0639-0930", "Session 7", inline = "S7", group = g_SESSIONS)
+s8 = input.session("0955-1020", "Session 8", inline = "S8", group = g_SESSIONS)
+s9 = input.session("1020-1110", "Session 9", inline = "S9", group = g_SESSIONS)
+s10 = input.session("1110-1149", "Session 10", inline = "S10", group = g_SESSIONS)
+s11 = input.session("1235-1409", "Session 11", inline = "S11", group = g_SESSIONS)
+s12 = input.session("1409-1600", "Session 12", inline = "S12", group = g_SESSIONS)
+
+// Stats table settings
+var g_STATS = "Stats tables"
+show_dist_table = input.bool(true, "Show Distribution Table", group = g_STATS)
+show_hit_table = input.bool(true, "Show Hit Percentage Table", group = g_STATS)
+sample_size = input.bool(false, "Sample Sizes", group = g_STATS)
+
+// Distribution table style
+var g_DIST_STYLE = "Distribution Table - Style"
+dist_tbl_pos = get_table_pos(input.string("Bottom Right", "Distribution Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group = g_DIST_STYLE))
+dist_tbl_bg = input.color(color.white, "Background", group = g_DIST_STYLE)
+dist_tbl_bd = input.color(color.black, "Borders", group = g_DIST_STYLE)
+dist_tbl_txt = input.color(color.black, "Text", group = g_DIST_STYLE)
+dist_show_pcts = input.bool(false, "Display Distribution Values As Percents", group = g_DIST_STYLE)
+dist_table_text_size = input.string("Tiny", "Text Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = g_DIST_STYLE)
+
+// Hit table style
+var g_HIT_STYLE = "Hit Table - Style"
+hit_tbl_pos = get_table_pos(input.string("Bottom Left", "Hit Table Position", options = ['Bottom Center', 'Bottom Left', 'Bottom Right', 'Middle Center', 'Middle Left', 'Middle Right', 'Top Center', 'Top Left', 'Top Right'], group = g_HIT_STYLE))
+show_open_hits = input.bool(true, "Show Open Hits", inline = "HHits", group = g_HIT_STYLE)
+show_high_hits = input.bool(true, "Show Likely High Hits", inline = "HHits", group = g_HIT_STYLE)
+show_low_hits = input.bool(true, "Show Likely Low Hits", inline = "LHits", group = g_HIT_STYLE)
+hit_tbl_bg = input.color(color.white, "Background", group = g_HIT_STYLE)
+hit_tbl_bd = input.color(color.black, "Borders", group = g_HIT_STYLE)
+hit_tbl_txt = input.color(color.black, "Text", group = g_HIT_STYLE)
+hit_table_text_size = input.string("Tiny", "Text Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = g_HIT_STYLE)
+
+// Text size mapping
+get_dist_text_size(string size) =>
+    result = switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+    result
+
+get_hit_text_size(string size) =>
+    result = switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+    result
+
+// Median calculation
+f_median(float[] arr) =>
+    var float result = na
+    if arr.size() > 0
+        sorted = array.copy(arr)
+        array.sort(sorted)
+        if arr.size() % 2 == 0
+            result := (sorted.get(arr.size()/2 - 1) + sorted.get(arr.size()/2)) / 2
+        else
+            result := sorted.get(arr.size()/2)
+    result
+
+// Session stats type
+type ses_stats
+    float[] ranges
+    float[] range_pcts
+    float[] open_to_high
+    float[] open_to_low
+    int[] day
+    box[] boxes
+    box[] likely_high_boxes
+    box[] likely_low_boxes
+    label[] labels_avg
+    label[] labels_act
+    line[] open_lines
+    line[] high_lines
+    line[] low_lines
+    bool[] hit_open
+    bool[] hit_likely_high
+    bool[] hit_likely_low
+    string session
+    color obj_color
+    int count = 0
+    float cur_hi = na
+    float cur_lo = na
+    float cur_op = na
+    bool has_hit_open = false
+    bool has_hit_likely_high = false
+    bool has_hit_likely_low = false
+
+// Initialize stats for 12 sessions
+var s1_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s1, c1)
+var s2_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s2, c1)
+var s3_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s3, c1)
+var s4_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s4, c1)
+var s5_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s5, c1)
+var s6_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s6, c1)
+var s7_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s7, c1)
+var s8_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s8, c1)
+var s9_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s9, c1)
+var s10_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s10, c1)
+var s11_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s11, c1)
+var s12_stats = ses_stats.new(array.new_float(), array.new_float(), array.new_float(), array.new_float(), array.new_int(), array.new_box(), array.new_box(), array.new_box(), array.new_label(), array.new_label(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool(), s12, c1)
+
+// Session time checks
+t1 = not na(time("", s1, "America/New_York")) and show_s1
+t2 = not na(time("", s2, "America/New_York")) and show_s2
+t3 = not na(time("", s3, "America/New_York")) and show_s3
+t4 = not na(time("", s4, "America/New_York")) and show_s4
+t5 = not na(time("", s5, "America/New_York")) and show_s5
+t6 = not na(time("", s6, "America/New_York")) and show_s6
+t7 = not na(time("", s7, "America/New_York")) and show_s7
+t8 = not na(time("", s8, "America/New_York")) and show_s8
+t9 = not na(time("", s9, "America/New_York")) and show_s9
+t10 = not na(time("", s10, "America/New_York")) and show_s10
+t11 = not na(time("", s11, "America/New_York")) and show_s11
+t12 = not na(time("", s12, "America/New_York")) and show_s12
+
+// Determine active session
+var int active_session = -1
+if t1
+    active_session := 0
+else if t2
+    active_session := 1
+else if t3
+    active_session := 2
+else if t4
+    active_session := 3
+else if t5
+    active_session := 4
+else if t6
+    active_session := 5
+else if t7
+    active_session := 6
+else if t8
+    active_session := 7
+else if t9
+    active_session := 8
+else if t10
+    active_session := 9
+else if t11
+    active_session := 10
+else if t12
+    active_session := 11
+
+// Get stats for day of week
+get_dow_stats(ses_stats S, int dow, bool D) =>
+    sum = 0.0
+    count = 0
+    for [i, s] in S.day
+        if D ? s == dow : true
+            sum += (dist_show_pcts ? S.range_pcts.get(i) : S.ranges.get(i))
+            count += 1
+    result = str.tostring(math.round(sum / count, 2))+(dist_show_pcts?"%":"")
+    result += sample_size ? (" ["+str.tostring(count)+"]") : ""
+
+// FIXED: Updated median/mean calculation to work with overall data
+get_dow_median_mean(ses_stats S, bool is_median) =>
+    result = is_median ? (S.ranges.size() > 0 ? f_median(S.ranges) : 0) : (S.ranges.size() > 0 ? S.ranges.avg() : 0)
+    str.tostring(math.round(result, 2))
+
+get_hit_stats(ses_stats S, int dow, string target, bool D) =>
+    sum = 0
+    count = 0
+    target_array = target == "Open" ? S.hit_open : target == "High" ? S.hit_likely_high : S.hit_likely_low
+    for [i, s] in S.day
+        if D ? s == dow : true
+            sum += target_array.get(i) ? 1 : 0
+            count += 1
+    percentage = count > 0 ? (sum / count) * 100 : 0
+    result = str.tostring(math.round(percentage, 1)) + "%"
+    result += sample_size ? (" ["+str.tostring(count)+"]") : ""
+    result
+
+// Get average open-to-high/low for day of week
+get_dow_high_low(ses_stats S, int dow, bool is_high) =>
+    dow_values = array.new_float(0)
+    for [i, d] in S.day
+        if d == dow
+            dow_values.push(is_high ? S.open_to_high.get(i) : S.open_to_low.get(i))
+    result = dow_values.size() > 0 ? dow_values.avg() : 0
+    result
+
+// FIXED: Updated table function to use corrected median/mean function
+tbl_stats_dow(ses_stats S, table T, int R, bool enabled) =>
+    if enabled
+        text_size = get_dist_text_size(dist_table_text_size)
+        is_active = active_session == R
+        bgcolor = is_active ? color.new(color.gray, 80) : na
+        T.cell(0, 1 + R, text_color = dist_tbl_txt, text = S.session, text_size = text_size, bgcolor = bgcolor)
+        T.cell(1, 1 + R, text_color = dist_tbl_txt, text = get_dow_stats(S, dayofweek.monday, true), text_size = text_size, bgcolor = bgcolor)
+        T.cell(2, 1 + R, text_color = dist_tbl_txt, text = get_dow_stats(S, dayofweek.tuesday, true), text_size = text_size, bgcolor = bgcolor)
+        T.cell(3, 1 + R, text_color = dist_tbl_txt, text = get_dow_stats(S, dayofweek.wednesday, true), text_size = text_size, bgcolor = bgcolor)
+        T.cell(4, 1 + R, text_color = dist_tbl_txt, text = get_dow_stats(S, dayofweek.thursday, true), text_size = text_size, bgcolor = bgcolor)
+        T.cell(5, 1 + R, text_color = dist_tbl_txt, text = get_dow_stats(S, dayofweek.friday, true), text_size = text_size, bgcolor = bgcolor)
+        T.cell(7, 1 + R, text_color = dist_tbl_txt, text = get_dow_median_mean(S, true), text_size = text_size, bgcolor = bgcolor)
+        T.cell(8, 1 + R, text_color = dist_tbl_txt, text = get_dow_median_mean(S, false), text_size = text_size, bgcolor = bgcolor)
+
+tbl_stats_all(ses_stats S, table T, int R, bool enabled) =>
+    if enabled
+        text_size = get_dist_text_size(dist_table_text_size)
+        is_active = active_session == R
+        bgcolor = is_active ? color.new(color.gray, 80) : na
+        T.cell(6, 1 + R, text_color = dist_tbl_txt, text = get_dow_stats(S, na, false), text_size = text_size, bgcolor = bgcolor)
+
+tbl_hit_stats_dow(ses_stats S, table T, int R, bool enabled) =>
+    if enabled
+        text_size = get_hit_text_size(hit_table_text_size)
+        is_active = active_session == R
+        bgcolor = is_active ? color.new(color.gray, 80) : na
+        col_offset = 0
+        T.cell(0, 1 + R, text_color = hit_tbl_txt, text = S.session, text_size = text_size, bgcolor = bgcolor)
+        if show_open_hits
+            T.cell(1 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.monday, "Open", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(2 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.tuesday, "Open", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(3 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.wednesday, "Open", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(4 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.thursday, "Open", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(5 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.friday, "Open", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(6 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, na, "Open", false), text_size = text_size, bgcolor = bgcolor)
+            col_offset := col_offset + 6
+        if show_high_hits
+            T.cell(1 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.monday, "High", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(2 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.tuesday, "High", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(3 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.wednesday, "High", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(4 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.thursday, "High", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(5 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.friday, "High", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(6 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, na, "High", false), text_size = text_size, bgcolor = bgcolor)
+            col_offset := col_offset + 6
+        if show_low_hits
+            T.cell(1 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.monday, "Low", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(2 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.tuesday, "Low", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(3 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.wednesday, "Low", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(4 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.thursday, "Low", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(5 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, dayofweek.friday, "Low", true), text_size = text_size, bgcolor = bgcolor)
+            T.cell(6 + col_offset, 1 + R, text_color = hit_tbl_txt, text = get_hit_stats(S, na, "Low", false), text_size = text_size, bgcolor = bgcolor)
+
+// FIXED: Updated session stats method with improved average calculation
+method update_ses_stats(ses_stats S, bool t, bool enabled) =>
+    if enabled
+        if t and not t[1]
+            S.count += 1
+            S.cur_hi := high
+            S.cur_lo := low
+            S.cur_op := open
+            S.day.unshift(dayofweek)
+            S.ranges.unshift(0)
+            S.range_pcts.unshift(0)
+            S.open_to_high.unshift(0)
+            S.open_to_low.unshift(0)
+            S.hit_open.unshift(false)
+            S.hit_likely_high.unshift(false)
+            S.hit_likely_low.unshift(false)
+            S.has_hit_open := false
+            S.has_hit_likely_high := false
+            S.has_hit_likely_low := false
+            
+            // FIXED: Calculate average for current day of week specifically
+            current_dow_ranges = array.new_float(0)
+            current_dow_range_pcts = array.new_float(0)
+            if S.day.size() > 1  // Only if we have historical data
+                for [i, d] in S.day
+                    if i > 0 and d == dayofweek  // Skip current session (index 0) and match day of week
+                        current_dow_ranges.push(S.ranges.get(i))
+                        current_dow_range_pcts.push(S.range_pcts.get(i))
+            
+            avg = if current_dow_ranges.size() > 0
+                dist_show_pcts ? current_dow_range_pcts.avg() : current_dow_ranges.avg()
+            else
+                // Fallback to overall average if no historical data for this day
+                if S.ranges.size() > 1
+                    dist_show_pcts ? S.range_pcts.avg() : S.ranges.avg()
+                else
+                    0.0
+            
+            // High-low box
+            S.boxes.unshift(box.new(time, S.cur_hi, time, S.cur_lo, xloc = xloc.bar_time, bgcolor = show_dist_boxes and fill_dist_boxes ? color.new(S.obj_color, 80) : na, border_color = show_dist_boxes ? S.obj_color : na))
+            // Draw open line
+            S.open_lines.unshift(line.new(time, S.cur_op, time, S.cur_op, xloc = xloc.bar_time, color = show_open_lines ? S.obj_color : na, style = line.style_solid))
+            // Calculate average high and low for current day of week
+            avg_high = get_dow_high_low(S, dayofweek, true)
+            avg_low = get_dow_high_low(S, dayofweek, false)
+            // Define likely high and low boxes based on average high/low
+            high_top = S.cur_op + avg_high
+            high_bottom = S.cur_op
+            low_top = S.cur_op
+            low_bottom = S.cur_op + avg_low
+            // Likely high box
+            S.likely_high_boxes.unshift(box.new(time, high_top, time, high_bottom, xloc = xloc.bar_time, bgcolor = show_likely_boxes and fill_likely_boxes ? color.new(S.obj_color, 80) : na, border_color = show_likely_boxes ? S.obj_color : na, border_style = line.style_dashed))
+            // Likely low box
+            S.likely_low_boxes.unshift(box.new(time, low_top, time, low_bottom, xloc = xloc.bar_time, bgcolor = show_likely_boxes and fill_likely_boxes ? color.new(S.obj_color, 80) : na, border_color = show_likely_boxes ? S.obj_color : na, border_style = line.style_dashed))
+            // Draw average high/low lines
+            S.high_lines.unshift(line.new(time, S.cur_op + avg_high, time, S.cur_op + avg_high, xloc = xloc.bar_time, color = show_high_low_lines ? expected_range_line_color : na, style = line.style_solid))
+            S.low_lines.unshift(line.new(time, S.cur_op + avg_low, time, S.cur_op + avg_low, xloc = xloc.bar_time, color = show_high_low_lines ? expected_range_line_color : na, style = line.style_solid))
+            // Labels
+            if show_dist_labels
+                if dist_show_pcts
+                    S.labels_avg.unshift(label.new(time, S.cur_hi, str.format("Avg: {0,number}%", math.round(avg, 2)), xloc = xloc.bar_time, textcolor = color.new(S.obj_color, 0), color = #ffffff00, style = label.style_label_down))
+                    S.labels_act.unshift(label.new(time, S.cur_lo, str.format("Actual: {0,number}%", math.round((S.cur_hi - S.cur_lo) / S.cur_lo * 100, 2)), xloc = xloc.bar_time, textcolor = color.new(S.obj_color, 0), color = #ffffff00, style = label.style_label_up))
+                else
+                    S.labels_avg.unshift(label.new(time, S.cur_hi, "Avg: "+str.tostring(math.round(avg, 2)), xloc = xloc.bar_time, textcolor = color.new(S.obj_color, 0), color = #ffffff00, style = label.style_label_down))
+                    S.labels_act.unshift(label.new(time, S.cur_lo, "Actual: "+str.tostring(S.cur_hi - S.cur_lo), xloc = xloc.bar_time, textcolor = color.new(S.obj_color, 0), color = #ffffff00, style = label.style_label_up))
+        else if t
+            S.boxes.get(0).set_right(time)
+            S.likely_high_boxes.get(0).set_right(time)
+            S.likely_low_boxes.get(0).set_right(time)
+            // Update open line
+            if show_open_lines
+                S.open_lines.get(0).set_x2(time)
+            // Update high/low lines
+            if show_high_low_lines
+                S.high_lines.get(0).set_x2(time)
+                S.low_lines.get(0).set_x2(time)
+            S.cur_hi := math.max(S.cur_hi, high)
+            S.cur_lo := math.min(S.cur_lo, low)
+            S.boxes.get(0).set_top(S.cur_hi)
+            S.boxes.get(0).set_bottom(S.cur_lo)
+            // Check for hits
+            if not S.has_hit_open and (high >= S.cur_op and low <= S.cur_op)
+                S.has_hit_open := true
+                S.hit_open.set(0, true)
+            if not S.has_hit_likely_high
+                high_box_top = S.likely_high_boxes.get(0).get_top()
+                high_box_bottom = S.likely_high_boxes.get(0).get_bottom()
+                if high >= high_box_bottom and high <= high_box_top
+                    S.has_hit_likely_high := true
+                    S.hit_likely_high.set(0, true)
+            if not S.has_hit_likely_low
+                low_box_top = S.likely_low_boxes.get(0).get_top()
+                low_box_bottom = S.likely_low_boxes.get(0).get_bottom()
+                if low <= low_box_top and low >= low_box_bottom
+                    S.has_hit_likely_low := true
+                    S.hit_likely_low.set(0, true)
+            if show_dist_labels
+                S.labels_avg.get(0).set_x(math.floor(math.avg(S.boxes.get(0).get_left(), S.boxes.get(0).get_right())))
+                S.labels_act.get(0).set_x(math.floor(math.avg(S.boxes.get(0).get_left(), S.boxes.get(0).get_right())))
+                S.labels_avg.get(0).set_y(S.cur_hi)
+                S.labels_act.get(0).set_y(S.cur_lo)
+                if dist_show_pcts
+                    S.labels_act.get(0).set_text(str.format("Actual: {0,number}%", math.round((S.cur_hi - S.cur_lo) / S.cur_lo * 100, 2)))
+                else
+                    S.labels_act.get(0).set_text("Actual: "+str.tostring(S.cur_hi - S.cur_lo))
+        if not t and t[1]
+            S.ranges.set(0, S.cur_hi - S.cur_lo)
+            S.range_pcts.set(0, (S.cur_hi - S.cur_lo) / S.cur_op * 100)
+            S.open_to_high.set(0, S.cur_hi - S.cur_op)
+            S.open_to_low.set(0, S.cur_lo - S.cur_op)
+
+// Update all sessions
+s1_stats.update_ses_stats(t1, show_s1)
+s2_stats.update_ses_stats(t2, show_s2)
+s3_stats.update_ses_stats(t3, show_s3)
+s4_stats.update_ses_stats(t4, show_s4)
+s5_stats.update_ses_stats(t5, show_s5)
+s6_stats.update_ses_stats(t6, show_s6)
+s7_stats.update_ses_stats(t7, show_s7)
+s8_stats.update_ses_stats(t8, show_s8)
+s9_stats.update_ses_stats(t9, show_s9)
+s10_stats.update_ses_stats(t10, show_s10)
+s11_stats.update_ses_stats(t11, show_s11)
+s12_stats.update_ses_stats(t12, show_s12)
+
+if barstate.islast
+    // Distribution table
+    if show_dist_table
+        var tbl = table.new(dist_tbl_pos, 50, 50, dist_tbl_bg, dist_tbl_bd, border_width=2, border_color=dist_tbl_bd)
+        text_size = get_dist_text_size(dist_table_text_size)
+        tbl.cell(0, 0, text="Session", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(1, 0, text="Monday", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(2, 0, text="Tuesday", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(3, 0, text="Wednesday", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(4, 0, text="Thursday", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(5, 0, text="Friday", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(6, 0, text="Total", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(7, 0, text="Median Range", text_color=dist_tbl_txt, text_size=text_size)
+        tbl.cell(8, 0, text="Mean Range", text_color=dist_tbl_txt, text_size=text_size)
+        row = 0
+        if show_s1
+            tbl_stats_dow(s1_stats, tbl, row, show_s1)
+            tbl_stats_all(s1_stats, tbl, row, show_s1)
+            row := row + 1
+        if show_s2
+            tbl_stats_dow(s2_stats, tbl, row, show_s2)
+            tbl_stats_all(s2_stats, tbl, row, show_s2)
+            row := row + 1
+        if show_s3
+            tbl_stats_dow(s3_stats, tbl, row, show_s3)
+            tbl_stats_all(s3_stats, tbl, row, show_s3)
+            row := row + 1
+        if show_s4
+            tbl_stats_dow(s4_stats, tbl, row, show_s4)
+            tbl_stats_all(s4_stats, tbl, row, show_s4)
+            row := row + 1
+        if show_s5
+            tbl_stats_dow(s5_stats, tbl, row, show_s5)
+            tbl_stats_all(s5_stats, tbl, row, show_s5)
+            row := row + 1
+        if show_s6
+            tbl_stats_dow(s6_stats, tbl, row, show_s6)
+            tbl_stats_all(s6_stats, tbl, row, show_s6)
+            row := row + 1
+        if show_s7
+            tbl_stats_dow(s7_stats, tbl, row, show_s7)
+            tbl_stats_all(s7_stats, tbl, row, show_s7)
+            row := row + 1
+        if show_s8
+            tbl_stats_dow(s8_stats, tbl, row, show_s8)
+            tbl_stats_all(s8_stats, tbl, row, show_s8)
+            row := row + 1
+        if show_s9
+            tbl_stats_dow(s9_stats, tbl, row, show_s9)
+            tbl_stats_all(s9_stats, tbl, row, show_s9)
+            row := row + 1
+        if show_s10
+            tbl_stats_dow(s10_stats, tbl, row, show_s10)
+            tbl_stats_all(s10_stats, tbl, row, show_s10)
+            row := row + 1
+        if show_s11
+            tbl_stats_dow(s11_stats, tbl, row, show_s11)
+            tbl_stats_all(s11_stats, tbl, row, show_s11)
+            row := row + 1
+        if show_s12
+            tbl_stats_dow(s12_stats, tbl, row, show_s12)
+            tbl_stats_all(s12_stats, tbl, row, show_s12)
+            row := row + 1
+    // Hit percentage table
+    if show_hit_table and (show_open_hits or show_high_hits or show_low_hits)
+        num_cols = 1
+        if show_open_hits
+            num_cols := num_cols + 6
+        if show_high_hits
+            num_cols := num_cols + 6
+        if show_low_hits
+            num_cols := num_cols + 6
+        var hit_tbl = table.new(hit_tbl_pos, num_cols, 50, hit_tbl_bg, hit_tbl_bd, border_width=2, border_color=hit_tbl_bd)
+        text_size = get_hit_text_size(hit_table_text_size)
+        col_offset = 0
+        hit_tbl.cell(0, 0, text="Session", text_color=hit_tbl_txt, text_size=text_size)
+        if show_open_hits
+            hit_tbl.cell(1 + col_offset, 0, text="MON Open", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(2 + col_offset, 0, text="TUE Open", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(3 + col_offset, 0, text="WED Open", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(4 + col_offset, 0, text="THU Open", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(5 + col_offset, 0, text="FRI Open", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(6 + col_offset, 0, text="Total Open", text_color=hit_tbl_txt, text_size=text_size)
+            col_offset := col_offset + 6
+        if show_high_hits
+            hit_tbl.cell(1 + col_offset, 0, text="MON High", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(2 + col_offset, 0, text="TUE High", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(3 + col_offset, 0, text="WED High", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(4 + col_offset, 0, text="THU High", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(5 + col_offset, 0, text="FRI High", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(6 + col_offset, 0, text="Total High", text_color=hit_tbl_txt, text_size=text_size)
+            col_offset := col_offset + 6
+        if show_low_hits
+            hit_tbl.cell(1 + col_offset, 0, text="MON Low", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(2 + col_offset, 0, text="TUE Low", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(3 + col_offset, 0, text="WED Low", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(4 + col_offset, 0, text="THU Low", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(5 + col_offset, 0, text="FRI Low", text_color=hit_tbl_txt, text_size=text_size)
+            hit_tbl.cell(6 + col_offset, 0, text="Total Low", text_color=hit_tbl_txt, text_size=text_size)
+        row = 0
+        if show_s1
+            tbl_hit_stats_dow(s1_stats, hit_tbl, row, show_s1)
+            row := row + 1
+        if show_s2
+            tbl_hit_stats_dow(s2_stats, hit_tbl, row, show_s2)
+            row := row + 1
+        if show_s3
+            tbl_hit_stats_dow(s3_stats, hit_tbl, row, show_s3)
+            row := row + 1
+        if show_s4
+            tbl_hit_stats_dow(s4_stats, hit_tbl, row, show_s4)
+            row := row + 1
+        if show_s5
+            tbl_hit_stats_dow(s5_stats, hit_tbl, row, show_s5)
+            row := row + 1
+        if show_s6
+            tbl_hit_stats_dow(s6_stats, hit_tbl, row, show_s6)
+            row := row + 1
+        if show_s7
+            tbl_hit_stats_dow(s7_stats, hit_tbl, row, show_s7)
+            row := row + 1
+        if show_s8
+            tbl_hit_stats_dow(s8_stats, hit_tbl, row, show_s8)
+            row := row + 1
+        if show_s9
+            tbl_hit_stats_dow(s9_stats, hit_tbl, row, show_s9)
+            row := row + 1
+        if show_s10
+            tbl_hit_stats_dow(s10_stats, hit_tbl, row, show_s10)
+            row := row + 1
+        if show_s11
+            tbl_hit_stats_dow(s11_stats, hit_tbl, row, show_s11)
+            row := row + 1
+        if show_s12
+            tbl_hit_stats_dow(s12_stats, hit_tbl, row, show_s12)
+            row := row + 1

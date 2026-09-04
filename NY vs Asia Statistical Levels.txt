@@ -1,0 +1,791 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+indicator(title="NY vs Asia Statistical Levels", shorttitle="NY/Asia Stats", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=300)
+
+// ============================================================
+// SETTINGS
+// ============================================================
+var g_GL = "General"
+hist_sessions   = input.int(100,  title="Lookback Sessions", minval=10, group=g_GL)
+label_sz_input  = input.string("Small", title="Label Size", options=["Tiny","Small","Normal"], group=g_GL)
+show_table      = input.bool(true, title="Show Stats Table", group=g_GL)
+table_pos_input = input.string("Bottom Right", title="Table Position",
+                   options=["Top Left","Top Right","Bottom Left","Bottom Right"], group=g_GL)
+table_sz_input  = input.string("Tiny", title="Table Text Size", options=["Tiny","Small","Normal"], group=g_GL)
+
+var g_SESS = "Session Ranges"
+show_asia_box   = input.bool(true,  title="Show Asia Range Box",   group=g_SESS)
+show_london_box = input.bool(true,  title="Show London Range Box", group=g_SESS)
+show_ny_box     = input.bool(true,  title="Show NY Range Box",     group=g_SESS)
+bg_transp       = input.float(90,   title="Box Fill Transparency", minval=50, maxval=99, group=g_SESS)
+show_outline    = input.bool(true,  title="Box Outline",           group=g_SESS)
+col_asia_box    = input.color(color.rgb(255,152,0),  title="Asia Box Color",   group=g_SESS)
+col_london_box  = input.color(color.rgb(33,87,243),  title="London Box Color", group=g_SESS)
+col_ny_box      = input.color(color.rgb(255,0,55),   title="NY Box Color",     group=g_SESS)
+
+var g_GRID = "Asia Range Grid (from NY Open)"
+show_grid       = input.bool(true,  title="Show Asia Range Grid",         group=g_GRID)
+grid_multiples  = input.int(3,      title="Multiples above & below open", minval=1, maxval=10, group=g_GRID)
+col_grid        = input.color(color.rgb(120,180,220), title="Grid Level Color",  group=g_GRID)
+grid_line_style = input.string("Dashed", title="Grid Line Style", options=["Solid","Dashed","Dotted"], group=g_GRID)
+grid_line_width = input.int(1, title="Grid Line Width", minval=1, maxval=4, group=g_GRID)
+
+var g_LV = "Statistical Levels"
+show_ext_levels = input.bool(true, title="Show Extension Levels (P50/75/90 above & below Asia range)", group=g_LV)
+show_rev_levels = input.bool(true, title="Show Reversal Levels (P50/75 from extension)", group=g_LV)
+col_ext_up      = input.color(color.rgb(80,200,80),  title="Extension Above Color", group=g_LV)
+col_ext_dn      = input.color(color.rgb(200,80,80),  title="Extension Below Color", group=g_LV)
+col_rev         = input.color(color.rgb(200,160,40), title="Reversal Level Color",  group=g_LV)
+col_hit         = input.color(color.rgb(130,130,130),title="Hit Level Color (✓)",   group=g_LV)
+
+// ============================================================
+// HELPERS
+// ============================================================
+TZ = "America/New_York"
+
+f_lsz() =>
+    label_sz_input == "Tiny" ? size.tiny : label_sz_input == "Small" ? size.small : size.normal
+
+f_pct(arr, p) =>
+    array.size(arr) >= 4 ? array.percentile_nearest_rank(arr, p) : na
+
+f_mean(arr) =>
+    s = array.size(arr)
+    s >= 2 ? array.sum(arr) / s : na
+
+f_stdev(arr) =>
+    s = array.size(arr)
+    if s < 4
+        na
+    else
+        m = array.sum(arr) / s
+        variance = 0.0
+        for i = 0 to s - 1
+            d = array.get(arr, i) - m
+            variance += d * d
+        math.sqrt(variance / s)
+
+f_zscore(arr, val) =>
+    sd = f_stdev(arr)
+    m  = f_mean(arr)
+    not na(sd) and sd > 0 and not na(m) ? (val - m) / sd : na
+
+f_pctrank(arr, val) =>
+    s = array.size(arr)
+    if s < 2
+        na
+    else
+        cnt = 0
+        for i = 0 to s - 1
+            if array.get(arr, i) <= val
+                cnt += 1
+        100.0 * cnt / s
+
+f_line(x1, x2, y, c, ls, lw) =>
+    line.new(x1, y, x2, y, color=c,
+             style=ls == "dashed" ? line.style_dashed :
+                   ls == "solid"  ? line.style_solid  : line.style_dotted,
+             width=lw)
+
+f_lbl(x, y, txt, c, sz) =>
+    label.new(x, y, " " + txt,
+              style=label.style_none, textcolor=c,
+              color=color.new(color.white, 100),
+              size=sz, text_font_family=font.family_monospace,
+              textalign=text.align_left)
+
+f_box(x1, x2, top, bot, c, transp, outline) =>
+    box.new(x1, top, x2, bot,
+             bgcolor=color.new(c, transp),
+             border_color=outline ? c : na,
+             border_style=line.style_dotted,
+             border_width=1)
+
+// ============================================================
+// SESSION DETECTION
+// ============================================================
+tf = timeframe.period
+
+is_asia   = math.sign(nz(time(tf, "1900-0200", TZ)))
+is_london = math.sign(nz(time(tf, "0200-0800", TZ)))
+is_ny     = math.sign(nz(time(tf, "0800-1600", TZ)))
+
+asia_start   = is_asia   > is_asia[1]
+asia_end     = is_asia   < is_asia[1]
+london_start = is_london > is_london[1]
+ny_start     = is_ny     > is_ny[1]
+ny_end       = is_ny     < is_ny[1]
+
+// ============================================================
+// SESSION RANGE TRACKING
+// ============================================================
+var float asia_h         = na
+var float asia_l         = na
+var float asia_o         = na
+var float asia_mid       = na
+var float asia_rng       = na
+var int   asia_start_bar = na
+
+var float london_h         = na
+var float london_l         = na
+var float london_o         = na
+var int   london_start_bar = na
+
+var float ny_o             = na
+var float ny_h             = na
+var float ny_l             = na
+var int   ny_start_bar_idx = na
+
+if asia_start
+    asia_o         := open
+    asia_h         := high
+    asia_l         := low
+    asia_start_bar := bar_index
+else if is_asia
+    asia_h := math.max(asia_h, high)
+    asia_l := math.min(asia_l, low)
+
+if asia_end
+    asia_mid := (asia_h + asia_l) / 2
+    asia_rng := asia_h - asia_l
+
+if london_start
+    london_o         := open
+    london_h         := high
+    london_l         := low
+    london_start_bar := bar_index
+else if is_london
+    london_h := math.max(london_h, high)
+    london_l := math.min(london_l, low)
+
+if ny_start
+    ny_o             := open
+    ny_h             := high
+    ny_l             := low
+    ny_start_bar_idx := bar_index
+else if is_ny
+    ny_h := math.max(ny_h, high)
+    ny_l := math.min(ny_l, low)
+
+var float ny_ext_hi = na
+var float ny_ext_lo = na
+
+if ny_start
+    ny_ext_hi := 0.0
+    ny_ext_lo := 0.0
+else if is_ny
+    if not na(asia_h)
+        ny_ext_hi := math.max(ny_ext_hi, math.max(0.0, high - asia_h))
+    if not na(asia_l)
+        ny_ext_lo := math.max(ny_ext_lo, math.max(0.0, asia_l - low))
+
+var int ny_bucket = -1
+
+if ny_start and not na(asia_h) and not na(asia_l) and not na(asia_mid)
+    if ny_o > asia_h
+        ny_bucket := 2
+    else if ny_o < asia_l
+        ny_bucket := 3
+    else if ny_o >= asia_mid
+        ny_bucket := 1
+    else
+        ny_bucket := 0
+
+// ============================================================
+// SESSION BOXES
+// ============================================================
+var box box_asia   = na
+var box box_london = na
+var box box_ny     = na
+
+if asia_start and show_asia_box
+    box.delete(box_asia)
+    box_asia := f_box(bar_index, bar_index + 1, high, low, col_asia_box, bg_transp, show_outline)
+
+if is_asia and show_asia_box and not na(box_asia)
+    box.set_top(box_asia, asia_h)
+    box.set_rightbottom(box_asia, bar_index, asia_l)
+
+if london_start and show_london_box
+    box.delete(box_london)
+    box_london := f_box(bar_index, bar_index + 1, high, low, col_london_box, bg_transp, show_outline)
+
+if is_london and show_london_box and not na(box_london)
+    box.set_top(box_london, london_h)
+    box.set_rightbottom(box_london, bar_index, london_l)
+
+if ny_start and show_ny_box
+    box.delete(box_ny)
+    box_ny := f_box(bar_index, bar_index + 1, high, low, col_ny_box, bg_transp, show_outline)
+
+if is_ny and show_ny_box and not na(box_ny)
+    box.set_top(box_ny, ny_h)
+    box.set_rightbottom(box_ny, bar_index, ny_l)
+
+// ============================================================
+// STAT ARRAYS — 4 BUCKETS
+// ============================================================
+var float[] asia_ranges = array.new_float(0)
+
+var float[] mult_0 = array.new_float(0)
+var float[] mult_1 = array.new_float(0)
+var float[] mult_2 = array.new_float(0)
+var float[] mult_3 = array.new_float(0)
+
+var float[] ext_hi_0 = array.new_float(0)
+var float[] ext_hi_1 = array.new_float(0)
+var float[] ext_hi_2 = array.new_float(0)
+var float[] ext_hi_3 = array.new_float(0)
+
+var float[] ext_lo_0 = array.new_float(0)
+var float[] ext_lo_1 = array.new_float(0)
+var float[] ext_lo_2 = array.new_float(0)
+var float[] ext_lo_3 = array.new_float(0)
+
+var float[] rev_hi_0 = array.new_float(0)
+var float[] rev_hi_1 = array.new_float(0)
+var float[] rev_hi_2 = array.new_float(0)
+var float[] rev_hi_3 = array.new_float(0)
+
+var float[] rev_lo_0 = array.new_float(0)
+var float[] rev_lo_1 = array.new_float(0)
+var float[] rev_lo_2 = array.new_float(0)
+var float[] rev_lo_3 = array.new_float(0)
+
+f_push_trim(arr0, arr1, arr2, arr3, bucket, val) =>
+    if bucket == 0
+        array.push(arr0, val)
+        if array.size(arr0) > hist_sessions
+            array.shift(arr0)
+    else if bucket == 1
+        array.push(arr1, val)
+        if array.size(arr1) > hist_sessions
+            array.shift(arr1)
+    else if bucket == 2
+        array.push(arr2, val)
+        if array.size(arr2) > hist_sessions
+            array.shift(arr2)
+    else if bucket == 3
+        array.push(arr3, val)
+        if array.size(arr3) > hist_sessions
+            array.shift(arr3)
+
+if ny_end and ny_bucket >= 0 and not na(asia_rng) and asia_rng > 0
+    array.push(asia_ranges, asia_rng)
+    if array.size(asia_ranges) > hist_sessions
+        array.shift(asia_ranges)
+
+    ny_rng_val = ny_h - ny_l
+    f_push_trim(mult_0, mult_1, mult_2, mult_3, ny_bucket, ny_rng_val / asia_rng)
+    f_push_trim(ext_hi_0, ext_hi_1, ext_hi_2, ext_hi_3, ny_bucket, ny_ext_hi / asia_rng)
+    f_push_trim(ext_lo_0, ext_lo_1, ext_lo_2, ext_lo_3, ny_bucket, ny_ext_lo / asia_rng)
+
+    if ny_ext_hi > 0
+        rev_hi_val = (asia_h + ny_ext_hi) - ny_l
+        f_push_trim(rev_hi_0, rev_hi_1, rev_hi_2, rev_hi_3, ny_bucket, rev_hi_val)
+
+    if ny_ext_lo > 0
+        rev_lo_val = ny_h - (asia_l - ny_ext_lo)
+        f_push_trim(rev_lo_0, rev_lo_1, rev_lo_2, rev_lo_3, ny_bucket, rev_lo_val)
+
+// ============================================================
+// CURRENT SESSION COMPUTED LEVELS
+// ============================================================
+var float cur_asia_h   = na
+var float cur_asia_l   = na
+var float cur_asia_rng = na
+var float cur_asia_mid = na
+var int   cur_bucket   = -1
+
+var float lv_ext_hi_p50 = na
+var float lv_ext_hi_p75 = na
+var float lv_ext_hi_p90 = na
+var float lv_ext_lo_p50 = na
+var float lv_ext_lo_p75 = na
+var float lv_ext_lo_p90 = na
+
+var float lv_rev_hi_p50 = na
+var float lv_rev_hi_p75 = na
+var float lv_rev_lo_p50 = na
+var float lv_rev_lo_p75 = na
+
+var float hr_ext_hi_p50 = na
+var float hr_ext_hi_p75 = na
+var float hr_ext_hi_p90 = na
+var float hr_ext_lo_p50 = na
+var float hr_ext_lo_p75 = na
+var float hr_ext_lo_p90 = na
+var float hr_rev_hi_p50 = na
+var float hr_rev_hi_p75 = na
+var float hr_rev_lo_p50 = na
+var float hr_rev_lo_p75 = na
+
+// Grid hit rates: index 0 = 1x multiple, index 9 = 10x multiple
+var float[] hr_grid = array.new_float(10, na)
+
+if ny_start and not na(asia_h) and not na(asia_rng) and asia_rng > 0
+    cur_asia_h   := asia_h
+    cur_asia_l   := asia_l
+    cur_asia_rng := asia_rng
+    cur_asia_mid := asia_mid
+    cur_bucket   := ny_bucket
+
+    eh = cur_bucket == 0 ? ext_hi_0 : cur_bucket == 1 ? ext_hi_1 : cur_bucket == 2 ? ext_hi_2 : ext_hi_3
+    el = cur_bucket == 0 ? ext_lo_0 : cur_bucket == 1 ? ext_lo_1 : cur_bucket == 2 ? ext_lo_2 : ext_lo_3
+    rh = cur_bucket == 0 ? rev_hi_0 : cur_bucket == 1 ? rev_hi_1 : cur_bucket == 2 ? rev_hi_2 : rev_hi_3
+    rl = cur_bucket == 0 ? rev_lo_0 : cur_bucket == 1 ? rev_lo_1 : cur_bucket == 2 ? rev_lo_2 : rev_lo_3
+    m  = cur_bucket == 0 ? mult_0   : cur_bucket == 1 ? mult_1   : cur_bucket == 2 ? mult_2   : mult_3
+
+    lv_ext_hi_p50 := not na(f_pct(eh, 50)) ? cur_asia_h + f_pct(eh, 50) * cur_asia_rng : na
+    lv_ext_hi_p75 := not na(f_pct(eh, 75)) ? cur_asia_h + f_pct(eh, 75) * cur_asia_rng : na
+    lv_ext_hi_p90 := not na(f_pct(eh, 90)) ? cur_asia_h + f_pct(eh, 90) * cur_asia_rng : na
+    lv_ext_lo_p50 := not na(f_pct(el, 50)) ? cur_asia_l - f_pct(el, 50) * cur_asia_rng : na
+    lv_ext_lo_p75 := not na(f_pct(el, 75)) ? cur_asia_l - f_pct(el, 75) * cur_asia_rng : na
+    lv_ext_lo_p90 := not na(f_pct(el, 90)) ? cur_asia_l - f_pct(el, 90) * cur_asia_rng : na
+
+    ext_hi_p50_price = not na(f_pct(eh, 50)) ? cur_asia_h + f_pct(eh, 50) * cur_asia_rng : na
+    ext_lo_p50_price = not na(f_pct(el, 50)) ? cur_asia_l - f_pct(el, 50) * cur_asia_rng : na
+
+    lv_rev_hi_p50 := not na(ext_hi_p50_price) and not na(f_pct(rh, 50)) ? ext_hi_p50_price - f_pct(rh, 50) : na
+    lv_rev_hi_p75 := not na(ext_hi_p50_price) and not na(f_pct(rh, 75)) ? ext_hi_p50_price - f_pct(rh, 75) : na
+    lv_rev_lo_p50 := not na(ext_lo_p50_price) and not na(f_pct(rl, 50)) ? ext_lo_p50_price + f_pct(rl, 50) : na
+    lv_rev_lo_p75 := not na(ext_lo_p50_price) and not na(f_pct(rl, 75)) ? ext_lo_p50_price + f_pct(rl, 75) : na
+
+    // Extension hit rates
+    tot_eh = array.size(eh)
+    if tot_eh >= 4
+        p50t = f_pct(eh, 50)
+        p75t = f_pct(eh, 75)
+        p90t = f_pct(eh, 90)
+        c50 = 0
+        c75 = 0
+        c90 = 0
+        for i = 0 to tot_eh - 1
+            v = array.get(eh, i)
+            if v >= p50t
+                c50 += 1
+            if v >= p75t
+                c75 += 1
+            if v >= p90t
+                c90 += 1
+        hr_ext_hi_p50 := 100.0 * c50 / tot_eh
+        hr_ext_hi_p75 := 100.0 * c75 / tot_eh
+        hr_ext_hi_p90 := 100.0 * c90 / tot_eh
+
+    tot_el = array.size(el)
+    if tot_el >= 4
+        p50tl = f_pct(el, 50)
+        p75tl = f_pct(el, 75)
+        p90tl = f_pct(el, 90)
+        c50l = 0
+        c75l = 0
+        c90l = 0
+        for i = 0 to tot_el - 1
+            v = array.get(el, i)
+            if v >= p50tl
+                c50l += 1
+            if v >= p75tl
+                c75l += 1
+            if v >= p90tl
+                c90l += 1
+        hr_ext_lo_p50 := 100.0 * c50l / tot_el
+        hr_ext_lo_p75 := 100.0 * c75l / tot_el
+        hr_ext_lo_p90 := 100.0 * c90l / tot_el
+
+    tot_rh = array.size(rh)
+    if tot_rh >= 4
+        rh50t = f_pct(rh, 50)
+        rh75t = f_pct(rh, 75)
+        crh50 = 0
+        crh75 = 0
+        for i = 0 to tot_rh - 1
+            v = array.get(rh, i)
+            if v >= rh50t
+                crh50 += 1
+            if v >= rh75t
+                crh75 += 1
+        hr_rev_hi_p50 := 100.0 * crh50 / tot_rh
+        hr_rev_hi_p75 := 100.0 * crh75 / tot_rh
+
+    tot_rl = array.size(rl)
+    if tot_rl >= 4
+        rl50t = f_pct(rl, 50)
+        rl75t = f_pct(rl, 75)
+        crl50 = 0
+        crl75 = 0
+        for i = 0 to tot_rl - 1
+            v = array.get(rl, i)
+            if v >= rl50t
+                crl50 += 1
+            if v >= rl75t
+                crl75 += 1
+        hr_rev_lo_p50 := 100.0 * crl50 / tot_rl
+        hr_rev_lo_p75 := 100.0 * crl75 / tot_rl
+
+    // Grid hit rates: % of sessions where NY range mult >= k (i.e. session covered k Asia ranges)
+    tot_m = array.size(m)
+    if tot_m >= 4
+        for k = 1 to 10
+            cnt_k = 0
+            for i = 0 to tot_m - 1
+                if array.get(m, i) >= float(k)
+                    cnt_k += 1
+            array.set(hr_grid, k - 1, 100.0 * cnt_k / tot_m)
+
+// ============================================================
+// LEVEL DRAWING + HIT TRACKING
+// ============================================================
+
+// -- Extension above Asia H --
+var line  ln_ehi50 = na
+var label lb_ehi50 = na
+var bool  ht_ehi50 = false
+var line  ln_ehi75 = na
+var label lb_ehi75 = na
+var bool  ht_ehi75 = false
+var line  ln_ehi90 = na
+var label lb_ehi90 = na
+var bool  ht_ehi90 = false
+
+// -- Extension below Asia L --
+var line  ln_elo50 = na
+var label lb_elo50 = na
+var bool  ht_elo50 = false
+var line  ln_elo75 = na
+var label lb_elo75 = na
+var bool  ht_elo75 = false
+var line  ln_elo90 = na
+var label lb_elo90 = na
+var bool  ht_elo90 = false
+
+// -- Reversal from high --
+var line  ln_rhi50 = na
+var label lb_rhi50 = na
+var bool  ht_rhi50 = false
+var line  ln_rhi75 = na
+var label lb_rhi75 = na
+var bool  ht_rhi75 = false
+
+// -- Reversal from low --
+var line  ln_rlo50 = na
+var label lb_rlo50 = na
+var bool  ht_rlo50 = false
+var line  ln_rlo75 = na
+var label lb_rlo75 = na
+var bool  ht_rlo75 = false
+
+// -- Asia range grid --
+var line[]  ln_grid_up = array.new_line()
+var label[] lb_grid_up = array.new_label()
+var bool[]  ht_grid_up = array.new_bool()
+var line[]  ln_grid_dn = array.new_line()
+var label[] lb_grid_dn = array.new_label()
+var bool[]  ht_grid_dn = array.new_bool()
+
+f_draw_level(y_price, txt, col, ls) =>
+    lsz = f_lsz()
+    ln  = f_line(bar_index, bar_index + 5, y_price, col, ls, 1)
+    lb  = f_lbl(bar_index + 1, y_price, txt, col, lsz)
+    [ln, lb]
+
+f_ext_label(prefix, p, hr) =>
+    not na(hr) ? prefix + " P" + str.tostring(p) + " [" + str.format("{0,number,#.#}", hr) + "%]" : prefix + " P" + str.tostring(p)
+
+f_grid_lbl(mult, hr) =>
+    hr_str = not na(hr) ? " [" + str.format("{0,number,#.#}", hr) + "%]" : ""
+    "+" + str.tostring(mult) + "x AR" + hr_str
+
+f_grid_lbl_dn(mult, hr) =>
+    hr_str = not na(hr) ? " [" + str.format("{0,number,#.#}", hr) + "%]" : ""
+    "-" + str.tostring(mult) + "x AR" + hr_str
+
+f_bucket_name(b) =>
+    b == 0 ? "InLo" : b == 1 ? "InHi" : b == 2 ? "AbvH" : "BlwL"
+
+f_clear_levels() =>
+    line.delete(ln_ehi50)
+    label.delete(lb_ehi50)
+    line.delete(ln_ehi75)
+    label.delete(lb_ehi75)
+    line.delete(ln_ehi90)
+    label.delete(lb_ehi90)
+    line.delete(ln_elo50)
+    label.delete(lb_elo50)
+    line.delete(ln_elo75)
+    label.delete(lb_elo75)
+    line.delete(ln_elo90)
+    label.delete(lb_elo90)
+    line.delete(ln_rhi50)
+    label.delete(lb_rhi50)
+    line.delete(ln_rhi75)
+    label.delete(lb_rhi75)
+    line.delete(ln_rlo50)
+    label.delete(lb_rlo50)
+    line.delete(ln_rlo75)
+    label.delete(lb_rlo75)
+    if array.size(ln_grid_up) > 0
+        for i = 0 to array.size(ln_grid_up) - 1
+            line.delete(array.get(ln_grid_up, i))
+            label.delete(array.get(lb_grid_up, i))
+    if array.size(ln_grid_dn) > 0
+        for i = 0 to array.size(ln_grid_dn) - 1
+            line.delete(array.get(ln_grid_dn, i))
+            label.delete(array.get(lb_grid_dn, i))
+    array.clear(ln_grid_up)
+    array.clear(lb_grid_up)
+    array.clear(ht_grid_up)
+    array.clear(ln_grid_dn)
+    array.clear(lb_grid_dn)
+    array.clear(ht_grid_dn)
+
+if ny_start
+    f_clear_levels()
+    ht_ehi50 := false
+    ht_ehi75 := false
+    ht_ehi90 := false
+    ht_elo50 := false
+    ht_elo75 := false
+    ht_elo90 := false
+    ht_rhi50 := false
+    ht_rhi75 := false
+    ht_rlo50 := false
+    ht_rlo75 := false
+
+    bkt = f_bucket_name(cur_bucket)
+
+    // Asia range grid
+    if show_grid and not na(cur_asia_rng)
+        grid_ls = grid_line_style == "Solid" ? "solid" : grid_line_style == "Dashed" ? "dashed" : "dotted"
+        for i = 1 to grid_multiples
+            up_price = ny_o + i * cur_asia_rng
+            dn_price = ny_o - i * cur_asia_rng
+            hr_i     = array.get(hr_grid, i - 1)
+            up_ln = f_line(bar_index, bar_index + 5, up_price, col_grid, grid_ls, grid_line_width)
+            up_lb = f_lbl(bar_index + 1, up_price, f_grid_lbl(i, hr_i), col_grid, f_lsz())
+            dn_ln = f_line(bar_index, bar_index + 5, dn_price, col_grid, grid_ls, grid_line_width)
+            dn_lb = f_lbl(bar_index + 1, dn_price, f_grid_lbl_dn(i, hr_i), col_grid, f_lsz())
+            array.push(ln_grid_up, up_ln)
+            array.push(lb_grid_up, up_lb)
+            array.push(ht_grid_up, false)
+            array.push(ln_grid_dn, dn_ln)
+            array.push(lb_grid_dn, dn_lb)
+            array.push(ht_grid_dn, false)
+
+    // Extension levels
+    if show_ext_levels
+        if not na(lv_ext_hi_p50)
+            [l, lb] = f_draw_level(lv_ext_hi_p50, f_ext_label("ExtHi " + bkt, 50, hr_ext_hi_p50), col_ext_up, "dotted")
+            ln_ehi50 := l
+            lb_ehi50 := lb
+        if not na(lv_ext_hi_p75)
+            [l, lb] = f_draw_level(lv_ext_hi_p75, f_ext_label("ExtHi " + bkt, 75, hr_ext_hi_p75), col_ext_up, "dotted")
+            ln_ehi75 := l
+            lb_ehi75 := lb
+        if not na(lv_ext_hi_p90)
+            [l, lb] = f_draw_level(lv_ext_hi_p90, f_ext_label("ExtHi " + bkt, 90, hr_ext_hi_p90), col_ext_up, "dashed")
+            ln_ehi90 := l
+            lb_ehi90 := lb
+        if not na(lv_ext_lo_p50)
+            [l, lb] = f_draw_level(lv_ext_lo_p50, f_ext_label("ExtLo " + bkt, 50, hr_ext_lo_p50), col_ext_dn, "dotted")
+            ln_elo50 := l
+            lb_elo50 := lb
+        if not na(lv_ext_lo_p75)
+            [l, lb] = f_draw_level(lv_ext_lo_p75, f_ext_label("ExtLo " + bkt, 75, hr_ext_lo_p75), col_ext_dn, "dotted")
+            ln_elo75 := l
+            lb_elo75 := lb
+        if not na(lv_ext_lo_p90)
+            [l, lb] = f_draw_level(lv_ext_lo_p90, f_ext_label("ExtLo " + bkt, 90, hr_ext_lo_p90), col_ext_dn, "dashed")
+            ln_elo90 := l
+            lb_elo90 := lb
+
+    // Reversal levels
+    if show_rev_levels
+        if not na(lv_rev_hi_p50)
+            [l, lb] = f_draw_level(lv_rev_hi_p50, f_ext_label("RevHi " + bkt, 50, hr_rev_hi_p50), col_rev, "dotted")
+            ln_rhi50 := l
+            lb_rhi50 := lb
+        if not na(lv_rev_hi_p75)
+            [l, lb] = f_draw_level(lv_rev_hi_p75, f_ext_label("RevHi " + bkt, 75, hr_rev_hi_p75), col_rev, "dotted")
+            ln_rhi75 := l
+            lb_rhi75 := lb
+        if not na(lv_rev_lo_p50)
+            [l, lb] = f_draw_level(lv_rev_lo_p50, f_ext_label("RevLo " + bkt, 50, hr_rev_lo_p50), col_rev, "dotted")
+            ln_rlo50 := l
+            lb_rlo50 := lb
+        if not na(lv_rev_lo_p75)
+            [l, lb] = f_draw_level(lv_rev_lo_p75, f_ext_label("RevLo " + bkt, 75, hr_rev_lo_p75), col_rev, "dotted")
+            ln_rlo75 := l
+            lb_rlo75 := lb
+
+// ============================================================
+// LEVEL UPDATE HELPERS
+// ============================================================
+f_update_hi(ln, lb, bi, y, hit, orig_txt) =>
+    bool new_hit = hit
+    if not na(ln)
+        line.set_x2(ln, bi + 5)
+    if not na(lb)
+        label.set_x(lb, bi + 5)
+    if not hit and not na(y) and high >= y
+        new_hit := true
+        if not na(ln)
+            line.set_color(ln, col_hit)
+        if not na(lb)
+            label.set_textcolor(lb, col_hit)
+            label.set_text(lb, " ✓ " + orig_txt)
+    new_hit
+
+f_update_lo(ln, lb, bi, y, hit, orig_txt) =>
+    bool new_hit = hit
+    if not na(ln)
+        line.set_x2(ln, bi + 5)
+    if not na(lb)
+        label.set_x(lb, bi + 5)
+    if not hit and not na(y) and low <= y
+        new_hit := true
+        if not na(ln)
+            line.set_color(ln, col_hit)
+        if not na(lb)
+            label.set_textcolor(lb, col_hit)
+            label.set_text(lb, " ✓ " + orig_txt)
+    new_hit
+
+// ============================================================
+// EXTEND LEVELS DURING NY
+// ============================================================
+if is_ny
+    bi  = bar_index
+    bkt = f_bucket_name(cur_bucket)
+
+    if show_ext_levels
+        ht_ehi50 := f_update_hi(ln_ehi50, lb_ehi50, bi, lv_ext_hi_p50, ht_ehi50, f_ext_label("ExtHi " + bkt, 50, hr_ext_hi_p50))
+        ht_ehi75 := f_update_hi(ln_ehi75, lb_ehi75, bi, lv_ext_hi_p75, ht_ehi75, f_ext_label("ExtHi " + bkt, 75, hr_ext_hi_p75))
+        ht_ehi90 := f_update_hi(ln_ehi90, lb_ehi90, bi, lv_ext_hi_p90, ht_ehi90, f_ext_label("ExtHi " + bkt, 90, hr_ext_hi_p90))
+        ht_elo50 := f_update_lo(ln_elo50, lb_elo50, bi, lv_ext_lo_p50, ht_elo50, f_ext_label("ExtLo " + bkt, 50, hr_ext_lo_p50))
+        ht_elo75 := f_update_lo(ln_elo75, lb_elo75, bi, lv_ext_lo_p75, ht_elo75, f_ext_label("ExtLo " + bkt, 75, hr_ext_lo_p75))
+        ht_elo90 := f_update_lo(ln_elo90, lb_elo90, bi, lv_ext_lo_p90, ht_elo90, f_ext_label("ExtLo " + bkt, 90, hr_ext_lo_p90))
+
+    if show_rev_levels
+        ht_rhi50 := f_update_lo(ln_rhi50, lb_rhi50, bi, lv_rev_hi_p50, ht_rhi50, f_ext_label("RevHi " + bkt, 50, hr_rev_hi_p50))
+        ht_rhi75 := f_update_lo(ln_rhi75, lb_rhi75, bi, lv_rev_hi_p75, ht_rhi75, f_ext_label("RevHi " + bkt, 75, hr_rev_hi_p75))
+        ht_rlo50 := f_update_hi(ln_rlo50, lb_rlo50, bi, lv_rev_lo_p50, ht_rlo50, f_ext_label("RevLo " + bkt, 50, hr_rev_lo_p50))
+        ht_rlo75 := f_update_hi(ln_rlo75, lb_rlo75, bi, lv_rev_lo_p75, ht_rlo75, f_ext_label("RevLo " + bkt, 75, hr_rev_lo_p75))
+
+    if show_grid
+        if array.size(ln_grid_up) > 0
+            for i = 0 to array.size(ln_grid_up) - 1
+                ln_i     = array.get(ln_grid_up, i)
+                lb_i     = array.get(lb_grid_up, i)
+                hit_i    = array.get(ht_grid_up, i)
+                up_price = ny_o + (i + 1) * cur_asia_rng
+                hr_i     = array.get(hr_grid, i)
+                new_hit  = f_update_hi(ln_i, lb_i, bi, up_price, hit_i, f_grid_lbl(i + 1, hr_i))
+                array.set(ht_grid_up, i, new_hit)
+        if array.size(ln_grid_dn) > 0
+            for i = 0 to array.size(ln_grid_dn) - 1
+                ln_i     = array.get(ln_grid_dn, i)
+                lb_i     = array.get(lb_grid_dn, i)
+                hit_i    = array.get(ht_grid_dn, i)
+                dn_price = ny_o - (i + 1) * cur_asia_rng
+                hr_i     = array.get(hr_grid, i)
+                new_hit  = f_update_lo(ln_i, lb_i, bi, dn_price, hit_i, f_grid_lbl_dn(i + 1, hr_i))
+                array.set(ht_grid_dn, i, new_hit)
+
+if ny_end
+    f_clear_levels()
+
+// ============================================================
+// TABLE STYLE CONSTANTS + ROW HELPER (top-level — Pine v5 forbids nested functions)
+// ============================================================
+t_sz  = table_sz_input == "Tiny" ? size.tiny : table_sz_input == "Small" ? size.small : size.normal
+t_fnt = font.family_monospace
+t_tc  = color.rgb(40,40,40)
+t_hbg = color.rgb(30,30,30)
+t_htc = color.white
+t_rbg = color.rgb(245,245,245)
+
+f_row(t, r, k, v) =>
+    table.cell(t, 0, r, k, text_size=t_sz, text_color=t_tc, bgcolor=t_rbg, text_font_family=t_fnt)
+    table.cell(t, 1, r, v, text_size=t_sz, text_color=t_tc, bgcolor=color.white, text_font_family=t_fnt)
+    table.merge_cells(t, 1, r, 11, r)
+
+// ============================================================
+// STATS TABLE
+// ============================================================
+if show_table and (barstate.islast or is_ny or barstate.isrealtime)
+    tpos = table_pos_input == "Top Left"    ? position.top_left   :
+           table_pos_input == "Top Right"   ? position.top_right  :
+           table_pos_input == "Bottom Left" ? position.bottom_left : position.bottom_right
+
+    var table tbl = table.new(tpos, 12, 14,
+         bgcolor=color.white,
+         border_color=color.rgb(180,180,180),
+         frame_color=color.rgb(180,180,180),
+         frame_width=1, border_width=1)
+
+    m_arr   = cur_bucket == 0 ? mult_0 : cur_bucket == 1 ? mult_1 : cur_bucket == 2 ? mult_2 : mult_3
+
+    asia_rng_z   = not na(asia_rng) ? f_zscore(asia_ranges, asia_rng) : na
+    asia_rng_pct = not na(asia_rng) ? f_pctrank(asia_ranges, asia_rng) : na
+    asia_n       = array.size(asia_ranges)
+
+    ny_med_mult  = f_pct(m_arr, 50)
+    ny_avg_mult  = f_mean(m_arr)
+    ny_med_pts   = not na(ny_med_mult) and not na(asia_rng) ? ny_med_mult * asia_rng : na
+    ny_avg_pts   = not na(ny_avg_mult) and not na(asia_rng) ? ny_avg_mult * asia_rng : na
+    bucket_n     = array.size(m_arr)
+
+    cur_ny_rng   = is_ny and not na(ny_start_bar_idx) and bar_index > ny_start_bar_idx ? ny_h - ny_l : na
+    expected_rng = not na(ny_med_mult) and not na(asia_rng) ? ny_med_mult * asia_rng : na
+    completion      = not na(cur_ny_rng) and not na(expected_rng) and expected_rng > 0 ? cur_ny_rng / expected_rng : na
+    expected_rng_avg = not na(ny_avg_mult) and not na(asia_rng) ? ny_avg_mult * asia_rng : na
+    completion_avg  = not na(cur_ny_rng) and not na(expected_rng_avg) and expected_rng_avg > 0 ? cur_ny_rng / expected_rng_avg : na
+
+    bkt_name = cur_bucket == 0 ? "Inside Lower Half" :
+               cur_bucket == 1 ? "Inside Upper Half" :
+               cur_bucket == 2 ? "Above Asia High"   :
+               cur_bucket == 3 ? "Below Asia Low"    : "Unknown"
+
+    compl_str     = not na(completion)     ? str.format("{0,number,#.#}", completion     * 100.0) + "%" : "-"
+    compl_avg_str = not na(completion_avg) ? str.format("{0,number,#.#}", completion_avg * 100.0) + "%" : "-"
+
+    // Row 0: header
+    table.cell(tbl, 0, 0, "NY vs Asia  [N=" + str.tostring(asia_n) + "]",
+               text_size=t_sz, text_color=t_htc, bgcolor=t_hbg, text_font_family=t_fnt)
+    table.merge_cells(tbl, 0, 0, 11, 0)
+
+    f_row(tbl, 1, "Asia Range (pts)",
+          not na(asia_rng) ? str.format("{0,number,#.##}", asia_rng) : "-")
+    f_row(tbl, 2, "Asia Range Z-Score",
+          not na(asia_rng_z) ? str.format("{0,number,#.##}", asia_rng_z) : "-")
+    f_row(tbl, 3, "Asia Range Pctile",
+          not na(asia_rng_pct) ? str.format("{0,number,#.#}", asia_rng_pct) + "%" : "-")
+    f_row(tbl, 4, "NY Open vs Asia",  bkt_name)
+    f_row(tbl, 5, "Bucket Sessions",  str.tostring(bucket_n))
+    f_row(tbl, 6, "Sessions Captured", str.tostring(asia_n))
+    f_row(tbl, 7, "Median NY Rng (x)",   not na(ny_med_mult) ? str.format("{0,number,#.##}", ny_med_mult) + "x" : "-")
+    f_row(tbl, 8, "Avg NY Rng (x)",      not na(ny_avg_mult) ? str.format("{0,number,#.##}", ny_avg_mult) + "x" : "-")
+    f_row(tbl, 9, "Median NY Rng (pts)", not na(ny_med_pts)  ? str.format("{0,number,#.##}", ny_med_pts)  : "-")
+    f_row(tbl, 10, "Avg NY Rng (pts)",   not na(ny_avg_pts)  ? str.format("{0,number,#.##}", ny_avg_pts)  : "-")
+    f_row(tbl, 11, "NY Range (pts)",     not na(cur_ny_rng)  ? str.format("{0,number,#.##}", cur_ny_rng)  : "-")
+
+    // Row 12: Range Complete (median-based)
+    table.cell(tbl, 0, 12, "Complete (med)", text_size=t_sz, text_color=t_tc, bgcolor=t_rbg, text_font_family=t_fnt)
+    table.cell(tbl, 1, 12, compl_str, text_size=t_sz, text_color=t_tc, bgcolor=color.white, text_font_family=t_fnt)
+    table.merge_cells(tbl, 1, 12, 11, 12)
+
+    // Row 13: Range Complete (mean-based)
+    table.cell(tbl, 0, 13, "Complete (avg)", text_size=t_sz, text_color=t_tc, bgcolor=t_rbg, text_font_family=t_fnt)
+    table.cell(tbl, 1, 13, compl_avg_str, text_size=t_sz, text_color=t_tc, bgcolor=color.white, text_font_family=t_fnt)
+    table.merge_cells(tbl, 1, 13, 11, 13)
+
+// ============================================================
+// ALERTS
+// ============================================================
+alertcondition(ny_start, title="NY Session Start", message="NY session opened")
+alertcondition(is_ny and not na(lv_ext_hi_p50) and high >= lv_ext_hi_p50 and not ht_ehi50, title="Hit ExtHi P50", message="Price reached ExtHi P50 level")
+alertcondition(is_ny and not na(lv_ext_lo_p50) and low  <= lv_ext_lo_p50 and not ht_elo50, title="Hit ExtLo P50", message="Price reached ExtLo P50 level")
+alertcondition(is_ny and not na(lv_rev_hi_p50) and low  <= lv_rev_hi_p50 and not ht_rhi50, title="Hit RevHi P50", message="Price reached RevHi P50 level")
+alertcondition(is_ny and not na(lv_rev_lo_p50) and high >= lv_rev_lo_p50 and not ht_rlo50, title="Hit RevLo P50", message="Price reached RevLo P50 level")

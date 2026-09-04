@@ -1,0 +1,830 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=5
+indicator("MTF Swing Highs and Lows with Key Levels", shorttitle = 'Levels', overlay=true, max_bars_back = 5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ===== GENERAL SETTINGS =====
+filterBW = input(false, title="Filter Bill Williams Fractals", group="General Settings")
+fractalBars = input.string("5", title="Fractal Bars", options=["3", "5", "7", "9"], group="General Settings", tooltip="Number of bars used for fractal detection. Higher values = fewer, more significant swing points.")
+LabelsOffset = input(20, title="Label Offset", group="General Settings")
+LineExtension = input(30, title="Line Extension (bars)", group="General Settings")
+LabelColor = input.color(color.purple, title="Label Background", group="General Settings")
+TextColor = input.color(color.black, title="Label Text", group="General Settings")
+
+// ===== 4H CANDLE BOXES =====
+show_4h_boxes = input.bool(true, title="Show 4H Candle Boxes", group="4H Candle Boxes")
+show_hourly_dividers = input.bool(true, title="Show Hourly Dividers", group="4H Candle Boxes")
+show_candle_labels = input.bool(true, title="Show Candle Name Labels", group="4H Candle Boxes")
+divider_color = input.color(color.new(color.gray, 50), title="Divider Color", inline="div", group="4H Candle Boxes")
+divider_style = input.string("Dotted", title="Style", options=["Solid", "Dashed", "Dotted"], inline="div", group="4H Candle Boxes")
+divider_width = input.int(1, title="Width", inline="div", group="4H Candle Boxes")
+label_text_size = input.string("Small", title="Label Size", options=["Tiny", "Small", "Normal"], group="4H Candle Boxes")
+color_6pm = input.color(color.new(#808080, 85), title="6pm", inline="b1", group="4H Candle Boxes")
+color_10pm = input.color(color.new(#2962FF, 85), title="10pm", inline="b1", group="4H Candle Boxes")
+color_2am = input.color(color.new(#9C27B0, 85), title="2am", inline="b2", group="4H Candle Boxes")
+color_6am = input.color(color.new(#FF6D00, 85), title="6am", inline="b2", group="4H Candle Boxes")
+color_10am = input.color(color.new(#26A69A, 85), title="10am", inline="b3", group="4H Candle Boxes")
+color_2pm = input.color(color.new(#EF5350, 85), title="2pm", inline="b3", group="4H Candle Boxes")
+
+// ===== HOD/LOD LINES =====
+show_hod_lod_lines = input.bool(true, title="Show HOD/LOD Lines", group="HOD/LOD Lines")
+ColorHOD = input.color(color.black, title="HOD Color", inline="hl", group="HOD/LOD Lines")
+ColorLOD = input.color(color.black, title="LOD Color", inline="hl", group="HOD/LOD Lines")
+
+// ===== MARKET OPEN LINES =====
+show_market_opens = input.bool(true, title="Show Market Open Lines", group="Market Opens")
+show_globex = input.bool(true, title="6pm Globex", inline="mo1", group="Market Opens")
+color_globex = input.color(color.new(color.gray, 50), title="", inline="mo1", group="Market Opens")
+width_globex = input.int(1, title="Width", inline="mo1", group="Market Opens")
+show_futures = input.bool(true, title="8am Futures", inline="mo2", group="Market Opens")
+color_futures = input.color(color.new(color.blue, 50), title="", inline="mo2", group="Market Opens")
+width_futures = input.int(1, title="Width", inline="mo2", group="Market Opens")
+show_rth = input.bool(true, title="9:30am RTH", inline="mo3", group="Market Opens")
+color_rth = input.color(color.new(color.green, 50), title="", inline="mo3", group="Market Opens")
+width_rth = input.int(1, title="Width", inline="mo3", group="Market Opens")
+
+// ===== DAILY LEVELS =====
+Show2 = input.bool(true, title="Show Daily Levels", group='Daily Levels')
+ColorH2 = input.color(color.black, inline='d', title="High", group='Daily Levels')
+ColorL2 = input.color(color.black, inline='d', title="Low", group='Daily Levels')
+Style2 = input.string("Dotted", options=["Solid","Dotted","Dashed"], inline='d', title="Style", group='Daily Levels')
+Width2 = input.int(1, title="Width", inline="d", group='Daily Levels')
+showFibLevels_daily = input.bool(false, title="Show 50% Fib", group='Daily Levels')
+
+// ===== 4H LEVELS =====
+Show3 = input.bool(true, title="Show 4H Levels", group='4H Levels')
+ColorH3 = input.color(color.black, inline='4h', title="High", group='4H Levels')
+ColorL3 = input.color(color.black, inline='4h', title="Low", group='4H Levels')
+Style3 = input.string("Dotted", options=["Solid","Dotted","Dashed"], inline='4h', title="Style", group='4H Levels')
+Width3 = input.int(1, title="Width", inline="4h", group='4H Levels')
+showFibLevels_4h = input.bool(true, title="Show 50% Fib", group='4H Levels')
+
+// ===== 15M LEVELS =====
+Show6 = input.bool(true, title="Show 15m Levels", group='15M Levels')
+ColorH6 = input.color(color.black, inline='15m', title="High", group='15M Levels')
+ColorL6 = input.color(color.black, inline='15m', title="Low", group='15M Levels')
+Style6 = input.string("Dotted", options=["Solid","Dotted","Dashed"], inline='15m', title="Style", group='15M Levels')
+Width6 = input.int(1, title="Width", inline="15m", group='15M Levels')
+showFibLevels_15m = input.bool(false, title="Show 50% Fib", group='15M Levels')
+
+// ===== 5M LEVELS =====
+Show7 = input.bool(true, title="Show 5m Levels", group='5M Levels')
+ColorH7 = input.color(color.black, inline='5m', title="High", group='5M Levels')
+ColorL7 = input.color(color.black, inline='5m', title="Low", group='5M Levels')
+Style7 = input.string("Dotted", options=["Solid","Dotted","Dashed"], inline='5m', title="Style", group='5M Levels')
+Width7 = input.int(1, title="Width", inline="5m", group='5M Levels')
+showFibLevels_5m = input.bool(false, title="Show 50% Fib", group='5M Levels')
+
+// ===== FIBONACCI SETTINGS =====
+colorFib50 = input.color(color.red, title="50% Fib Color", group='Fibonacci Settings')
+
+// ===== PREVIOUS DAY LEVELS =====
+showPrevDay = input.bool(true, title="Show Previous Day H/L", group='Previous Day')
+ColorPrevDayH = input.color(color.blue, inline='pd', title="High", group='Previous Day')
+ColorPrevDayL = input.color(color.blue, inline='pd', title="Low", group='Previous Day')
+StylePrevDay = input.string("Solid", options=["Solid","Dotted","Dashed"], inline='pd', title="Style", group='Previous Day')
+WidthPrevDay = input.int(1, title="Width", inline="pd", group='Previous Day')
+
+// ===== PREVIOUS WEEK LEVELS =====
+showPrevWeek = input.bool(true, title="Show Previous Week H/L", group='Previous Week')
+ColorPrevWeekH = input.color(color.green, inline='pw', title="High", group='Previous Week')
+ColorPrevWeekL = input.color(color.green, inline='pw', title="Low", group='Previous Week')
+StylePrevWeek = input.string("Solid", options=["Solid","Dotted","Dashed"], inline='pw', title="Style", group='Previous Week')
+WidthPrevWeek = input.int(1, title="Width", inline="pw", group='Previous Week')
+
+// ===== ASIA SESSION LEVELS =====
+showAsia = input.bool(true, title="Show Asia Session H/L", group='Asia Session (6pm-2am EST)')
+ColorAsiaH = input.color(color.orange, inline='asia', title="High", group='Asia Session (6pm-2am EST)')
+ColorAsiaL = input.color(color.orange, inline='asia', title="Low", group='Asia Session (6pm-2am EST)')
+StyleAsia = input.string("Dashed", options=["Solid","Dotted","Dashed"], inline='asia', title="Style", group='Asia Session (6pm-2am EST)')
+WidthAsia = input.int(1, title="Width", inline="asia", group='Asia Session (6pm-2am EST)')
+
+// ===== LONDON SESSION LEVELS =====
+showLondon = input.bool(true, title="Show London Session H/L", group='London Session (2am-8am EST)')
+ColorLondonH = input.color(color.purple, inline='london', title="High", group='London Session (2am-8am EST)')
+ColorLondonL = input.color(color.purple, inline='london', title="Low", group='London Session (2am-8am EST)')
+StyleLondon = input.string("Dashed", options=["Solid","Dotted","Dashed"], inline='london', title="Style", group='London Session (2am-8am EST)')
+WidthLondon = input.int(1, title="Width", inline="london", group='London Session (2am-8am EST)')
+
+// ===== 4H CANDLE DATA TYPE =====
+type candle_data
+    float hi = na
+    float lo = na
+    float op = na
+    float cl = na
+    int start_bar = na
+    int end_bar = na
+    box candle_box = na
+    label time_label = na
+    line divider_1h = na
+    line divider_2h = na
+    line divider_3h = na
+    label candle_label = na
+    bool completed = false
+    string name = ""
+    string time_range = ""
+    color box_color = na
+
+// ===== SESSION DETECTION =====
+sess_6pm = "1800-2200"
+sess_10pm = "2200-0200"
+sess_2am = "0200-0600"
+sess_6am = "0600-1000"
+sess_10am = "1000-1400"
+sess_2pm = "1400-1700"
+
+in_6pm = not na(time("", sess_6pm, "America/New_York"))
+in_10pm = not na(time("", sess_10pm, "America/New_York"))
+in_2am = not na(time("", sess_2am, "America/New_York"))
+in_6am = not na(time("", sess_6am, "America/New_York"))
+in_10am = not na(time("", sess_10am, "America/New_York"))
+in_2pm = not na(time("", sess_2pm, "America/New_York"))
+
+// ===== PIVOT OFFSET CALCULATION =====
+// The pivot bar offset depends on the number of fractal bars selected
+pivotOffset = fractalBars == "3" ? 1 : fractalBars == "5" ? 2 : fractalBars == "7" ? 3 : 4
+
+// ===== CORE FUNCTIONS =====
+
+isRegularFractal(mode) =>
+    bool result = false
+    if fractalBars == "3"
+        // 3-bar fractal: pivot at index 1
+        result := mode == 1 ? high[2] < high[1] and high[1] > high[0] : mode == -1 ? low[2] > low[1] and low[1] < low[0] : false
+    else if fractalBars == "5"
+        // 5-bar fractal: pivot at index 2 (original behaviour)
+        result := mode == 1 ? high[4] < high[3] and high[3] < high[2] and high[2] > high[1] and high[1] > high[0] : mode == -1 ? low[4] > low[3] and low[3] > low[2] and low[2] < low[1] and low[1] < low[0] : false
+    else if fractalBars == "7"
+        // 7-bar fractal: pivot at index 3
+        result := mode == 1 ? high[6] < high[5] and high[5] < high[4] and high[4] < high[3] and high[3] > high[2] and high[2] > high[1] and high[1] > high[0] : mode == -1 ? low[6] > low[5] and low[5] > low[4] and low[4] > low[3] and low[3] < low[2] and low[2] < low[1] and low[1] < low[0] : false
+    else
+        // 9-bar fractal: pivot at index 4
+        result := mode == 1 ? high[8] < high[7] and high[7] < high[6] and high[6] < high[5] and high[5] < high[4] and high[4] > high[3] and high[3] > high[2] and high[2] > high[1] and high[1] > high[0] : mode == -1 ? low[8] > low[7] and low[7] > low[6] and low[6] > low[5] and low[5] > low[4] and low[4] < low[3] and low[3] < low[2] and low[2] < low[1] and low[1] < low[0] : false
+    result
+
+isBWFractal(mode) =>
+    bool result = false
+    if fractalBars == "3"
+        // 3-bar Bill Williams: same as regular for 3 bars
+        result := mode == 1 ? high[2] < high[1] and high[1] > high[0] : mode == -1 ? low[2] > low[1] and low[1] < low[0] : false
+    else if fractalBars == "5"
+        // 5-bar Bill Williams: pivot at index 2 (original behaviour)
+        result := mode == 1 ? high[4] < high[2] and high[3] <= high[2] and high[2] >= high[1] and high[2] > high[0] : mode == -1 ? low[4] > low[2] and low[3] >= low[2] and low[2] <= low[1] and low[2] < low[0] : false
+    else if fractalBars == "7"
+        // 7-bar Bill Williams: pivot at index 3
+        result := mode == 1 ? high[6] < high[3] and high[5] <= high[3] and high[4] <= high[3] and high[3] >= high[2] and high[3] >= high[1] and high[3] > high[0] : mode == -1 ? low[6] > low[3] and low[5] >= low[3] and low[4] >= low[3] and low[3] <= low[2] and low[3] <= low[1] and low[3] < low[0] : false
+    else
+        // 9-bar Bill Williams: pivot at index 4
+        result := mode == 1 ? high[8] < high[4] and high[7] <= high[4] and high[6] <= high[4] and high[5] <= high[4] and high[4] >= high[3] and high[4] >= high[2] and high[4] >= high[1] and high[4] > high[0] : mode == -1 ? low[8] > low[4] and low[7] >= low[4] and low[6] >= low[4] and low[5] >= low[4] and low[4] <= low[3] and low[4] <= low[2] and low[4] <= low[1] and low[4] < low[0] : false
+    result
+
+dt = time - time[1]
+
+GetLastPivots() =>
+    var float LastPh_v = na
+    var float LastPl_v = na
+    var int LastPh_t = na
+    var int LastPl_t = na
+    
+    // Calculate offset based on fractal bars setting
+    int offset = fractalBars == "3" ? 1 : fractalBars == "5" ? 2 : fractalBars == "7" ? 3 : 4
+    
+    filteredtopf = filterBW ? isRegularFractal(1) : isBWFractal(1)
+    filteredbotf = filterBW ? isRegularFractal(-1) : isBWFractal(-1)
+
+    if filteredtopf
+        LastPh_v := high[offset]
+        LastPh_t := time[offset]
+    if filteredbotf
+        LastPl_v := low[offset]
+        LastPl_t := time[offset]
+        
+    [LastPh_v, LastPh_t, LastPl_v, LastPl_t]
+
+StyleToEnum(s) =>
+    if s == 'Solid'
+        line.style_solid
+    else if s == 'Dotted'
+        line.style_dotted
+    else
+        line.style_dashed
+
+GetTextSize(s) =>
+    if s == 'Tiny'
+        size.tiny
+    else if s == 'Small'
+        size.small
+    else
+        size.normal
+
+FindT(t, v) =>
+    int result = time
+    begin = (time - t) / dt
+    if begin < 5000
+        for i = begin to 0
+            if high[i] == v or low[i] == v
+                result := t + (begin-i) * dt
+                break
+        result
+    else
+        t
+
+// ===== GET SWING LEVELS =====
+[LastPh_v2, LastPh_t2_, LastPl_v2, LastPl_t2_] = request.security(syminfo.tickerid, "D", GetLastPivots())
+[LastPh_v3, LastPh_t3_, LastPl_v3, LastPl_t3_] = request.security(syminfo.tickerid, "240", GetLastPivots())
+[LastPh_v6, LastPh_t6_, LastPl_v6, LastPl_t6_] = request.security(syminfo.tickerid, "15", GetLastPivots())
+[LastPh_v7, LastPh_t7_, LastPl_v7, LastPl_t7_] = request.security(syminfo.tickerid, "5", GetLastPivots())
+
+// ===== GET PREVIOUS DAY/WEEK LEVELS =====
+[prevDayHigh, prevDayLow] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+[prevWeekHigh, prevWeekLow] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// ===== 4H CANDLE VARIABLES =====
+var bool new_trading_day = false
+
+var candle_data c_6pm = candle_data.new(name="6pm", box_color=color_6pm, time_range="6pm-10pm")
+var candle_data c_10pm = candle_data.new(name="10pm", box_color=color_10pm, time_range="10pm-2am")
+var candle_data c_2am = candle_data.new(name="2am", box_color=color_2am, time_range="2am-6am")
+var candle_data c_6am = candle_data.new(name="6am", box_color=color_6am, time_range="6am-10am")
+var candle_data c_10am = candle_data.new(name="10am", box_color=color_10am, time_range="10am-2pm")
+var candle_data c_2pm = candle_data.new(name="2pm", box_color=color_2pm, time_range="2pm-6pm")
+
+var float session_hod = na
+var float session_lod = na
+var string hod_candle_name = ""
+var string lod_candle_name = ""
+var int hod_bar = na
+var int lod_bar = na
+var int hod_time = na
+var int lod_time = na
+
+var line hod_line = na
+var line lod_line = na
+var label hod_label = na
+var label lod_label = na
+
+var array<box> all_boxes = array.new<box>()
+
+// ===== MARKET OPEN TRACKING =====
+var float globex_open = na
+var float futures_open = na
+var float rth_open = na
+var int globex_open_bar = na
+var int futures_open_bar = na
+var int rth_open_bar = na
+var int globex_open_time = na
+var int futures_open_time = na
+var int rth_open_time = na
+
+var line globex_line = na
+var line futures_line = na
+var line rth_line = na
+var label globex_label = na
+var label futures_label = na
+var label rth_label = na
+
+// ===== NEW TRADING DAY DETECTION =====
+new_trading_day := in_6pm and not in_6pm[1]
+
+if new_trading_day
+    c_6pm.completed := false
+    c_10pm.completed := false
+    c_2am.completed := false
+    c_6am.completed := false
+    c_10am.completed := false
+    c_2pm.completed := false
+    
+    session_hod := na
+    session_lod := na
+    hod_candle_name := ""
+    lod_candle_name := ""
+    hod_bar := na
+    lod_bar := na
+    
+    globex_open := na
+    futures_open := na
+    rth_open := na
+    globex_open_bar := na
+    futures_open_bar := na
+    rth_open_bar := na
+    globex_open_time := na
+    futures_open_time := na
+    rth_open_time := na
+    
+    if not na(hod_line)
+        line.delete(hod_line)
+        hod_line := na
+    if not na(lod_line)
+        line.delete(lod_line)
+        lod_line := na
+    if not na(hod_label)
+        label.delete(hod_label)
+        hod_label := na
+    if not na(lod_label)
+        label.delete(lod_label)
+        lod_label := na
+    
+    if not na(globex_line)
+        line.delete(globex_line)
+        globex_line := na
+    if not na(futures_line)
+        line.delete(futures_line)
+        futures_line := na
+    if not na(rth_line)
+        line.delete(rth_line)
+        rth_line := na
+    if not na(globex_label)
+        label.delete(globex_label)
+        globex_label := na
+    if not na(futures_label)
+        label.delete(futures_label)
+        futures_label := na
+    if not na(rth_label)
+        label.delete(rth_label)
+        rth_label := na
+    
+    while array.size(all_boxes) > 20
+        box.delete(array.shift(all_boxes))
+
+// ===== SESSION DETECTION =====
+// EST timezone offset from exchange time
+// Asia: 6pm EST (18:00) to 2am EST (02:00) - 8 hours
+// London: 2am EST (02:00) to 8am EST (08:00) - 6 hours
+
+isAsiaSession() =>
+    h = hour(time, "America/New_York")
+    (h >= 18) or (h < 2)
+
+isLondonSession() =>
+    h = hour(time, "America/New_York")
+    (h >= 2) and (h < 8)
+
+// Track session highs/lows
+var float asiaHigh = na
+var float asiaLow = na
+var float londonHigh = na
+var float londonLow = na
+var bool asiaSessionActive = false
+var bool londonSessionActive = false
+
+// Asia Session
+if isAsiaSession()
+    if not asiaSessionActive
+        asiaSessionActive := true
+        asiaHigh := high
+        asiaLow := low
+    else
+        asiaHigh := math.max(asiaHigh, high)
+        asiaLow := math.min(asiaLow, low)
+else
+    asiaSessionActive := false
+
+// London Session
+if isLondonSession()
+    if not londonSessionActive
+        londonSessionActive := true
+        londonHigh := high
+        londonLow := low
+    else
+        londonHigh := math.max(londonHigh, high)
+        londonLow := math.min(londonLow, low)
+else
+    londonSessionActive := false
+
+// ===== UPDATE 4H CANDLES =====
+update_candle(candle_data c, bool in_session) =>
+    if in_session and not in_session[1]
+        c.hi := high
+        c.lo := low
+        c.op := open
+        c.start_bar := bar_index
+        c.completed := false
+        
+        if show_4h_boxes
+            c.candle_box := box.new(bar_index, high, bar_index, low,
+                 bgcolor=c.box_color,
+                 border_color=color.new(c.box_color, 0),
+                 border_width=1)
+            
+            // Add time range label
+            label_y = low - (high - low) * 0.1
+            c.time_label := label.new(bar_index, label_y, c.time_range,
+                 style=label.style_none,
+                 color=color.new(color.white, 100),
+                 textcolor=color.new(color.gray, 0),
+                 size=size.small)
+    
+    if in_session and in_session[1]
+        if na(c.hi)
+            c.hi := high
+        else
+            c.hi := math.max(c.hi, high)
+        
+        if na(c.lo)
+            c.lo := low
+        else
+            c.lo := math.min(c.lo, low)
+        
+        if na(c.start_bar)
+            c.start_bar := bar_index
+            c.op := open
+        
+        // Calculate time elapsed in minutes
+        int bars_elapsed = bar_index - c.start_bar
+        int minutes_per_bar = timeframe.in_seconds(timeframe.period) / 60
+        int minutes_elapsed = bars_elapsed * minutes_per_bar
+        
+        // Determine which hour we're in
+        bool in_hour_1 = minutes_elapsed < 60
+        bool in_hour_2 = minutes_elapsed >= 60 and minutes_elapsed < 120
+        bool in_hour_3 = minutes_elapsed >= 120 and minutes_elapsed < 180
+        bool in_hour_4 = minutes_elapsed >= 180
+        
+        if show_4h_boxes and na(c.candle_box)
+            c.candle_box := box.new(c.start_bar, c.hi, bar_index, c.lo,
+                 bgcolor=c.box_color,
+                 border_color=color.new(c.box_color, 0),
+                 border_width=1)
+        
+        if show_4h_boxes and not na(c.candle_box)
+            box.set_top(c.candle_box, c.hi)
+            box.set_bottom(c.candle_box, c.lo)
+            box.set_right(c.candle_box, bar_index)
+            
+            // Update time range label position
+            if not na(c.time_label)
+                label_y = c.lo - (c.hi - c.lo) * 0.1
+                label.set_y(c.time_label, label_y)
+                label.set_x(c.time_label, c.start_bar)
+        
+        // Draw hourly dividers
+        if show_hourly_dividers and show_4h_boxes
+            // 1H divider
+            if in_hour_2 and na(c.divider_1h)
+                c.divider_1h := line.new(bar_index, c.lo, bar_index, c.hi,
+                     xloc=xloc.bar_index,
+                     color=divider_color,
+                     style=StyleToEnum(divider_style),
+                     width=divider_width)
+            else if not na(c.divider_1h)
+                line.set_y1(c.divider_1h, c.lo)
+                line.set_y2(c.divider_1h, c.hi)
+            
+            // 2H divider and label
+            if in_hour_3 and na(c.divider_2h)
+                c.divider_2h := line.new(bar_index, c.lo, bar_index, c.hi,
+                     xloc=xloc.bar_index,
+                     color=divider_color,
+                     style=StyleToEnum(divider_style),
+                     width=divider_width)
+                
+                if show_candle_labels
+                    c.candle_label := label.new(bar_index, c.hi, c.name,
+                         style=label.style_none,
+                         color=color.new(color.white, 100),
+                         textcolor=divider_color,
+                         size=GetTextSize(label_text_size))
+            else if not na(c.divider_2h)
+                line.set_y1(c.divider_2h, c.lo)
+                line.set_y2(c.divider_2h, c.hi)
+                if show_candle_labels and not na(c.candle_label)
+                    label.set_y(c.candle_label, c.hi)
+            
+            // 3H divider
+            if in_hour_4 and na(c.divider_3h)
+                c.divider_3h := line.new(bar_index, c.lo, bar_index, c.hi,
+                     xloc=xloc.bar_index,
+                     color=divider_color,
+                     style=StyleToEnum(divider_style),
+                     width=divider_width)
+            else if not na(c.divider_3h)
+                line.set_y1(c.divider_3h, c.lo)
+                line.set_y2(c.divider_3h, c.hi)
+    
+    if not in_session and in_session[1]
+        c.cl := close[1]
+        c.end_bar := bar_index - 1
+        c.completed := true
+        
+        if show_4h_boxes and not na(c.candle_box)
+            box.set_right(c.candle_box, c.end_bar)
+            array.push(all_boxes, c.candle_box)
+
+update_candle(c_6pm, in_6pm)
+update_candle(c_10pm, in_10pm)
+update_candle(c_2am, in_2am)
+update_candle(c_6am, in_6am)
+update_candle(c_10am, in_10am)
+update_candle(c_2pm, in_2pm)
+
+// ===== CAPTURE MARKET OPEN PRICES =====
+h = hour(time, "America/New_York")
+m = minute(time, "America/New_York")
+
+// 6pm Globex Open (18:00 EST)
+if h == 18 and m == 0 and na(globex_open)
+    globex_open := open
+    globex_open_bar := bar_index
+    globex_open_time := time
+
+// 8am Futures Open (08:00 EST)
+if h == 8 and m == 0 and na(futures_open)
+    futures_open := open
+    futures_open_bar := bar_index
+    futures_open_time := time
+
+// 9:30am RTH Open (09:30 EST)
+if h == 9 and m == 30 and na(rth_open)
+    rth_open := open
+    rth_open_bar := bar_index
+    rth_open_time := time
+
+// ===== TRACK SESSION HOD/LOD =====
+if not new_trading_day
+    if na(session_hod) or high > session_hod
+        session_hod := high
+        hod_bar := bar_index
+        hod_time := time
+        
+        if in_6pm or (not c_6pm.completed and c_6pm.start_bar <= bar_index)
+            hod_candle_name := "6pm"
+        else if in_10pm or (not c_10pm.completed and c_10pm.start_bar <= bar_index)
+            hod_candle_name := "10pm"
+        else if in_2am or (not c_2am.completed and c_2am.start_bar <= bar_index)
+            hod_candle_name := "2am"
+        else if in_6am or (not c_6am.completed and c_6am.start_bar <= bar_index)
+            hod_candle_name := "6am"
+        else if in_10am or (not c_10am.completed and c_10am.start_bar <= bar_index)
+            hod_candle_name := "10am"
+        else if in_2pm or (not c_2pm.completed and c_2pm.start_bar <= bar_index)
+            hod_candle_name := "2pm"
+    
+    if na(session_lod) or low < session_lod
+        session_lod := low
+        lod_bar := bar_index
+        lod_time := time
+        
+        if in_6pm or (not c_6pm.completed and c_6pm.start_bar <= bar_index)
+            lod_candle_name := "6pm"
+        else if in_10pm or (not c_10pm.completed and c_10pm.start_bar <= bar_index)
+            lod_candle_name := "10pm"
+        else if in_2am or (not c_2am.completed and c_2am.start_bar <= bar_index)
+            lod_candle_name := "2am"
+        else if in_6am or (not c_6am.completed and c_6am.start_bar <= bar_index)
+            lod_candle_name := "6am"
+        else if in_10am or (not c_10am.completed and c_10am.start_bar <= bar_index)
+            lod_candle_name := "10am"
+        else if in_2pm or (not c_2pm.completed and c_2pm.start_bar <= bar_index)
+            lod_candle_name := "2pm"
+
+// ===== FIND TIMESTAMPS =====
+LastPl_t2 = FindT(LastPl_t2_, LastPl_v2)
+LastPh_t2 = FindT(LastPh_t2_, LastPh_v2)
+LastPl_t3 = FindT(LastPl_t3_, LastPl_v3)
+LastPh_t3 = FindT(LastPh_t3_, LastPh_v3)
+LastPl_t6 = FindT(LastPl_t6_, LastPl_v6)
+LastPh_t6 = FindT(LastPh_t6_, LastPh_v6)
+LastPl_t7 = FindT(LastPl_t7_, LastPl_v7)
+LastPh_t7 = FindT(LastPh_t7_, LastPh_v7)
+
+// ===== DRAW LINES AND LABELS =====
+line lh2 = na, line ll2 = na
+line lh3 = na, line ll3 = na
+line lh6 = na, line ll6 = na
+line lh7 = na, line ll7 = na
+line lPrevDayH = na, line lPrevDayL = na
+line lPrevWeekH = na, line lPrevWeekL = na
+line lAsiaH = na, line lAsiaL = na
+line lLondonH = na, line lLondonL = na
+
+label lblh2 = na, label lbll2 = na
+label lblh3 = na, label lbll3 = na
+label lblh6 = na, label lbll6 = na
+label lblh7 = na, label lbll7 = na
+label lblPrevDayH = na, label lblPrevDayL = na
+label lblPrevWeekH = na, label lblPrevWeekL = na
+label lblAsiaH = na, label lblAsiaL = na
+label lblLondonH = na, label lblLondonL = na
+
+// Fib lines
+line fib50_daily = na
+line fib50_4h = na
+line fib50_15m = na
+line fib50_5m = na
+
+if barstate.islast
+    // Daily levels
+    if Show2
+        lh2 := line.new(LastPh_t2, LastPh_v2, time + LineExtension*dt, LastPh_v2, xloc=xloc.bar_time, color=ColorH2, style=StyleToEnum(Style2), width=Width2)
+        line.delete(lh2[1])
+        
+        ll2 := line.new(LastPl_t2, LastPl_v2, time + LineExtension*dt, LastPl_v2, xloc=xloc.bar_time, color=ColorL2, style=StyleToEnum(Style2), width=Width2)
+        line.delete(ll2[1])
+        
+        lblh2 := label.new(bar_index + LabelsOffset, LastPh_v2, "Daily MS High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblh2[1])
+        lbll2 := label.new(bar_index + LabelsOffset, LastPl_v2, "Daily MS Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lbll2[1])
+        
+        // Daily 50% Fib
+        if showFibLevels_daily
+            fib50Level_daily = LastPl_v2 + (LastPh_v2 - LastPl_v2) * 0.5
+            fib50_daily := line.new(LastPl_t2, fib50Level_daily, time + LineExtension*dt, fib50Level_daily, xloc=xloc.bar_time, color=colorFib50, style=line.style_dashed)
+            line.delete(fib50_daily[1])
+    
+    // 4H levels
+    if Show3
+        lh3 := line.new(LastPh_t3, LastPh_v3, time + LineExtension*dt, LastPh_v3, xloc=xloc.bar_time, color=ColorH3, style=StyleToEnum(Style3), width=Width3)
+        line.delete(lh3[1])
+        
+        ll3 := line.new(LastPl_t3, LastPl_v3, time + LineExtension*dt, LastPl_v3, xloc=xloc.bar_time, color=ColorL3, style=StyleToEnum(Style3), width=Width3)
+        line.delete(ll3[1])
+        
+        lblh3 := label.new(bar_index + LabelsOffset, LastPh_v3, "4H MS High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblh3[1])
+        lbll3 := label.new(bar_index + LabelsOffset, LastPl_v3, "4H MS Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lbll3[1])
+        
+        // 4H 50% Fib
+        if showFibLevels_4h
+            fib50Level_4h = LastPl_v3 + (LastPh_v3 - LastPl_v3) * 0.5
+            fib50_4h := line.new(LastPl_t3, fib50Level_4h, time + LineExtension*dt, fib50Level_4h, xloc=xloc.bar_time, color=colorFib50, style=line.style_dashed)
+            line.delete(fib50_4h[1])
+
+    // 15M levels
+    if Show6
+        lh6 := line.new(LastPh_t6, LastPh_v6, time + LineExtension*dt, LastPh_v6, xloc=xloc.bar_time, color=ColorH6, style=StyleToEnum(Style6), width=Width6)
+        line.delete(lh6[1])
+        
+        ll6 := line.new(LastPl_t6, LastPl_v6, time + LineExtension*dt, LastPl_v6, xloc=xloc.bar_time, color=ColorL6, style=StyleToEnum(Style6), width=Width6)
+        line.delete(ll6[1])
+        
+        lblh6 := label.new(bar_index + LabelsOffset, LastPh_v6, "15m MS High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblh6[1])
+        lbll6 := label.new(bar_index + LabelsOffset, LastPl_v6, "15m MS Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lbll6[1])
+        
+        // 15M 50% Fib
+        if showFibLevels_15m
+            fib50Level_15m = LastPl_v6 + (LastPh_v6 - LastPl_v6) * 0.5
+            fib50_15m := line.new(LastPl_t6, fib50Level_15m, time + LineExtension*dt, fib50Level_15m, xloc=xloc.bar_time, color=colorFib50, style=line.style_dashed)
+            line.delete(fib50_15m[1])
+
+    // 5M levels
+    if Show7
+        lh7 := line.new(LastPh_t7, LastPh_v7, time + LineExtension*dt, LastPh_v7, xloc=xloc.bar_time, color=ColorH7, style=StyleToEnum(Style7), width=Width7)
+        line.delete(lh7[1])
+        
+        ll7 := line.new(LastPl_t7, LastPl_v7, time + LineExtension*dt, LastPl_v7, xloc=xloc.bar_time, color=ColorL7, style=StyleToEnum(Style7), width=Width7)
+        line.delete(ll7[1])
+        
+        lblh7 := label.new(bar_index + LabelsOffset, LastPh_v7, "5m MS High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblh7[1])
+        lbll7 := label.new(bar_index + LabelsOffset, LastPl_v7, "5m MS Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lbll7[1])
+        
+        // 5M 50% Fib
+        if showFibLevels_5m
+            fib50Level_5m = LastPl_v7 + (LastPh_v7 - LastPl_v7) * 0.5
+            fib50_5m := line.new(LastPl_t7, fib50Level_5m, time + LineExtension*dt, fib50Level_5m, xloc=xloc.bar_time, color=colorFib50, style=line.style_dashed)
+            line.delete(fib50_5m[1])
+
+    // Previous Day levels
+    if showPrevDay and not na(prevDayHigh) and not na(prevDayLow)
+        lPrevDayH := line.new(time - 50*dt, prevDayHigh, time + LineExtension*dt, prevDayHigh, xloc=xloc.bar_time, color=ColorPrevDayH, style=StyleToEnum(StylePrevDay), width=WidthPrevDay)
+        line.delete(lPrevDayH[1])
+        
+        lPrevDayL := line.new(time - 50*dt, prevDayLow, time + LineExtension*dt, prevDayLow, xloc=xloc.bar_time, color=ColorPrevDayL, style=StyleToEnum(StylePrevDay), width=WidthPrevDay)
+        line.delete(lPrevDayL[1])
+        
+        lblPrevDayH := label.new(bar_index + LabelsOffset, prevDayHigh, "Prev Day High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblPrevDayH[1])
+        lblPrevDayL := label.new(bar_index + LabelsOffset, prevDayLow, "Prev Day Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblPrevDayL[1])
+
+    // Previous Week levels
+    if showPrevWeek and not na(prevWeekHigh) and not na(prevWeekLow)
+        lPrevWeekH := line.new(time - 50*dt, prevWeekHigh, time + LineExtension*dt, prevWeekHigh, xloc=xloc.bar_time, color=ColorPrevWeekH, style=StyleToEnum(StylePrevWeek), width=WidthPrevWeek)
+        line.delete(lPrevWeekH[1])
+        
+        lPrevWeekL := line.new(time - 50*dt, prevWeekLow, time + LineExtension*dt, prevWeekLow, xloc=xloc.bar_time, color=ColorPrevWeekL, style=StyleToEnum(StylePrevWeek), width=WidthPrevWeek)
+        line.delete(lPrevWeekL[1])
+        
+        lblPrevWeekH := label.new(bar_index + LabelsOffset, prevWeekHigh, "Prev Week High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblPrevWeekH[1])
+        lblPrevWeekL := label.new(bar_index + LabelsOffset, prevWeekLow, "Prev Week Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblPrevWeekL[1])
+
+    // Asia Session levels
+    if showAsia and not na(asiaHigh) and not na(asiaLow)
+        lAsiaH := line.new(time - 50*dt, asiaHigh, time + LineExtension*dt, asiaHigh, xloc=xloc.bar_time, color=ColorAsiaH, style=StyleToEnum(StyleAsia), width=WidthAsia)
+        line.delete(lAsiaH[1])
+        
+        lAsiaL := line.new(time - 50*dt, asiaLow, time + LineExtension*dt, asiaLow, xloc=xloc.bar_time, color=ColorAsiaL, style=StyleToEnum(StyleAsia), width=WidthAsia)
+        line.delete(lAsiaL[1])
+        
+        lblAsiaH := label.new(bar_index + LabelsOffset, asiaHigh, "Asia High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblAsiaH[1])
+        lblAsiaL := label.new(bar_index + LabelsOffset, asiaLow, "Asia Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblAsiaL[1])
+
+    // London Session levels
+    if showLondon and not na(londonHigh) and not na(londonLow)
+        lLondonH := line.new(time - 50*dt, londonHigh, time + LineExtension*dt, londonHigh, xloc=xloc.bar_time, color=ColorLondonH, style=StyleToEnum(StyleLondon), width=WidthLondon)
+        line.delete(lLondonH[1])
+        
+        lLondonL := line.new(time - 50*dt, londonLow, time + LineExtension*dt, londonLow, xloc=xloc.bar_time, color=ColorLondonL, style=StyleToEnum(StyleLondon), width=WidthLondon)
+        line.delete(lLondonL[1])
+        
+        lblLondonH := label.new(bar_index + LabelsOffset, londonHigh, "London High", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblLondonH[1])
+        lblLondonL := label.new(bar_index + LabelsOffset, londonLow, "London Low", color=LabelColor, style=label.style_none, textcolor=TextColor, textalign=text.align_right, size=size.small)
+        label.delete(lblLondonL[1])
+
+    // HOD Line
+    if show_hod_lod_lines and not na(session_hod) and not na(hod_time)
+        if not na(hod_line)
+            line.delete(hod_line)
+        if not na(hod_label)
+            label.delete(hod_label)
+        
+        hod_line := line.new(hod_time, session_hod, time + LineExtension*dt, session_hod,
+             xloc=xloc.bar_time, color=ColorHOD, width=1, style=line.style_solid)
+        
+        hod_label_text = "HOD: " + hod_candle_name + " | " + str.tostring(session_hod, "#.##")
+        hod_label := label.new(bar_index + LabelsOffset, session_hod, hod_label_text,
+             style=label.style_none,
+             color=LabelColor,
+             textcolor=TextColor,
+             size=size.small,
+             textalign=text.align_right)
+
+    // LOD Line
+    if show_hod_lod_lines and not na(session_lod) and not na(lod_time)
+        if not na(lod_line)
+            line.delete(lod_line)
+        if not na(lod_label)
+            label.delete(lod_label)
+        
+        lod_line := line.new(lod_time, session_lod, time + LineExtension*dt, session_lod,
+             xloc=xloc.bar_time, color=ColorLOD, width=1, style=line.style_solid)
+        
+        lod_label_text = "LOD: " + lod_candle_name + " | " + str.tostring(session_lod, "#.##")
+        lod_label := label.new(bar_index + LabelsOffset, session_lod, lod_label_text,
+             style=label.style_none,
+             color=LabelColor,
+             textcolor=TextColor,
+             size=size.small,
+             textalign=text.align_right)
+
+    // Globex Open Line
+    if show_market_opens and show_globex and not na(globex_open) and not na(globex_open_time)
+        if not na(globex_line)
+            line.delete(globex_line)
+        if not na(globex_label)
+            label.delete(globex_label)
+        
+        globex_line := line.new(globex_open_time, globex_open, time + LineExtension*dt, globex_open,
+             xloc=xloc.bar_time, color=color_globex, width=width_globex, style=line.style_solid)
+        
+        globex_label := label.new(bar_index + LabelsOffset, globex_open, "6pm Globex",
+             style=label.style_none,
+             color=color.new(color.white, 100),
+             textcolor=color.black,
+             size=size.small,
+             textalign=text.align_right)
+
+    // Futures Open Line
+    if show_market_opens and show_futures and not na(futures_open) and not na(futures_open_time)
+        if not na(futures_line)
+            line.delete(futures_line)
+        if not na(futures_label)
+            label.delete(futures_label)
+        
+        futures_line := line.new(futures_open_time, futures_open, time + LineExtension*dt, futures_open,
+             xloc=xloc.bar_time, color=color_futures, width=width_futures, style=line.style_solid)
+        
+        futures_label := label.new(bar_index + LabelsOffset, futures_open, "8am Futures",
+             style=label.style_none,
+             color=color.new(color.white, 100),
+             textcolor=color.black,
+             size=size.small,
+             textalign=text.align_right)
+
+    // RTH Open Line
+    if show_market_opens and show_rth and not na(rth_open) and not na(rth_open_time)
+        if not na(rth_line)
+            line.delete(rth_line)
+        if not na(rth_label)
+            label.delete(rth_label)
+        
+        rth_line := line.new(rth_open_time, rth_open, time + LineExtension*dt, rth_open,
+             xloc=xloc.bar_time, color=color_rth, width=width_rth, style=line.style_solid)
+        
+        rth_label := label.new(bar_index + LabelsOffset, rth_open, "9:30am RTH",
+             style=label.style_none,
+             color=color.new(color.white, 100),
+             textcolor=color.black,
+             size=size.small,
+             textalign=text.align_right)

@@ -1,0 +1,604 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=6
+indicator(title="4H Candle Curves", shorttitle="4H Curves", overlay=true)
+
+// === Input Definitions ===
+time_zone = "America/New_York"
+
+// 4H Candle Sessions (24-hour cycle starting 6pm EST)
+session_6pm = "1800-2200"   // 6pm-10pm
+session_10pm = "2200-0200"  // 10pm-2am  
+session_2am = "0200-0600"   // 2am-6am
+session_6am = "0600-1000"   // 6am-10am
+session_10am = "1000-1400"  // 10am-2pm
+session_2pm = "1400-1700"   // 2pm-5pm (only 3 hours)
+
+// Display Settings
+show_4h_boxes = input.bool(true, "Show 4H Candle Boxes", group="Display")
+box_color_6pm = input.color(color.new(color.blue, 90), "6pm Box", inline="boxes", group="Display")
+box_color_10pm = input.color(color.new(color.purple, 90), "10pm Box", inline="boxes", group="Display")
+box_color_2am = input.color(color.new(color.orange, 90), "2am Box", inline="boxes", group="Display")
+box_color_6am = input.color(color.new(color.green, 90), "6am Box", inline="boxes2", group="Display")
+box_color_10am = input.color(color.new(color.red, 90), "10am Box", inline="boxes2", group="Display")
+box_color_2pm = input.color(color.new(color.yellow, 90), "2pm Box", inline="boxes2", group="Display")
+
+show_quarter_lines = input.bool(true, "Show Quarter Separators (1H, 2H, 3H)", group="Display")
+show_quarter_labels = input.bool(true, "Show Candle Name Labels (at 2H mark)", group="Display")
+quarter_line_color = input.color(color.gray, "Separator Line Color", group="Display")
+quarter_line_style = input.string("Dotted", "Separator Line Style", options=["Solid", "Dashed", "Dotted"], group="Display")
+quarter_line_width = input.int(1, "Separator Line Width", minval=1, maxval=4, group="Display")
+
+max_candles = input.int(20, "Max Historical 4H Candles", minval=1, maxval=50, group="Display")
+
+// Table Settings
+show_live_table = input.bool(true, "Show Live Status Table", group="Tables")
+live_table_position = input.string("Bottom-Right", "Live Table Position", options=["Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right"], group="Tables")
+show_reference_table = input.bool(true, "Show Curve Reference Table", group="Tables")
+reference_table_position = input.string("Bottom-Left", "Reference Table Position", options=["Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right"], group="Tables")
+table_text_size = input.string("Small", "Table Text Size", options=["Tiny", "Small", "Normal"], group="Tables")
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_text_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size.normal
+
+get_table_position(pos_string) =>
+    pos_string == "Top-Left" ? position.top_left : pos_string == "Top-Right" ? position.top_right : pos_string == "Bottom-Left" ? position.bottom_left : position.bottom_right
+
+get_box_color(candle_name) =>
+    candle_name == "6pm" ? box_color_6pm : candle_name == "10pm" ? box_color_10pm : candle_name == "2am" ? box_color_2am : candle_name == "6am" ? box_color_6am : candle_name == "10am" ? box_color_10am : box_color_2pm
+
+// === Session Detection ===
+is_in_6pm = not na(time(timeframe.period, session_6pm, time_zone))
+is_in_10pm = not na(time(timeframe.period, session_10pm, time_zone))
+is_in_2am = not na(time(timeframe.period, session_2am, time_zone))
+is_in_6am = not na(time(timeframe.period, session_6am, time_zone))
+is_in_10am = not na(time(timeframe.period, session_10am, time_zone))
+is_in_2pm = not na(time(timeframe.period, session_2pm, time_zone))
+
+// === Data Tracking ===
+var string current_candle = ""
+var float candle_open = na
+var float candle_high = na
+var float candle_low = na
+var float candle_close = na
+var int candle_start_bar = na
+var int candle_id = 0
+
+var float q1_high = na
+var float q1_low = na
+var float q2_high = na
+var float q2_low = na
+var float q3_high = na
+var float q3_low = na
+var float q4_high = na
+var float q4_low = na
+var int q1_end_bar = na
+var int q2_end_bar = na
+var int q3_end_bar = na
+var bool q2_broke_q1_high = false
+var bool q2_broke_q1_low = false
+var bool second_half_made_new_low_below_q1 = false  // For CURVE when Q2 broke high
+var bool second_half_made_new_high_above_q1 = false // For CURVE when Q2 broke low
+var bool second_half_made_new_high_above_q2 = false // For CONTINUATION when Q2 broke high
+var bool second_half_made_new_low_below_q2 = false  // For CONTINUATION when Q2 broke low
+var string current_quarter_name = ""
+
+var box current_box = na
+var line q1_q2_line = na
+var line q2_q3_line = na
+var line q3_q4_line = na
+var label q2_q3_label = na
+
+var box[] all_boxes = array.new_box(0)
+var line[] all_quarter_lines = array.new_line(0)
+var label[] all_quarter_labels = array.new_label(0)
+var int[] candle_ids = array.new_int(0)
+
+// Determine which candle we're in
+string new_candle = ""
+if is_in_6pm
+    new_candle := "6pm"
+else if is_in_10pm
+    new_candle := "10pm"
+else if is_in_2am
+    new_candle := "2am"
+else if is_in_6am
+    new_candle := "6am"
+else if is_in_10am
+    new_candle := "10am"
+else if is_in_2pm
+    new_candle := "2pm"
+
+// Detect new candle start
+bool candle_started = new_candle != "" and new_candle != current_candle
+
+if candle_started
+    // Store previous candle if it exists
+    if current_candle != "" and not na(current_box)
+        array.push(all_boxes, current_box)
+        array.push(candle_ids, candle_id)
+        current_box := na
+        
+        if not na(q1_q2_line)
+            array.push(all_quarter_lines, q1_q2_line)
+        if not na(q2_q3_line)
+            array.push(all_quarter_lines, q2_q3_line)
+        if not na(q3_q4_line)
+            array.push(all_quarter_lines, q3_q4_line)
+        if not na(q2_q3_label)
+            array.push(all_quarter_labels, q2_q3_label)
+        
+        q1_q2_line := na
+        q2_q3_line := na
+        q3_q4_line := na
+        q2_q3_label := na
+    
+    // Start new candle
+    current_candle := new_candle
+    candle_id := candle_id + 1
+    candle_open := open
+    candle_high := high
+    candle_low := low
+    candle_start_bar := bar_index
+    q1_high := high
+    q1_low := low
+    q2_high := na
+    q2_low := na
+    q3_high := na
+    q3_low := na
+    q4_high := na
+    q4_low := na
+    q1_end_bar := na
+    q2_end_bar := na
+    q3_end_bar := na
+    q2_broke_q1_high := false
+    q2_broke_q1_low := false
+    second_half_made_new_low_below_q1 := false
+    second_half_made_new_high_above_q1 := false
+    second_half_made_new_high_above_q2 := false
+    second_half_made_new_low_below_q2 := false
+    current_quarter_name := "Q1 (Hour 1)"
+    q1_q2_line := na
+    q2_q3_line := na
+    q3_q4_line := na
+    q2_q3_label := na
+    
+    // Create new box
+    if show_4h_boxes
+        current_box := box.new(
+             left=candle_start_bar,
+             top=candle_high,
+             right=bar_index,
+             bottom=candle_low,
+             bgcolor=get_box_color(current_candle),
+             border_color=color.gray,
+             border_width=1
+         )
+
+else if new_candle != "" and new_candle == current_candle
+    // Update current candle
+    candle_high := math.max(candle_high, high)
+    candle_low := math.min(candle_low, low)
+    candle_close := close
+    
+    // Calculate time elapsed in minutes
+    int bars_elapsed = bar_index - candle_start_bar
+    int minutes_per_bar = timeframe.in_seconds(timeframe.period) / 60
+    int minutes_elapsed = bars_elapsed * minutes_per_bar
+    
+    // Determine which quarter we're in
+    bool in_q1 = minutes_elapsed < 60
+    bool in_q2 = minutes_elapsed >= 60 and minutes_elapsed < 120
+    bool in_q3 = minutes_elapsed >= 120 and minutes_elapsed < 180
+    bool in_q4 = minutes_elapsed >= 180
+    
+    // Update current quarter name
+    if in_q1
+        current_quarter_name := "Q1 (Hour 1)"
+    else if in_q2
+        current_quarter_name := "Q2 (Hour 2)"
+    else if in_q3
+        current_quarter_name := "Q3 (Hour 3)"
+    else if in_q4
+        current_quarter_name := "Q4 (Hour 4)"
+    
+    // Track Q1 (hour 0-1)
+    if in_q1
+        q1_high := math.max(q1_high, high)
+        q1_low := math.min(q1_low, low)
+    
+    // Track Q2 (hour 1-2)
+    else if in_q2
+        if na(q2_high)
+            q2_high := high
+            q2_low := low
+            q1_end_bar := bar_index
+            
+            // Draw line at Q1/Q2 boundary
+            if show_quarter_lines and na(q1_q2_line)
+                q1_q2_line := line.new(
+                     x1=bar_index,
+                     y1=candle_low,
+                     x2=bar_index,
+                     y2=candle_high,
+                     xloc=xloc.bar_index,
+                     color=quarter_line_color,
+                     style=get_line_style(quarter_line_style),
+                     width=quarter_line_width
+                 )
+        else
+            q2_high := math.max(q2_high, high)
+            q2_low := math.min(q2_low, low)
+        
+        // Check if Q2 broke Q1 range
+        if not na(q1_high) and not na(q1_low)
+            if q2_high > q1_high
+                q2_broke_q1_high := true
+            if q2_low < q1_low
+                q2_broke_q1_low := true
+    
+    // Track Q3 (hour 2-3)
+    else if in_q3
+        if na(q3_high)
+            q3_high := high
+            q3_low := low
+            q2_end_bar := bar_index
+            
+            // Draw line at Q2/Q3 boundary
+            if show_quarter_lines and na(q2_q3_line)
+                q2_q3_line := line.new(
+                     x1=bar_index,
+                     y1=candle_low,
+                     x2=bar_index,
+                     y2=candle_high,
+                     xloc=xloc.bar_index,
+                     color=quarter_line_color,
+                     style=get_line_style(quarter_line_style),
+                     width=quarter_line_width
+                 )
+                
+                if show_quarter_labels
+                    q2_q3_label := label.new(
+                         x=bar_index,
+                         y=candle_high,
+                         text=current_candle,
+                         color=color.new(color.gray, 80),
+                         textcolor=quarter_line_color,
+                         style=label.style_none,
+                         size=get_text_size(table_text_size),
+                         text_font_family=font.family_monospace
+                     )
+        else
+            q3_high := math.max(q3_high, high)
+            q3_low := math.min(q3_low, low)
+        
+        // Check what happened in second half
+        if not na(q1_high) and not na(q1_low) and not na(q2_high) and not na(q2_low) and not na(q3_high) and not na(q3_low)
+            // Check for CURVE patterns (relative to Q1)
+            if q3_low < q1_low
+                second_half_made_new_low_below_q1 := true
+            if q3_high > q1_high
+                second_half_made_new_high_above_q1 := true
+            
+            // Check for CONTINUATION patterns (relative to Q2)
+            if q3_high > q2_high
+                second_half_made_new_high_above_q2 := true
+            if q3_low < q2_low
+                second_half_made_new_low_below_q2 := true
+    
+    // Track Q4 (hour 3-4)
+    else if in_q4
+        if na(q4_high)
+            q4_high := high
+            q4_low := low
+            q3_end_bar := bar_index
+            
+            // Draw line at Q3/Q4 boundary
+            if show_quarter_lines and na(q3_q4_line)
+                q3_q4_line := line.new(
+                     x1=bar_index,
+                     y1=candle_low,
+                     x2=bar_index,
+                     y2=candle_high,
+                     xloc=xloc.bar_index,
+                     color=quarter_line_color,
+                     style=get_line_style(quarter_line_style),
+                     width=quarter_line_width
+                 )
+        else
+            q4_high := math.max(q4_high, high)
+            q4_low := math.min(q4_low, low)
+        
+        // Check what happened in second half
+        if not na(q1_high) and not na(q1_low) and not na(q2_high) and not na(q2_low)
+            float second_half_high = math.max(na(q3_high) ? q4_high : q3_high, q4_high)
+            float second_half_low = math.min(na(q3_low) ? q4_low : q3_low, q4_low)
+            
+            // Check for CURVE patterns (relative to Q1)
+            if second_half_low < q1_low
+                second_half_made_new_low_below_q1 := true
+            if second_half_high > q1_high
+                second_half_made_new_high_above_q1 := true
+            
+            // Check for CONTINUATION patterns (relative to Q2)
+            if second_half_high > q2_high
+                second_half_made_new_high_above_q2 := true
+            if second_half_low < q2_low
+                second_half_made_new_low_below_q2 := true
+    
+    // Update all quarter lines
+    if not na(q1_q2_line)
+        line.set_y1(q1_q2_line, candle_low)
+        line.set_y2(q1_q2_line, candle_high)
+    
+    if not na(q2_q3_line)
+        line.set_y1(q2_q3_line, candle_low)
+        line.set_y2(q2_q3_line, candle_high)
+    
+    if not na(q3_q4_line)
+        line.set_y1(q3_q4_line, candle_low)
+        line.set_y2(q3_q4_line, candle_high)
+    
+    if show_quarter_labels and not na(q2_q3_label)
+        label.set_y(q2_q3_label, candle_high)
+        
+        // Update label based on Q2 breaks
+        if q2_broke_q1_high and q2_broke_q1_low
+            label.set_text(q2_q3_label, current_candle + " ⚠️")
+            label.set_color(q2_q3_label, color.new(color.orange, 70))
+        else if q2_broke_q1_high
+            label.set_text(q2_q3_label, current_candle + " 🔼")
+            label.set_color(q2_q3_label, color.new(color.green, 70))
+        else if q2_broke_q1_low
+            label.set_text(q2_q3_label, current_candle + " 🔽")
+            label.set_color(q2_q3_label, color.new(color.red, 70))
+    
+    // Update current box
+    if show_4h_boxes and not na(current_box)
+        box.set_top(current_box, candle_high)
+        box.set_bottom(current_box, candle_low)
+        box.set_right(current_box, bar_index)
+
+// Clean up old candles
+if array.size(all_boxes) > max_candles
+    box.delete(array.shift(all_boxes))
+    array.shift(candle_ids)
+    
+if array.size(all_quarter_lines) > max_candles
+    line.delete(array.shift(all_quarter_lines))
+
+if array.size(all_quarter_labels) > max_candles
+    label.delete(array.shift(all_quarter_labels))
+
+// === TABLE 1: LIVE STATUS ===
+var table live_table = na
+
+if show_live_table and barstate.islast and current_candle != ""
+    if na(live_table)
+        live_table := table.new(
+             position=get_table_position(live_table_position),
+             columns=2,
+             rows=8,
+             bgcolor=color.new(color.white, 10),
+             border_color=color.black,
+             border_width=1
+         )
+    
+    // Get curve statistics for current candle - CORRECTED VALUES
+    float curve_pct_if_q2_breaks_high = na
+    float continuation_pct_if_q2_breaks_high = na
+    float curve_pct_if_q2_breaks_low = na
+    float continuation_pct_if_q2_breaks_low = na
+    
+    if current_candle == "6pm"
+        curve_pct_if_q2_breaks_high := 29.6
+        continuation_pct_if_q2_breaks_high := 59.0  // CORRECTED from 67.8%
+        curve_pct_if_q2_breaks_low := 33.7
+        continuation_pct_if_q2_breaks_low := 51.1   // CORRECTED from 63.7%
+    else if current_candle == "10pm"
+        curve_pct_if_q2_breaks_high := 27.5
+        continuation_pct_if_q2_breaks_high := 55.1  // CORRECTED from 69.8%
+        curve_pct_if_q2_breaks_low := 33.1
+        continuation_pct_if_q2_breaks_low := 48.6   // CORRECTED from 63.8%
+    else if current_candle == "2am"
+        curve_pct_if_q2_breaks_high := 38.4
+        continuation_pct_if_q2_breaks_high := 46.7  // CORRECTED from 58.5%
+        curve_pct_if_q2_breaks_low := 42.8
+        continuation_pct_if_q2_breaks_low := 43.3   // CORRECTED from 54.0%
+    else if current_candle == "6am"
+        curve_pct_if_q2_breaks_high := 60.6
+        continuation_pct_if_q2_breaks_high := 38.5
+        curve_pct_if_q2_breaks_low := 64.4
+        continuation_pct_if_q2_breaks_low := 35.0
+    else if current_candle == "10am"
+        curve_pct_if_q2_breaks_high := 17.2
+        continuation_pct_if_q2_breaks_high := 60.4
+        curve_pct_if_q2_breaks_low := 16.7
+        continuation_pct_if_q2_breaks_low := 51.6
+    
+    // Determine status
+    bool in_second_half = not na(q3_high) or not na(q4_high)
+    string status = ""
+    string expectation = ""
+    color status_color = color.white
+    
+    if in_second_half
+        // We're in second half - report what happened
+        if q2_broke_q1_high and second_half_made_new_low_below_q1
+            status := "✓ CURVE CONFIRMED"
+            expectation := "Q2 broke high → 2nd half made new LOW below Q1\nCurve: " + str.tostring(curve_pct_if_q2_breaks_high, "#.#") + "%"
+            status_color := color.new(color.purple, 70)
+        else if q2_broke_q1_high and second_half_made_new_high_above_q2
+            status := "✓ CONTINUATION CONFIRMED"
+            expectation := "Q2 broke high → 2nd half made new HIGH above Q2\nContinuation: " + str.tostring(continuation_pct_if_q2_breaks_high, "#.#") + "%"
+            status_color := color.new(color.green, 70)
+        else if q2_broke_q1_low and second_half_made_new_high_above_q1
+            status := "✓ CURVE CONFIRMED"
+            expectation := "Q2 broke low → 2nd half made new HIGH above Q1\nCurve: " + str.tostring(curve_pct_if_q2_breaks_low, "#.#") + "%"
+            status_color := color.new(color.purple, 70)
+        else if q2_broke_q1_low and second_half_made_new_low_below_q2
+            status := "✓ CONTINUATION CONFIRMED"
+            expectation := "Q2 broke low → 2nd half made new LOW below Q2\nContinuation: " + str.tostring(continuation_pct_if_q2_breaks_low, "#.#") + "%"
+            status_color := color.new(color.red, 70)
+        else if q2_broke_q1_high or q2_broke_q1_low
+            status := "⏳ 2nd Half In Progress"
+            if q2_broke_q1_high
+                expectation := "Q2 broke high - watching for:\nCurve (low < Q1): " + str.tostring(curve_pct_if_q2_breaks_high, "#.#") + "%\nCont (high > Q2): " + str.tostring(continuation_pct_if_q2_breaks_high, "#.#") + "%"
+            else
+                expectation := "Q2 broke low - watching for:\nCurve (high > Q1): " + str.tostring(curve_pct_if_q2_breaks_low, "#.#") + "%\nCont (low < Q2): " + str.tostring(continuation_pct_if_q2_breaks_low, "#.#") + "%"
+            status_color := color.new(color.blue, 80)
+        else
+            status := "📊 No Q2 Break Occurred"
+            expectation := "Q2 stayed within Q1 range"
+            status_color := color.new(color.yellow, 80)
+    else
+        // Still in first half
+        if q2_broke_q1_high and q2_broke_q1_low
+            status := "⚠️ Q2 Broke BOTH Q1 Extremes"
+            expectation := "Extended range - watch 2nd half closely"
+            status_color := color.new(color.orange, 80)
+        else if q2_broke_q1_high
+            status := "🔼 Q2 Broke Q1 HIGH"
+            expectation := "EXPECT 2nd half:\nCURVE (low < Q1): " + str.tostring(curve_pct_if_q2_breaks_high, "#.#") + "%\nCONT (high > Q2): " + str.tostring(continuation_pct_if_q2_breaks_high, "#.#") + "%"
+            status_color := color.new(color.green, 80)
+        else if q2_broke_q1_low
+            status := "🔽 Q2 Broke Q1 LOW"
+            expectation := "EXPECT 2nd half:\nCURVE (high > Q1): " + str.tostring(curve_pct_if_q2_breaks_low, "#.#") + "%\nCONT (low < Q2): " + str.tostring(continuation_pct_if_q2_breaks_low, "#.#") + "%"
+            status_color := color.new(color.red, 80)
+        else if not na(q2_high)
+            status := "⏳ Q2 Building..."
+            expectation := "Q2 within Q1 range so far"
+            status_color := color.new(color.gray, 85)
+        else
+            status := "⏳ Q1 Building..."
+            expectation := "First hour forming"
+            status_color := color.new(color.gray, 85)
+    
+    // Build table
+    table.cell(live_table, 0, 0, "LIVE: " + current_candle + " CANDLE", bgcolor=get_box_color(current_candle), text_color=color.gray, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(live_table, 0, 0, 1, 0)
+    
+    table.cell(live_table, 0, 1, "Quarter: " + current_quarter_name, bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(live_table, 0, 1, 1, 1)
+    
+    table.cell(live_table, 0, 2, "", text_size=size.tiny)
+    table.merge_cells(live_table, 0, 2, 1, 2)
+    
+    table.cell(live_table, 0, 3, "STATUS", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(live_table, 0, 3, 1, 3)
+    
+    table.cell(live_table, 0, 4, status, bgcolor=status_color, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(live_table, 0, 4, 1, 4)
+    
+    table.cell(live_table, 0, 5, "", text_size=size.tiny)
+    table.merge_cells(live_table, 0, 5, 1, 5)
+    
+    table.cell(live_table, 0, 6, "EXPECTATION", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(live_table, 0, 6, 1, 6)
+    
+    table.cell(live_table, 0, 7, expectation, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(live_table, 0, 7, 1, 7)
+
+// === TABLE 2: CURVE REFERENCE - CORRECTED VALUES ===
+var table ref_table = na
+
+if show_reference_table and barstate.islast
+    if na(ref_table)
+        ref_table := table.new(
+             position=get_table_position(reference_table_position),
+             columns=4,
+             rows=16,
+             bgcolor=color.new(color.white, 10),
+             border_color=color.black,
+             border_width=1
+         )
+    
+    // Header
+    table.cell(ref_table, 0, 0, "CURVE REFERENCE", bgcolor=color.new(color.blue, 70), text_color=color.gray, text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(ref_table, 0, 0, 3, 0)
+    
+    table.cell(ref_table, 0, 1, "When Q2 BREAKS Q1 HIGH", bgcolor=color.new(color.green, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(ref_table, 0, 1, 3, 1)
+    
+    table.cell(ref_table, 0, 2, "Session", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 2, "Curve", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 2, "Cont", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 2, "Winner", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 6AM
+    table.cell(ref_table, 0, 3, "6AM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 3, "60.6%", bgcolor=color.new(color.purple, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 3, "38.5%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 3, "🔥 CURVE", bgcolor=color.new(color.purple, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 2AM - CORRECTED
+    table.cell(ref_table, 0, 4, "2AM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 4, "38.4%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 4, "46.7%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 4, "Cont", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 6PM - CORRECTED
+    table.cell(ref_table, 0, 5, "6PM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 5, "29.6%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 5, "59.0%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 5, "CONT", bgcolor=color.new(color.blue, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 10PM - CORRECTED
+    table.cell(ref_table, 0, 6, "10PM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 6, "27.5%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 6, "55.1%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 6, "CONT", bgcolor=color.new(color.blue, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 10AM
+    table.cell(ref_table, 0, 7, "10AM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 7, "17.2%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 7, "60.4%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 7, "CONT", bgcolor=color.new(color.blue, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // Separator
+    table.cell(ref_table, 0, 8, "", text_size=size.tiny)
+    table.merge_cells(ref_table, 0, 8, 3, 8)
+    
+    // Second section header
+    table.cell(ref_table, 0, 9, "When Q2 BREAKS Q1 LOW", bgcolor=color.new(color.red, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.merge_cells(ref_table, 0, 9, 3, 9)
+    
+    table.cell(ref_table, 0, 10, "Session", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 10, "Curve", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 10, "Cont", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 10, "Winner", bgcolor=color.new(color.gray, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 6AM
+    table.cell(ref_table, 0, 11, "6AM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 11, "64.4%", bgcolor=color.new(color.purple, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 11, "35.0%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 11, "🔥 CURVE", bgcolor=color.new(color.purple, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 2AM - CORRECTED
+    table.cell(ref_table, 0, 12, "2AM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 12, "42.8%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 12, "43.3%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 12, "Balanced", bgcolor=color.new(color.yellow, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 6PM - CORRECTED
+    table.cell(ref_table, 0, 13, "6PM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 13, "33.7%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 13, "51.1%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 13, "CONT", bgcolor=color.new(color.blue, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 10PM - CORRECTED
+    table.cell(ref_table, 0, 14, "10PM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 14, "33.1%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 14, "48.6%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 14, "CONT", bgcolor=color.new(color.blue, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    
+    // 10AM
+    table.cell(ref_table, 0, 15, "10AM", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 1, 15, "16.7%", text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 2, 15, "51.6%", bgcolor=color.new(color.blue, 90), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)
+    table.cell(ref_table, 3, 15, "CONT", bgcolor=color.new(color.blue, 80), text_size=get_text_size(table_text_size), text_font_family=font.family_monospace)

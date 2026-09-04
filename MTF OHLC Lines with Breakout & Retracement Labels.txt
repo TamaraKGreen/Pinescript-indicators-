@@ -1,0 +1,358 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+//@version=6
+//@version=6
+indicator(title="MTF OHLC Lines with Breakout, Retracement & Fibs", shorttitle="OHLC Breaks, Retrace & Fibs", overlay=true, max_lines_count=500)
+
+// -------------------------- Inputs -------------------------- //
+// Vertical line settings
+vertLineColor = input.color(#000000, title="Line Color", group="Vertical Line")
+vertLineStyleOptions = input.string("Dotted", title="Line Style", options=["Solid", "Dashed", "Dotted"], group="Vertical Line")
+vertLineWidthOptions = input.string("1", title="Line Width", options=["1", "2", "3"], group="Vertical Line")
+
+// Horizontal OHLC line settings
+openLineColor = input.color(#0000FF, title="Open Line Color", group="Horizontal OHLC Lines")
+highLineColor = input.color(#00FF00, title="High Line Color", group="Horizontal OHLC Lines")
+lowLineColor = input.color(#FF0000, title="Low Line Color", group="Horizontal OHLC Lines")
+closeLineColor = input.color(#800080, title="Close Line Color", group="Horizontal OHLC Lines")
+horizLineStyleOptions = input.string("Solid", title="Line Style", options=["Solid", "Dashed", "Dotted"], group="Horizontal OHLC Lines")
+horizLineWidthOptions = input.string("1", title="Line Width", options=["1", "2", "3"], group="Horizontal OHLC Lines")
+
+// Time interval settings
+intervalOption = input.string("1 Hour", title="Timeframe", options=["4 Hour", "1 Hour", "30 Minutes", "15 Minutes", "10 Minutes", "5 Minutes"], group="Interval Settings")
+useCustomTime = input.bool(false, title="Use Custom Timeframe", group="Interval Settings")
+customHours = input.int(3, title="Custom Hours", minval=0, maxval=12, group="Interval Settings")
+customMinutes = input.int(0, title="Custom Minutes", minval=0, maxval=59, group="Interval Settings")
+
+// Display options
+showVerticalLines = input.bool(true, title="Show Vertical Lines", group="Display Options")
+showHorizontalLines = input.bool(true, title="Show Horizontal Lines", group="Display Options")
+maxHistoryBars = input.int(500, title="Historical Lines", minval=1, maxval=500, group="Display Options")
+
+// Breakout label settings
+showBreakoutLabels = input.bool(true, title="Show Breakout Labels", group="Breakout Labels")
+labelBgColor = input.color(#FFFF00, title="Label Background Color", group="Breakout Labels")
+labelTextColor = input.color(#000000, title="Label Text Color", group="Breakout Labels")
+labelSize = input.string("Small", title="Label Size", options=["Tiny", "Small", "Normal", "Large"], group="Breakout Labels")
+
+// Retracement label settings
+showRetraceLabels = input.bool(true, title="Show Retracement Labels", group="Retracement Labels")
+retraceBgColor = input.color(#00FFFF, title="Retracement Background Color", group="Retracement Labels")
+retraceTextColor = input.color(#000000, title="Retracement Text Color", group="Retracement Labels")
+retraceSize = input.string("Tiny", title="Retracement Size", options=["Tiny", "Small", "Normal", "Large"], group="Retracement Labels")
+
+// Fibonacci settings
+showFibLevels = input.bool(true, title="Show Fibonacci Levels", group="Fibonacci Settings")
+fibLineColor = input.color(#808080, title="Fib Line Color", group="Fibonacci Settings")
+fibLineStyle = input.string("Dashed", title="Fib Line Style", options=["Solid", "Dashed", "Dotted"], group="Fibonacci Settings")
+fibLineWidth = input.string("1", title="Fib Line Width", options=["1", "2", "3"], group="Fibonacci Settings")
+showFibLabels = input.bool(true, title="Show Fibonacci Labels", group="Fibonacci Settings")
+fibLabelColor = input.color(#808080, title="Fib Label Color", group="Fibonacci Settings")
+fibLabelSize = input.string("Tiny", title="Fib Label Size", options=["Tiny", "Small", "Normal", "Large"], group="Fibonacci Settings")
+
+// -------------------------- Line Style Settings -------------------------- //
+vertLineStyle = vertLineStyleOptions == "Solid" ? line.style_solid : vertLineStyleOptions == "Dashed" ? line.style_dashed : line.style_dotted
+vertLineWidth = vertLineWidthOptions == "2" ? 2 : vertLineWidthOptions == "3" ? 3 : 1
+horizLineStyle = horizLineStyleOptions == "Solid" ? line.style_solid : horizLineStyleOptions == "Dashed" ? line.style_dashed : line.style_dotted
+horizLineWidth = horizLineWidthOptions == "2" ? 2 : horizLineWidthOptions == "3" ? 3 : 1
+fibStyle = fibLineStyle == "Solid" ? line.style_solid : fibLineStyle == "Dashed" ? line.style_dashed : line.style_dotted
+fibWidth = fibLineWidth == "2" ? 2 : fibLineWidth == "3" ? 3 : 1
+
+// Label size mapping
+labelSizeValue = switch labelSize
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large" => size.large
+    => size.tiny
+
+retraceSizeValue = switch retraceSize
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large" => size.large
+    => size.tiny
+
+fibLabelSizeValue = switch fibLabelSize
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large" => size.large
+    => size.tiny
+
+// -------------------------- Determine Interval -------------------------- //
+customIntervalMinutes = customHours * 60 + customMinutes
+presetIntervalMinutes = switch intervalOption
+    "4 Hour" => 240
+    "1 Hour" => 60
+    "30 Minutes" => 30
+    "15 Minutes" => 15
+    "10 Minutes" => 10
+    "5 Minutes" => 5
+    => 60
+intervalMinutes = useCustomTime ? customIntervalMinutes : presetIntervalMinutes
+
+// Function to check if it's a new interval
+isNewInterval(t) =>
+    if useCustomTime
+        ta.change(time(str.tostring(customIntervalMinutes))) != 0
+    else
+        timeframe.isintraday and (intervalOption == "4 Hour" ? ta.change(time("240")) != 0 : (minute(t) % intervalMinutes == 0 and minute(t[1]) % intervalMinutes != 0))
+
+// -------------------------- Line Management Arrays -------------------------- //
+var line[] vLines = array.new_line()
+var line[] openLines = array.new_line()
+var line[] highLines = array.new_line()
+var line[] lowLines = array.new_line()
+var line[] closeLines = array.new_line()
+// Fibonacci line arrays
+var line[] fib0236Lines = array.new_line()
+var line[] fib0618Lines = array.new_line()
+var line[] fib1274Lines = array.new_line()
+var line[] fib1618Lines = array.new_line()
+var line[] fib2000Lines = array.new_line()
+var line[] fib2618Lines = array.new_line()
+var line[] fibNeg1274Lines = array.new_line()
+var line[] fibNeg1618Lines = array.new_line()
+var line[] fibNeg2000Lines = array.new_line()
+var line[] fibNeg2618Lines = array.new_line()
+
+// Calculate bars in interval
+isSecondsChart = timeframe.isseconds
+barsInInterval = isSecondsChart ? (intervalMinutes * 60) / timeframe.multiplier : intervalMinutes / timeframe.multiplier
+
+// Variables to track OHLC and current lines
+var float intervalOpen = na
+var float intervalHigh = na
+var float intervalLow = na
+var float intervalClose = na
+var line currentOpenLine = na
+var line currentHighLine = na
+var line currentLowLine = na
+var line currentCloseLine = na
+
+// Variables for breakout detection
+var float prevIntervalHigh = na
+var float prevIntervalLow = na
+var bool highBreakLabeled = false
+var bool lowBreakLabeled = false
+
+// Variables for retracement detection
+var bool highBreakOccurred = false
+var bool lowBreakOccurred = false
+var bool retraceLabeled = false
+var int intervalStartBar = na  // Track the starting bar of the interval
+
+// Variables to store previous interval's OHLC for Fib calculation
+var float prevIntervalOpen = na
+var float prevIntervalClose = na
+var int prevIntervalStartBar = na
+
+// -------------------------- Drawing and Managing Lines -------------------------- //
+if isNewInterval(time)
+    // Store previous interval's OHLC and start bar for Fibs
+    if not na(intervalHigh) and not na(intervalLow)
+        prevIntervalHigh := intervalHigh
+        prevIntervalLow := intervalLow
+        prevIntervalOpen := intervalOpen
+        prevIntervalClose := intervalClose
+        prevIntervalStartBar := intervalStartBar
+        highBreakLabeled := false
+        lowBreakLabeled := false
+        highBreakOccurred := false
+        lowBreakOccurred := false
+        retraceLabeled := false
+    
+    // Store the starting bar index of the new interval
+    intervalStartBar := bar_index
+    
+    // Manage historical lines
+    while array.size(vLines) >= maxHistoryBars
+        line.delete(array.shift(vLines))
+    while array.size(openLines) >= maxHistoryBars
+        line.delete(array.shift(openLines))
+    while array.size(highLines) >= maxHistoryBars
+        line.delete(array.shift(highLines))
+    while array.size(lowLines) >= maxHistoryBars
+        line.delete(array.shift(lowLines))
+    while array.size(closeLines) >= maxHistoryBars
+        line.delete(array.shift(closeLines))
+    // Manage Fibonacci lines
+    while array.size(fib0236Lines) >= maxHistoryBars
+        line.delete(array.shift(fib0236Lines))
+    while array.size(fib0618Lines) >= maxHistoryBars
+        line.delete(array.shift(fib0618Lines))
+    while array.size(fib1274Lines) >= maxHistoryBars
+        line.delete(array.shift(fib1274Lines))
+    while array.size(fib1618Lines) >= maxHistoryBars
+        line.delete(array.shift(fib1618Lines))
+    while array.size(fib2000Lines) >= maxHistoryBars
+        line.delete(array.shift(fib2000Lines))
+    while array.size(fib2618Lines) >= maxHistoryBars
+        line.delete(array.shift(fib2618Lines))
+    while array.size(fibNeg1274Lines) >= maxHistoryBars
+        line.delete(array.shift(fibNeg1274Lines))
+    while array.size(fibNeg1618Lines) >= maxHistoryBars
+        line.delete(array.shift(fibNeg1618Lines))
+    while array.size(fibNeg2000Lines) >= maxHistoryBars
+        line.delete(array.shift(fibNeg2000Lines))
+    while array.size(fibNeg2618Lines) >= maxHistoryBars
+        line.delete(array.shift(fibNeg2618Lines))
+    
+    // Reset OHLC for new interval
+    intervalOpen := open
+    intervalHigh := high
+    intervalLow := low
+    intervalClose := close
+    
+    // Draw vertical line
+    if showVerticalLines
+        vLine = line.new(bar_index, low - ta.tr, bar_index, high + ta.tr, 
+             xloc.bar_index, extend.both, vertLineColor, vertLineStyle, vertLineWidth)
+        array.push(vLines, vLine)
+    
+    // Draw initial horizontal lines for the current interval
+    if showHorizontalLines
+        lineEndBar = bar_index + math.ceil(barsInInterval)
+        currentOpenLine := line.new(bar_index, intervalOpen, lineEndBar, intervalOpen, 
+             xloc.bar_index, extend.none, openLineColor, horizLineStyle, horizLineWidth)
+        currentHighLine := line.new(bar_index, intervalHigh, lineEndBar, intervalHigh, 
+             xloc.bar_index, extend.none, highLineColor, horizLineStyle, horizLineWidth)
+        currentLowLine := line.new(bar_index, intervalLow, lineEndBar, intervalLow, 
+             xloc.bar_index, extend.none, lowLineColor, horizLineStyle, horizLineWidth)
+        currentCloseLine := line.new(bar_index, intervalClose, lineEndBar, intervalClose, 
+             xloc.bar_index, extend.none, closeLineColor, horizLineStyle, horizLineWidth)
+        
+        // Store lines in arrays
+        array.push(openLines, currentOpenLine)
+        array.push(highLines, currentHighLine)
+        array.push(lowLines, currentLowLine)
+        array.push(closeLines, currentCloseLine)
+
+// Update OHLC values and lines within the interval
+if not isNewInterval(time)
+    intervalHigh := math.max(intervalHigh, high)
+    intervalLow := math.min(intervalLow, low)
+    intervalClose := close
+    
+    if showHorizontalLines
+        // Update the y-position of current lines
+        line.set_y1(currentHighLine, intervalHigh)
+        line.set_y2(currentHighLine, intervalHigh)
+        line.set_y1(currentLowLine, intervalLow)
+        line.set_y2(currentLowLine, intervalLow)
+        line.set_y1(currentCloseLine, intervalClose)
+        line.set_y2(currentCloseLine, intervalClose)
+
+// Update horizontal lines end points
+if showHorizontalLines
+    lineEndBar = na(currentOpenLine) ? na : line.get_x1(currentOpenLine) + math.ceil(barsInInterval)
+    if not na(currentOpenLine)
+        line.set_x2(currentOpenLine, lineEndBar)
+    if not na(currentHighLine)
+        line.set_x2(currentHighLine, lineEndBar)
+    if not na(currentLowLine)
+        line.set_x2(currentLowLine, lineEndBar)
+    if not na(currentCloseLine)
+        line.set_x2(currentCloseLine, lineEndBar)
+
+// -------------------------- Breakout Detection and Labeling -------------------------- //
+if showBreakoutLabels and not na(prevIntervalHigh) and not na(prevIntervalLow)
+    // Check for high breakout
+    if high > prevIntervalHigh and not highBreakLabeled
+        breakoutPercent = ((high - prevIntervalHigh) / prevIntervalHigh) * 100
+        labelText = "▲ " + str.tostring(math.round(breakoutPercent, 2)) + "%"
+        label.new(bar_index, high, labelText, 
+             color=labelBgColor, textcolor=labelTextColor, style=label.style_label_down, size=labelSizeValue)
+        highBreakLabeled := true
+        highBreakOccurred := true
+    
+    // Check for low breakout
+    if low < prevIntervalLow and not lowBreakLabeled
+        breakoutPercent = ((prevIntervalLow - low) / prevIntervalLow) * 100
+        labelText = "▼ " + str.tostring(math.round(breakoutPercent, 2)) + "%"
+        label.new(bar_index, low, labelText, 
+             color=labelBgColor, textcolor=labelTextColor, style=label.style_label_up, size=labelSizeValue)
+        lowBreakLabeled := true
+        lowBreakOccurred := true
+
+// -------------------------- Retracement Detection and Labeling -------------------------- //
+if showRetraceLabels and not na(intervalOpen) and (highBreakOccurred or lowBreakOccurred) and not retraceLabeled
+    if bar_index > intervalStartBar
+        if (highBreakOccurred and low <= intervalOpen) or (lowBreakOccurred and high >= intervalOpen)
+            labelText = "↔ Retrace"
+            label.new(bar_index, intervalOpen, labelText, 
+                 color=retraceBgColor, textcolor=retraceTextColor, style=label.style_label_center, size=retraceSizeValue)
+            retraceLabeled := true
+
+// -------------------------- Fibonacci Levels Drawing -------------------------- //
+if showFibLevels and not na(prevIntervalHigh) and not na(prevIntervalLow) and isNewInterval(time)
+    // Calculate the range
+    time_range = prevIntervalHigh - prevIntervalLow
+    
+    // Fibonacci Retracement Levels (between high and low)
+    fib0236 = prevIntervalHigh - (time_range * 0.236)
+    fib0618 = prevIntervalHigh - (time_range * 0.618)
+    
+    // Fibonacci Extension Levels Above (from low)
+    fib1274 = prevIntervalLow + (time_range * 1.274)
+    fib1618 = prevIntervalLow + (time_range * 1.618)
+    fib2000 = prevIntervalLow + (time_range * 2.0)
+    fib2618 = prevIntervalLow + (time_range * 2.618)
+    
+    // Fibonacci Extension Levels Below (from high)
+    fibNeg1274 = prevIntervalHigh - (time_range * 1.274)
+    fibNeg1618 = prevIntervalHigh - (time_range * 1.618)
+    fibNeg2000 = prevIntervalHigh - (time_range * 2.0)
+    fibNeg2618 = prevIntervalHigh - (time_range * 2.618)
+    
+    // Draw Fibonacci lines for the previous interval
+    lineStart = prevIntervalStartBar
+    lineEnd = prevIntervalStartBar + math.ceil(barsInInterval)
+    
+    fib0236Line = line.new(lineStart, fib0236, lineEnd, fib0236, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fib0618Line = line.new(lineStart, fib0618, lineEnd, fib0618, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fib1274Line = line.new(lineStart, fib1274, lineEnd, fib1274, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fib1618Line = line.new(lineStart, fib1618, lineEnd, fib1618, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fib2000Line = line.new(lineStart, fib2000, lineEnd, fib2000, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fib2618Line = line.new(lineStart, fib2618, lineEnd, fib2618, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fibNeg1274Line = line.new(lineStart, fibNeg1274, lineEnd, fibNeg1274, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fibNeg1618Line = line.new(lineStart, fibNeg1618, lineEnd, fibNeg1618, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fibNeg2000Line = line.new(lineStart, fibNeg2000, lineEnd, fibNeg2000, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    fibNeg2618Line = line.new(lineStart, fibNeg2618, lineEnd, fibNeg2618, 
+         xloc.bar_index, extend.none, fibLineColor, fibStyle, fibWidth)
+    
+    // Store Fibonacci lines in arrays
+    array.push(fib0236Lines, fib0236Line)
+    array.push(fib0618Lines, fib0618Line)
+    array.push(fib1274Lines, fib1274Line)
+    array.push(fib1618Lines, fib1618Line)
+    array.push(fib2000Lines, fib2000Line)
+    array.push(fib2618Lines, fib2618Line)
+    array.push(fibNeg1274Lines, fibNeg1274Line)
+    array.push(fibNeg1618Lines, fibNeg1618Line)
+    array.push(fibNeg2000Lines, fibNeg2000Line)
+    array.push(fibNeg2618Lines, fibNeg2618Line)
+    
+    // Draw Fibonacci labels if enabled
+ // Draw Fibonacci labels if enabled
+    if showFibLabels
+        label.new(lineEnd, fib0236, "0.236", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fib0618, "0.618", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fib1274, "1.274", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fib1618, "1.618", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fib2000, "2.0", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fib2618, "2.618", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fibNeg1274, "-1.274", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fibNeg1618, "-1.618", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fibNeg2000, "-2.0", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)
+        label.new(lineEnd, fibNeg2618, "-2.618", color=color.new(#000000, 100), textcolor=fibLabelColor, style=label.style_none, size=fibLabelSizeValue)

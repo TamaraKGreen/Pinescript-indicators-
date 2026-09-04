@@ -1,0 +1,131 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © notprofessorgreen
+
+//@version=6
+indicator("NQ Stats - Initial Balance", shorttitle="IB", overlay=true, max_bars_back=5000)
+
+// Options
+ib_session = input.session("0830-0930", title="Calculation period for the initial balance", group="Calculation period")
+fill_ib_areas = input.bool(true, "Colour IB areas", group="Information")
+only_current_zone = input.bool(true, "Only display the current IB calculation area", group="Information")
+fill_ib_color = input.color(color.rgb(33, 149, 243, 80), "IB area background color", group="Drawings")
+border_color = input.color(color.gray, "Box outline color", group="Drawings")
+midpoint_color = input.color(color.gray, "Midpoint line color", group="Drawings")
+line_style = input.string("Dotted", "Line style for outline and midpoint", options=["Solid", "Dashed", "Dotted"], group="Drawings")
+table_position = input.string("Top Right", "Stats Table Position", options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group="Stats Table")
+table_size = input.string("Tiny", "Stats Table Text Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group="Stats Table")
+
+// Variables
+var box ib_area = na
+var line ib_midpoint = na
+var table stats_table = na
+var offset = 0
+var float ib_high = na
+var float ib_low = na
+var float ib_mid_price = na
+var bool ib_formed = false
+
+// Function to check if in session
+inSession(sess) =>
+    na(time(timeframe.period, sess)) == false
+
+// Function to get high, low, and midpoint
+get_levels(n) =>
+    h = high[1]
+    l = low[1]
+    for i = 1 to n
+        if low[i] < l
+            l := low[i]
+        if high[i] > h
+            h := high[i]
+    [h, l, (h + l) / 2]
+
+// Function to convert string style to line style
+get_line_style(s) =>
+    s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
+
+// Function to convert table position string to position constant
+get_table_position(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+// Function to convert table size string to size constant
+get_table_text_size(size) =>
+    result = switch size
+        "Auto" => size.auto
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+
+ins = inSession(ib_session)
+
+// Increment offset during session
+if ins
+    offset += 1
+
+// Draw IB box, midpoint line, and stats table when session ends
+if ins[1] and not ins
+    [h, l, m] = get_levels(offset)
+    ib_high := h
+    ib_low := l
+    ib_mid_price := m
+    ib_formed := true
+
+    if fill_ib_areas
+        if only_current_zone
+            box.delete(ib_area)
+            line.delete(ib_midpoint)
+        ib_area := box.new(
+             left=bar_index[offset], 
+             top=h, 
+             right=bar_index, 
+             bottom=l, 
+             bgcolor=fill_ib_color, 
+             border_color=border_color, 
+             border_style=get_line_style(line_style), 
+             border_width=1
+         )
+        ib_midpoint := line.new(
+             x1=bar_index[offset], 
+             y1=m, 
+             x2=bar_index, 
+             y2=m, 
+             color=midpoint_color, 
+             style=get_line_style(line_style), 
+             width=1
+         )
+
+    // Create stats table
+    if only_current_zone
+        table.delete(stats_table)
+    stats_table := table.new(
+         position=get_table_position(table_position),
+         columns=2,
+         rows=2,
+         bgcolor=color.white,
+         border_color=color.black,
+         border_width=1,
+         frame_color=color.black,
+         frame_width=1
+     )
+    ts = get_table_text_size(table_size)
+    // Determine breakout probability based on close position
+    breakout_text = close > m ? "High Break: 81%" : "Low Break: 74%"
+    // Top row: black background, white text
+    table.cell(stats_table, 0, 0, "IB Breakout", bgcolor=color.black, text_color=color.white, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, 0, "Probability", bgcolor=color.black, text_color=color.white, text_size=ts, text_font_family=font.family_monospace)
+    // Second row: white background, black text
+    table.cell(stats_table, 0, 1, close > m ? "Closed above midpoint" : "Closed below midpoint", bgcolor=color.white, text_color=color.black, text_size=ts, text_font_family=font.family_monospace)
+    table.cell(stats_table, 1, 1, close > m ? "Probability of IB high breakout: 81%" : "Probability of IB low breakout: 74%", bgcolor=color.white, text_color=color.black, text_size=ts, text_font_family=font.family_monospace)
+
+    offset := 0

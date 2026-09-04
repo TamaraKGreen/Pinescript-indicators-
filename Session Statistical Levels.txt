@@ -1,0 +1,1623 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+indicator(
+     title="Session Statistical Levels",
+     shorttitle       = "Sess Stats",
+     overlay          = true,
+     max_lines_count  = 500,
+     max_labels_count = 500,
+     max_boxes_count  = 500,
+     max_bars_back    = 5000)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1 — INPUTS
+// ═══════════════════════════════════════════════════════════════════
+
+var g_GLOBAL = "Global Settings"
+i_label_size  = input.string("Tiny", "Label Size",
+                 options=["Tiny","Small","Normal"], group=g_GLOBAL)
+
+// ─── Sessions ─────────────────────────────────────────────────────
+var g_SESS = "Sessions"
+i_show_asia   = input.bool(true,  "Asia        (19:00–02:00 ET)", group=g_SESS)
+i_col_asia    = input.color(color.rgb(255, 153, 0),   "Asia colour",         group=g_SESS)
+i_show_lon    = input.bool(true,  "London      (02:00–08:00 ET)", group=g_SESS)
+i_col_lon     = input.color(color.rgb(41,  98,  255), "London colour",       group=g_SESS)
+i_show_nyam   = input.bool(true,  "NY Morning  (08:00–12:00 ET)", group=g_SESS)
+i_col_nyam    = input.color(color.rgb(0,   150, 136), "NY Morning colour",   group=g_SESS)
+i_show_nypm   = input.bool(true,  "NY Afternoon (12:00–17:00 ET)", group=g_SESS)
+i_col_nypm    = input.color(color.rgb(156, 39,  176), "NY Afternoon colour", group=g_SESS)
+i_show_cust   = input.bool(false, "Custom Session",               group=g_SESS)
+i_cust_start  = input.string("0900", "  Start (HHMM ET)",         group=g_SESS)
+i_cust_end    = input.string("1200", "  End   (HHMM ET)",         group=g_SESS)
+i_cust_label  = input.string("Custom", "  Label",                 group=g_SESS)
+i_col_cust    = input.color(color.rgb(100, 100, 100), "Custom colour",       group=g_SESS)
+
+// ─── Range Bands ──────────────────────────────────────────────────
+var g_RNG = "Range Bands  (symmetric H-L percentiles)"
+i_rng_p50     = input.bool(true,  "Median (P50)",          group=g_RNG)
+i_rng_iqr     = input.bool(true,  "IQR (P25 / P75)",       group=g_RNG)
+i_rng_p10p90  = input.bool(true,  "P10 / P90",             group=g_RNG)
+i_rng_mean    = input.bool(true,  "Mean",                   group=g_RNG)
+i_rng_fills   = input.bool(true,  "Show Fills",             group=g_RNG)
+i_rng_style   = input.string("Dotted", "Line Style",
+                 options=["Solid","Dashed","Dotted"],        group=g_RNG)
+i_rng_width   = input.int(1, "Line Width", minval=1, maxval=4, group=g_RNG)
+i_col_p50     = input.color(color.rgb(20,  20,  20),  "P50 colour",    group=g_RNG)
+i_col_iqr     = input.color(color.rgb(80,  80,  80),  "IQR colour",    group=g_RNG)
+i_col_p10p90  = input.color(color.rgb(130, 130, 130), "P10/P90 colour",group=g_RNG)
+i_col_mean    = input.color(color.rgb(60,  60,  160), "Mean colour",   group=g_RNG)
+
+// ─── MFE / MAE Bands ──────────────────────────────────────────────
+var g_EXC = "MFE / MAE Bands  (directional excursion)"
+i_show_exc    = input.bool(true,  "Show MFE / MAE Bands",  group=g_EXC)
+i_bull_bear   = input.bool(false, "Split Bull / Bear sessions",
+                 tooltip="Show separate levels for sessions that closed above/below open",
+                 group=g_EXC)
+i_exc_style   = input.string("Solid", "Line Style",
+                 options=["Solid","Dashed","Dotted"],        group=g_EXC)
+i_exc_width   = input.int(1, "Line Width", minval=1, maxval=4, group=g_EXC)
+i_col_mfe     = input.color(color.rgb(30,  140, 30),  "MFE colour",    group=g_EXC)
+i_col_mae     = input.color(color.rgb(180, 30,  30),  "MAE colour",    group=g_EXC)
+
+// ─── Overview Table ───────────────────────────────────────────────
+var g_TBL1 = "Overview Table"
+i_tbl1_show   = input.bool(true, "Show Overview Table",     group=g_TBL1)
+i_tbl1_pos    = input.string("Bottom Left", "Position",
+                 options=["Top Left","Top Right","Top Center",
+                          "Middle Left","Middle Center","Middle Right",
+                          "Bottom Left","Bottom Center","Bottom Right"],
+                 group=g_TBL1)
+i_tbl1_size   = input.string("Tiny", "Text Size",
+                 options=["Tiny","Small","Normal"],          group=g_TBL1)
+
+// ─── Live Level Table ─────────────────────────────────────────────
+var g_TBL2 = "Live Level Table"
+i_tbl2_show   = input.bool(true, "Show Live Level Table",   group=g_TBL2)
+i_tbl2_pos    = input.string("Bottom Right", "Position",
+                 options=["Top Left","Top Right","Top Center",
+                          "Middle Left","Middle Center","Middle Right",
+                          "Bottom Left","Bottom Center","Bottom Right"],
+                 group=g_TBL2)
+i_tbl2_size   = input.string("Tiny", "Text Size",
+                 options=["Tiny","Small","Normal"],          group=g_TBL2)
+
+// ─── Label offset ─────────────────────────────────────────────────
+i_proj_bars   = input.int(10, "Label Offset (bars)",
+                 minval=1, maxval=50, group=g_GLOBAL)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2 — HELPERS
+// ═══════════════════════════════════════════════════════════════════
+
+TZ = "America/New_York"
+
+f_lbl_size() =>
+    i_label_size == "Tiny" ? size.tiny :
+     i_label_size == "Small" ? size.small : size.normal
+
+f_tbl_size(s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.small : size.normal
+
+f_tpos(s) =>
+    switch s
+        "Top Left"      => position.top_left
+        "Top Right"     => position.top_right
+        "Top Center"    => position.top_center
+        "Middle Left"   => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+f_line_style(s) =>
+    switch s
+        "Solid"  => line.style_solid
+        "Dashed" => line.style_dashed
+        => line.style_dotted
+
+f_pct_val(arr, p) =>
+    array.size(arr) >= 2 ? array.percentile_nearest_rank(arr, p) : float(na)
+
+f_pct_rank(arr, val) =>
+    n = array.size(arr)
+    if n == 0
+        int(na)
+    else
+        count = 0
+        for i = 0 to n - 1
+            if array.get(arr, i) <= val
+                count += 1
+        math.round((count / n) * 100)
+
+f_fmt_pts(v) =>
+    not na(v) ?
+     (v >= 0 ? "+" : "") + str.format("{0,number,#.#}", v) + " pts" : "—"
+
+f_fmt_p(v) =>
+    not na(v) ? str.format("{0,number,#.#}", v) : "—"
+
+f_rev_str(tot, rev) =>
+    tot > 0 ? str.tostring(math.round((rev / tot) * 100)) + "%" : "—"
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3 — SESSION DETECTION
+// ═══════════════════════════════════════════════════════════════════
+
+asia_tf  = "1900-0200"
+lon_tf   = "0200-0800"
+nyam_tf  = "0800-1200"
+nypm_tf  = "1200-1700"
+cust_tf  = i_cust_start + "-" + i_cust_end
+
+in_asia  = not na(time(timeframe.period, asia_tf,  TZ))
+in_lon   = not na(time(timeframe.period, lon_tf,   TZ))
+in_nyam  = not na(time(timeframe.period, nyam_tf,  TZ))
+in_nypm  = not na(time(timeframe.period, nypm_tf,  TZ))
+in_cust  = not na(time(timeframe.period, cust_tf,  TZ))
+
+asia_start  = in_asia  and not in_asia[1]
+lon_start   = in_lon   and not in_lon[1]
+nyam_start  = in_nyam  and not in_nyam[1]
+nypm_start  = in_nypm  and not in_nypm[1]
+cust_start  = in_cust  and not in_cust[1]
+
+asia_end    = not in_asia  and in_asia[1]
+lon_end     = not in_lon   and in_lon[1]
+nyam_end    = not in_nyam  and in_nyam[1]
+nypm_end    = not in_nypm  and in_nypm[1]
+cust_end    = not in_cust  and in_cust[1]
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4 — SESSION OHLC TRACKING
+// Running high/low/close updated every bar within session.
+// Open captured at first bar. All used for stat recording at end.
+// ═══════════════════════════════════════════════════════════════════
+
+var float asia_o  = na, var float asia_h  = na
+var float asia_l  = na, var float asia_c  = na
+
+var float lon_o   = na, var float lon_h   = na
+var float lon_l   = na, var float lon_c   = na
+
+var float nyam_o  = na, var float nyam_h  = na
+var float nyam_l  = na, var float nyam_c  = na
+
+var float nypm_o  = na, var float nypm_h  = na
+var float nypm_l  = na, var float nypm_c  = na
+
+var float cust_o  = na, var float cust_h  = na
+var float cust_l  = na, var float cust_c  = na
+
+// Asia
+if asia_start
+    asia_o := open,  asia_h := high
+    asia_l := low,   asia_c := close
+else if in_asia
+    asia_h := math.max(asia_h, high)
+    asia_l := math.min(asia_l, low)
+    asia_c := close
+
+// London
+if lon_start
+    lon_o := open,  lon_h := high
+    lon_l := low,   lon_c := close
+else if in_lon
+    lon_h := math.max(lon_h, high)
+    lon_l := math.min(lon_l, low)
+    lon_c := close
+
+// NY Morning
+if nyam_start
+    nyam_o := open,  nyam_h := high
+    nyam_l := low,   nyam_c := close
+else if in_nyam
+    nyam_h := math.max(nyam_h, high)
+    nyam_l := math.min(nyam_l, low)
+    nyam_c := close
+
+// NY Afternoon
+if nypm_start
+    nypm_o := open,  nypm_h := high
+    nypm_l := low,   nypm_c := close
+else if in_nypm
+    nypm_h := math.max(nypm_h, high)
+    nypm_l := math.min(nypm_l, low)
+    nypm_c := close
+
+// Custom
+if cust_start
+    cust_o := open,  cust_h := high
+    cust_l := low,   cust_c := close
+else if in_cust
+    cust_h := math.max(cust_h, high)
+    cust_l := math.min(cust_l, low)
+    cust_c := close
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5 — STAT ARRAYS
+// Per session, stored as points from session open:
+//   _rng        : full range H-L  (for symmetric range bands)
+//   _mfe        : max upside from open  (all sessions)
+//   _mae        : max downside from open (all sessions)
+//   _bull_mfe   : MFE on bull sessions only (close > open)
+//   _bull_mae   : MAE on bull sessions only
+//   _bear_mfe   : MFE on bear sessions only (close < open)
+//   _bear_mae   : MAE on bear sessions only
+//   _cls        : close deviation from open (signed, for reversion)
+//   _bull / _bear : session direction counters
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Asia ─────────────────────────────────────────────────────────
+var float[] asia_rng      = array.new_float(0)
+var float[] asia_mfe      = array.new_float(0)
+var float[] asia_mae      = array.new_float(0)
+var float[] asia_bull_mfe = array.new_float(0)
+var float[] asia_bull_mae = array.new_float(0)
+var float[] asia_bear_mfe = array.new_float(0)
+var float[] asia_bear_mae = array.new_float(0)
+var float[] asia_cls      = array.new_float(0)
+var int     asia_bull_ct  = 0
+var int     asia_bear_ct  = 0
+
+// ─── London ───────────────────────────────────────────────────────
+var float[] lon_rng       = array.new_float(0)
+var float[] lon_mfe       = array.new_float(0)
+var float[] lon_mae       = array.new_float(0)
+var float[] lon_bull_mfe  = array.new_float(0)
+var float[] lon_bull_mae  = array.new_float(0)
+var float[] lon_bear_mfe  = array.new_float(0)
+var float[] lon_bear_mae  = array.new_float(0)
+var float[] lon_cls       = array.new_float(0)
+var int     lon_bull_ct   = 0
+var int     lon_bear_ct   = 0
+
+// ─── NY Morning ───────────────────────────────────────────────────
+var float[] nyam_rng      = array.new_float(0)
+var float[] nyam_mfe      = array.new_float(0)
+var float[] nyam_mae      = array.new_float(0)
+var float[] nyam_bull_mfe = array.new_float(0)
+var float[] nyam_bull_mae = array.new_float(0)
+var float[] nyam_bear_mfe = array.new_float(0)
+var float[] nyam_bear_mae = array.new_float(0)
+var float[] nyam_cls      = array.new_float(0)
+var int     nyam_bull_ct  = 0
+var int     nyam_bear_ct  = 0
+
+// ─── NY Afternoon ─────────────────────────────────────────────────
+var float[] nypm_rng      = array.new_float(0)
+var float[] nypm_mfe      = array.new_float(0)
+var float[] nypm_mae      = array.new_float(0)
+var float[] nypm_bull_mfe = array.new_float(0)
+var float[] nypm_bull_mae = array.new_float(0)
+var float[] nypm_bear_mfe = array.new_float(0)
+var float[] nypm_bear_mae = array.new_float(0)
+var float[] nypm_cls      = array.new_float(0)
+var int     nypm_bull_ct  = 0
+var int     nypm_bear_ct  = 0
+
+// ─── Custom ───────────────────────────────────────────────────────
+var float[] cust_rng      = array.new_float(0)
+var float[] cust_mfe      = array.new_float(0)
+var float[] cust_mae      = array.new_float(0)
+var float[] cust_bull_mfe = array.new_float(0)
+var float[] cust_bull_mae = array.new_float(0)
+var float[] cust_bear_mfe = array.new_float(0)
+var float[] cust_bear_mae = array.new_float(0)
+var float[] cust_cls      = array.new_float(0)
+var int     cust_bull_ct  = 0
+var int     cust_bear_ct  = 0
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6 — REVERSION COUNTERS + SESSION RECORDING
+//
+// Reversion counters — per session, per level (P25/P50/P75/P90)
+// for both MFE (upside) and MAE (downside):
+//   _tot : sessions that reached this level
+//   _rev : of those, closed back within cls IQR (near open)
+//   _nxt : of those, continued to the next level
+//
+// f_record_session() called at session end — pushes to arrays,
+// updates bull/bear counts and all reversion counters atomically.
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Asia reversion counters ──────────────────────────────────────
+var int asia_mfe25_tot = 0, var int asia_mfe25_nxt = 0, var int asia_mfe25_opp = 0
+var int asia_mfe50_tot = 0, var int asia_mfe50_nxt = 0, var int asia_mfe50_opp = 0
+var int asia_mfe75_tot = 0, var int asia_mfe75_nxt = 0, var int asia_mfe75_opp = 0
+var int asia_mfe90_tot = 0, var int asia_mfe90_opp = 0
+var int asia_mae25_tot = 0, var int asia_mae25_nxt = 0, var int asia_mae25_opp = 0
+var int asia_mae50_tot = 0, var int asia_mae50_nxt = 0, var int asia_mae50_opp = 0
+var int asia_mae75_tot = 0, var int asia_mae75_nxt = 0, var int asia_mae75_opp = 0
+var int asia_mae90_tot = 0, var int asia_mae90_opp = 0
+var int asia_sess_tot  = 0
+
+// ─── London reversion counters ────────────────────────────────────
+var int lon_mfe25_tot  = 0, var int lon_mfe25_nxt  = 0, var int lon_mfe25_opp  = 0
+var int lon_mfe50_tot  = 0, var int lon_mfe50_nxt  = 0, var int lon_mfe50_opp  = 0
+var int lon_mfe75_tot  = 0, var int lon_mfe75_nxt  = 0, var int lon_mfe75_opp  = 0
+var int lon_mfe90_tot  = 0, var int lon_mfe90_opp  = 0
+var int lon_mae25_tot  = 0, var int lon_mae25_nxt  = 0, var int lon_mae25_opp  = 0
+var int lon_mae50_tot  = 0, var int lon_mae50_nxt  = 0, var int lon_mae50_opp  = 0
+var int lon_mae75_tot  = 0, var int lon_mae75_nxt  = 0, var int lon_mae75_opp  = 0
+var int lon_mae90_tot  = 0, var int lon_mae90_opp  = 0
+var int lon_sess_tot   = 0
+
+// ─── NY Morning reversion counters ────────────────────────────────
+var int nyam_mfe25_tot = 0, var int nyam_mfe25_nxt = 0, var int nyam_mfe25_opp = 0
+var int nyam_mfe50_tot = 0, var int nyam_mfe50_nxt = 0, var int nyam_mfe50_opp = 0
+var int nyam_mfe75_tot = 0, var int nyam_mfe75_nxt = 0, var int nyam_mfe75_opp = 0
+var int nyam_mfe90_tot = 0, var int nyam_mfe90_opp = 0
+var int nyam_mae25_tot = 0, var int nyam_mae25_nxt = 0, var int nyam_mae25_opp = 0
+var int nyam_mae50_tot = 0, var int nyam_mae50_nxt = 0, var int nyam_mae50_opp = 0
+var int nyam_mae75_tot = 0, var int nyam_mae75_nxt = 0, var int nyam_mae75_opp = 0
+var int nyam_mae90_tot = 0, var int nyam_mae90_opp = 0
+var int nyam_sess_tot  = 0
+
+// ─── NY Afternoon reversion counters ──────────────────────────────
+var int nypm_mfe25_tot = 0, var int nypm_mfe25_nxt = 0, var int nypm_mfe25_opp = 0
+var int nypm_mfe50_tot = 0, var int nypm_mfe50_nxt = 0, var int nypm_mfe50_opp = 0
+var int nypm_mfe75_tot = 0, var int nypm_mfe75_nxt = 0, var int nypm_mfe75_opp = 0
+var int nypm_mfe90_tot = 0, var int nypm_mfe90_opp = 0
+var int nypm_mae25_tot = 0, var int nypm_mae25_nxt = 0, var int nypm_mae25_opp = 0
+var int nypm_mae50_tot = 0, var int nypm_mae50_nxt = 0, var int nypm_mae50_opp = 0
+var int nypm_mae75_tot = 0, var int nypm_mae75_nxt = 0, var int nypm_mae75_opp = 0
+var int nypm_mae90_tot = 0, var int nypm_mae90_opp = 0
+var int nypm_sess_tot  = 0
+
+// ─── Custom reversion counters ────────────────────────────────────
+var int cust_mfe25_tot = 0, var int cust_mfe25_nxt = 0, var int cust_mfe25_opp = 0
+var int cust_mfe50_tot = 0, var int cust_mfe50_nxt = 0, var int cust_mfe50_opp = 0
+var int cust_mfe75_tot = 0, var int cust_mfe75_nxt = 0, var int cust_mfe75_opp = 0
+var int cust_mfe90_tot = 0, var int cust_mfe90_opp = 0
+var int cust_mae25_tot = 0, var int cust_mae25_nxt = 0, var int cust_mae25_opp = 0
+var int cust_mae50_tot = 0, var int cust_mae50_nxt = 0, var int cust_mae50_opp = 0
+var int cust_mae75_tot = 0, var int cust_mae75_nxt = 0, var int cust_mae75_opp = 0
+var int cust_mae90_tot = 0, var int cust_mae90_opp = 0
+var int cust_sess_tot  = 0
+
+// ─── Intra-session sequencing — bar-by-bar tracking ──────────────
+// Tracks same-side retracement patterns:
+//   MFE P90 hit → price retraces back below MFE P75
+//   MFE P75 hit → price retraces back below MFE P50
+//   MFE P50 hit → price retraces back below MFE P25
+//   MAE P90 hit → price retraces back above MAE P75
+//   MAE P75 hit → price retraces back above MAE P50
+//   MAE P50 hit → price retraces back above MAE P25
+//
+// All thresholds are distances from session open (same units as mfe/mae arrays)
+// Flags reset at session start, checked bar by bar, read at session end.
+
+// ── Asia sequencing ───────────────────────────────────────────────
+var float asia_thr_mfe90 = na, var float asia_thr_mfe75 = na
+var float asia_thr_mfe50 = na, var float asia_thr_mfe25 = na
+var float asia_thr_mae90 = na, var float asia_thr_mae75 = na
+var float asia_thr_mae50 = na, var float asia_thr_mae25 = na
+var bool  asia_hit_mfe90 = false, var bool  asia_ret_mfe90 = false
+var bool  asia_hit_mfe75 = false, var bool  asia_ret_mfe75 = false
+var bool  asia_hit_mfe50 = false, var bool  asia_ret_mfe50 = false
+var bool  asia_hit_mae90 = false, var bool  asia_ret_mae90 = false
+var bool  asia_hit_mae75 = false, var bool  asia_ret_mae75 = false
+var bool  asia_hit_mae50 = false, var bool  asia_ret_mae50 = false
+
+// ── London sequencing ─────────────────────────────────────────────
+var float lon_thr_mfe90  = na, var float lon_thr_mfe75  = na
+var float lon_thr_mfe50  = na, var float lon_thr_mfe25  = na
+var float lon_thr_mae90  = na, var float lon_thr_mae75  = na
+var float lon_thr_mae50  = na, var float lon_thr_mae25  = na
+var bool  lon_hit_mfe90  = false, var bool  lon_ret_mfe90  = false
+var bool  lon_hit_mfe75  = false, var bool  lon_ret_mfe75  = false
+var bool  lon_hit_mfe50  = false, var bool  lon_ret_mfe50  = false
+var bool  lon_hit_mae90  = false, var bool  lon_ret_mae90  = false
+var bool  lon_hit_mae75  = false, var bool  lon_ret_mae75  = false
+var bool  lon_hit_mae50  = false, var bool  lon_ret_mae50  = false
+
+// ── NY Morning sequencing ─────────────────────────────────────────
+var float nyam_thr_mfe90 = na, var float nyam_thr_mfe75 = na
+var float nyam_thr_mfe50 = na, var float nyam_thr_mfe25 = na
+var float nyam_thr_mae90 = na, var float nyam_thr_mae75 = na
+var float nyam_thr_mae50 = na, var float nyam_thr_mae25 = na
+var bool  nyam_hit_mfe90 = false, var bool  nyam_ret_mfe90 = false
+var bool  nyam_hit_mfe75 = false, var bool  nyam_ret_mfe75 = false
+var bool  nyam_hit_mfe50 = false, var bool  nyam_ret_mfe50 = false
+var bool  nyam_hit_mae90 = false, var bool  nyam_ret_mae90 = false
+var bool  nyam_hit_mae75 = false, var bool  nyam_ret_mae75 = false
+var bool  nyam_hit_mae50 = false, var bool  nyam_ret_mae50 = false
+
+// ── NY Afternoon sequencing ───────────────────────────────────────
+var float nypm_thr_mfe90 = na, var float nypm_thr_mfe75 = na
+var float nypm_thr_mfe50 = na, var float nypm_thr_mfe25 = na
+var float nypm_thr_mae90 = na, var float nypm_thr_mae75 = na
+var float nypm_thr_mae50 = na, var float nypm_thr_mae25 = na
+var bool  nypm_hit_mfe90 = false, var bool  nypm_ret_mfe90 = false
+var bool  nypm_hit_mfe75 = false, var bool  nypm_ret_mfe75 = false
+var bool  nypm_hit_mfe50 = false, var bool  nypm_ret_mfe50 = false
+var bool  nypm_hit_mae90 = false, var bool  nypm_ret_mae90 = false
+var bool  nypm_hit_mae75 = false, var bool  nypm_ret_mae75 = false
+var bool  nypm_hit_mae50 = false, var bool  nypm_ret_mae50 = false
+
+// ── Custom sequencing ─────────────────────────────────────────────
+var float cust_thr_mfe90 = na, var float cust_thr_mfe75 = na
+var float cust_thr_mfe50 = na, var float cust_thr_mfe25 = na
+var float cust_thr_mae90 = na, var float cust_thr_mae75 = na
+var float cust_thr_mae50 = na, var float cust_thr_mae25 = na
+var bool  cust_hit_mfe90 = false, var bool  cust_ret_mfe90 = false
+var bool  cust_hit_mfe75 = false, var bool  cust_ret_mfe75 = false
+var bool  cust_hit_mfe50 = false, var bool  cust_ret_mfe50 = false
+var bool  cust_hit_mae90 = false, var bool  cust_ret_mae90 = false
+var bool  cust_hit_mae75 = false, var bool  cust_ret_mae75 = false
+var bool  cust_hit_mae50 = false, var bool  cust_ret_mae50 = false
+
+// ─── Reset thresholds + flags at session start ────────────────────
+
+if asia_start
+    asia_thr_mfe90 := f_pct_val(asia_mfe, 90)
+    asia_thr_mfe75 := f_pct_val(asia_mfe, 75)
+    asia_thr_mfe50 := f_pct_val(asia_mfe, 50)
+    asia_thr_mfe25 := f_pct_val(asia_mfe, 25)
+    asia_thr_mae90 := f_pct_val(asia_mae, 90)
+    asia_thr_mae75 := f_pct_val(asia_mae, 75)
+    asia_thr_mae50 := f_pct_val(asia_mae, 50)
+    asia_thr_mae25 := f_pct_val(asia_mae, 25)
+    asia_hit_mfe90 := false, asia_ret_mfe90 := false
+    asia_hit_mfe75 := false, asia_ret_mfe75 := false
+    asia_hit_mfe50 := false, asia_ret_mfe50 := false
+    asia_hit_mae90 := false, asia_ret_mae90 := false
+    asia_hit_mae75 := false, asia_ret_mae75 := false
+    asia_hit_mae50 := false, asia_ret_mae50 := false
+
+if lon_start
+    lon_thr_mfe90 := f_pct_val(lon_mfe, 90)
+    lon_thr_mfe75 := f_pct_val(lon_mfe, 75)
+    lon_thr_mfe50 := f_pct_val(lon_mfe, 50)
+    lon_thr_mfe25 := f_pct_val(lon_mfe, 25)
+    lon_thr_mae90 := f_pct_val(lon_mae, 90)
+    lon_thr_mae75 := f_pct_val(lon_mae, 75)
+    lon_thr_mae50 := f_pct_val(lon_mae, 50)
+    lon_thr_mae25 := f_pct_val(lon_mae, 25)
+    lon_hit_mfe90 := false, lon_ret_mfe90 := false
+    lon_hit_mfe75 := false, lon_ret_mfe75 := false
+    lon_hit_mfe50 := false, lon_ret_mfe50 := false
+    lon_hit_mae90 := false, lon_ret_mae90 := false
+    lon_hit_mae75 := false, lon_ret_mae75 := false
+    lon_hit_mae50 := false, lon_ret_mae50 := false
+
+if nyam_start
+    nyam_thr_mfe90 := f_pct_val(nyam_mfe, 90)
+    nyam_thr_mfe75 := f_pct_val(nyam_mfe, 75)
+    nyam_thr_mfe50 := f_pct_val(nyam_mfe, 50)
+    nyam_thr_mfe25 := f_pct_val(nyam_mfe, 25)
+    nyam_thr_mae90 := f_pct_val(nyam_mae, 90)
+    nyam_thr_mae75 := f_pct_val(nyam_mae, 75)
+    nyam_thr_mae50 := f_pct_val(nyam_mae, 50)
+    nyam_thr_mae25 := f_pct_val(nyam_mae, 25)
+    nyam_hit_mfe90 := false, nyam_ret_mfe90 := false
+    nyam_hit_mfe75 := false, nyam_ret_mfe75 := false
+    nyam_hit_mfe50 := false, nyam_ret_mfe50 := false
+    nyam_hit_mae90 := false, nyam_ret_mae90 := false
+    nyam_hit_mae75 := false, nyam_ret_mae75 := false
+    nyam_hit_mae50 := false, nyam_ret_mae50 := false
+
+if nypm_start
+    nypm_thr_mfe90 := f_pct_val(nypm_mfe, 90)
+    nypm_thr_mfe75 := f_pct_val(nypm_mfe, 75)
+    nypm_thr_mfe50 := f_pct_val(nypm_mfe, 50)
+    nypm_thr_mfe25 := f_pct_val(nypm_mfe, 25)
+    nypm_thr_mae90 := f_pct_val(nypm_mae, 90)
+    nypm_thr_mae75 := f_pct_val(nypm_mae, 75)
+    nypm_thr_mae50 := f_pct_val(nypm_mae, 50)
+    nypm_thr_mae25 := f_pct_val(nypm_mae, 25)
+    nypm_hit_mfe90 := false, nypm_ret_mfe90 := false
+    nypm_hit_mfe75 := false, nypm_ret_mfe75 := false
+    nypm_hit_mfe50 := false, nypm_ret_mfe50 := false
+    nypm_hit_mae90 := false, nypm_ret_mae90 := false
+    nypm_hit_mae75 := false, nypm_ret_mae75 := false
+    nypm_hit_mae50 := false, nypm_ret_mae50 := false
+
+if cust_start
+    cust_thr_mfe90 := f_pct_val(cust_mfe, 90)
+    cust_thr_mfe75 := f_pct_val(cust_mfe, 75)
+    cust_thr_mfe50 := f_pct_val(cust_mfe, 50)
+    cust_thr_mfe25 := f_pct_val(cust_mfe, 25)
+    cust_thr_mae90 := f_pct_val(cust_mae, 90)
+    cust_thr_mae75 := f_pct_val(cust_mae, 75)
+    cust_thr_mae50 := f_pct_val(cust_mae, 50)
+    cust_thr_mae25 := f_pct_val(cust_mae, 25)
+    cust_hit_mfe90 := false, cust_ret_mfe90 := false
+    cust_hit_mfe75 := false, cust_ret_mfe75 := false
+    cust_hit_mfe50 := false, cust_ret_mfe50 := false
+    cust_hit_mae90 := false, cust_ret_mae90 := false
+    cust_hit_mae75 := false, cust_ret_mae75 := false
+    cust_hit_mae50 := false, cust_ret_mae50 := false
+
+// ─── Bar-by-bar sequencing checks (inline, no function) ──────────
+
+if in_asia and not na(asia_o)
+    _du = high  - asia_o
+    _dd = asia_o - low
+    _cl = close - asia_o
+    if not na(asia_thr_mfe90) and _du >= asia_thr_mfe90
+        asia_hit_mfe90 := true
+    if not na(asia_thr_mfe75) and _du >= asia_thr_mfe75
+        asia_hit_mfe75 := true
+    if not na(asia_thr_mfe50) and _du >= asia_thr_mfe50
+        asia_hit_mfe50 := true
+    if asia_hit_mfe90 and not na(asia_thr_mfe75) and _cl < asia_thr_mfe75
+        asia_ret_mfe90 := true
+    if asia_hit_mfe75 and not na(asia_thr_mfe50) and _cl < asia_thr_mfe50
+        asia_ret_mfe75 := true
+    if asia_hit_mfe50 and not na(asia_thr_mfe25) and _cl < asia_thr_mfe25
+        asia_ret_mfe50 := true
+    if not na(asia_thr_mae90) and _dd >= asia_thr_mae90
+        asia_hit_mae90 := true
+    if not na(asia_thr_mae75) and _dd >= asia_thr_mae75
+        asia_hit_mae75 := true
+    if not na(asia_thr_mae50) and _dd >= asia_thr_mae50
+        asia_hit_mae50 := true
+    if asia_hit_mae90 and not na(asia_thr_mae75) and (asia_o - close) < asia_thr_mae75
+        asia_ret_mae90 := true
+    if asia_hit_mae75 and not na(asia_thr_mae50) and (asia_o - close) < asia_thr_mae50
+        asia_ret_mae75 := true
+    if asia_hit_mae50 and not na(asia_thr_mae25) and (asia_o - close) < asia_thr_mae25
+        asia_ret_mae50 := true
+
+if in_lon and not na(lon_o)
+    _du = high  - lon_o
+    _dd = lon_o - low
+    _cl = close - lon_o
+    if not na(lon_thr_mfe90) and _du >= lon_thr_mfe90
+        lon_hit_mfe90 := true
+    if not na(lon_thr_mfe75) and _du >= lon_thr_mfe75
+        lon_hit_mfe75 := true
+    if not na(lon_thr_mfe50) and _du >= lon_thr_mfe50
+        lon_hit_mfe50 := true
+    if lon_hit_mfe90 and not na(lon_thr_mfe75) and _cl < lon_thr_mfe75
+        lon_ret_mfe90 := true
+    if lon_hit_mfe75 and not na(lon_thr_mfe50) and _cl < lon_thr_mfe50
+        lon_ret_mfe75 := true
+    if lon_hit_mfe50 and not na(lon_thr_mfe25) and _cl < lon_thr_mfe25
+        lon_ret_mfe50 := true
+    if not na(lon_thr_mae90) and _dd >= lon_thr_mae90
+        lon_hit_mae90 := true
+    if not na(lon_thr_mae75) and _dd >= lon_thr_mae75
+        lon_hit_mae75 := true
+    if not na(lon_thr_mae50) and _dd >= lon_thr_mae50
+        lon_hit_mae50 := true
+    if lon_hit_mae90 and not na(lon_thr_mae75) and (lon_o - close) < lon_thr_mae75
+        lon_ret_mae90 := true
+    if lon_hit_mae75 and not na(lon_thr_mae50) and (lon_o - close) < lon_thr_mae50
+        lon_ret_mae75 := true
+    if lon_hit_mae50 and not na(lon_thr_mae25) and (lon_o - close) < lon_thr_mae25
+        lon_ret_mae50 := true
+
+if in_nyam and not na(nyam_o)
+    _du = high  - nyam_o
+    _dd = nyam_o - low
+    _cl = close - nyam_o
+    if not na(nyam_thr_mfe90) and _du >= nyam_thr_mfe90
+        nyam_hit_mfe90 := true
+    if not na(nyam_thr_mfe75) and _du >= nyam_thr_mfe75
+        nyam_hit_mfe75 := true
+    if not na(nyam_thr_mfe50) and _du >= nyam_thr_mfe50
+        nyam_hit_mfe50 := true
+    if nyam_hit_mfe90 and not na(nyam_thr_mfe75) and _cl < nyam_thr_mfe75
+        nyam_ret_mfe90 := true
+    if nyam_hit_mfe75 and not na(nyam_thr_mfe50) and _cl < nyam_thr_mfe50
+        nyam_ret_mfe75 := true
+    if nyam_hit_mfe50 and not na(nyam_thr_mfe25) and _cl < nyam_thr_mfe25
+        nyam_ret_mfe50 := true
+    if not na(nyam_thr_mae90) and _dd >= nyam_thr_mae90
+        nyam_hit_mae90 := true
+    if not na(nyam_thr_mae75) and _dd >= nyam_thr_mae75
+        nyam_hit_mae75 := true
+    if not na(nyam_thr_mae50) and _dd >= nyam_thr_mae50
+        nyam_hit_mae50 := true
+    if nyam_hit_mae90 and not na(nyam_thr_mae75) and (nyam_o - close) < nyam_thr_mae75
+        nyam_ret_mae90 := true
+    if nyam_hit_mae75 and not na(nyam_thr_mae50) and (nyam_o - close) < nyam_thr_mae50
+        nyam_ret_mae75 := true
+    if nyam_hit_mae50 and not na(nyam_thr_mae25) and (nyam_o - close) < nyam_thr_mae25
+        nyam_ret_mae50 := true
+
+if in_nypm and not na(nypm_o)
+    _du = high  - nypm_o
+    _dd = nypm_o - low
+    _cl = close - nypm_o
+    if not na(nypm_thr_mfe90) and _du >= nypm_thr_mfe90
+        nypm_hit_mfe90 := true
+    if not na(nypm_thr_mfe75) and _du >= nypm_thr_mfe75
+        nypm_hit_mfe75 := true
+    if not na(nypm_thr_mfe50) and _du >= nypm_thr_mfe50
+        nypm_hit_mfe50 := true
+    if nypm_hit_mfe90 and not na(nypm_thr_mfe75) and _cl < nypm_thr_mfe75
+        nypm_ret_mfe90 := true
+    if nypm_hit_mfe75 and not na(nypm_thr_mfe50) and _cl < nypm_thr_mfe50
+        nypm_ret_mfe75 := true
+    if nypm_hit_mfe50 and not na(nypm_thr_mfe25) and _cl < nypm_thr_mfe25
+        nypm_ret_mfe50 := true
+    if not na(nypm_thr_mae90) and _dd >= nypm_thr_mae90
+        nypm_hit_mae90 := true
+    if not na(nypm_thr_mae75) and _dd >= nypm_thr_mae75
+        nypm_hit_mae75 := true
+    if not na(nypm_thr_mae50) and _dd >= nypm_thr_mae50
+        nypm_hit_mae50 := true
+    if nypm_hit_mae90 and not na(nypm_thr_mae75) and (nypm_o - close) < nypm_thr_mae75
+        nypm_ret_mae90 := true
+    if nypm_hit_mae75 and not na(nypm_thr_mae50) and (nypm_o - close) < nypm_thr_mae50
+        nypm_ret_mae75 := true
+    if nypm_hit_mae50 and not na(nypm_thr_mae25) and (nypm_o - close) < nypm_thr_mae25
+        nypm_ret_mae50 := true
+
+if in_cust and not na(cust_o)
+    _du = high  - cust_o
+    _dd = cust_o - low
+    _cl = close - cust_o
+    if not na(cust_thr_mfe90) and _du >= cust_thr_mfe90
+        cust_hit_mfe90 := true
+    if not na(cust_thr_mfe75) and _du >= cust_thr_mfe75
+        cust_hit_mfe75 := true
+    if not na(cust_thr_mfe50) and _du >= cust_thr_mfe50
+        cust_hit_mfe50 := true
+    if cust_hit_mfe90 and not na(cust_thr_mfe75) and _cl < cust_thr_mfe75
+        cust_ret_mfe90 := true
+    if cust_hit_mfe75 and not na(cust_thr_mfe50) and _cl < cust_thr_mfe50
+        cust_ret_mfe75 := true
+    if cust_hit_mfe50 and not na(cust_thr_mfe25) and _cl < cust_thr_mfe25
+        cust_ret_mfe50 := true
+    if not na(cust_thr_mae90) and _dd >= cust_thr_mae90
+        cust_hit_mae90 := true
+    if not na(cust_thr_mae75) and _dd >= cust_thr_mae75
+        cust_hit_mae75 := true
+    if not na(cust_thr_mae50) and _dd >= cust_thr_mae50
+        cust_hit_mae50 := true
+    if cust_hit_mae90 and not na(cust_thr_mae75) and (cust_o - close) < cust_thr_mae75
+        cust_ret_mae90 := true
+    if cust_hit_mae75 and not na(cust_thr_mae50) and (cust_o - close) < cust_thr_mae50
+        cust_ret_mae75 := true
+    if cust_hit_mae50 and not na(cust_thr_mae25) and (cust_o - close) < cust_thr_mae25
+        cust_ret_mae50 := true
+
+// ─── f_record_session ─────────────────────────────────────────────
+// Called at session end with all OHLC values.
+// 1. Computes mfe/mae/rng/cls and pushes to arrays (trimmed to 100)
+// 2. Splits into bull/bear directional arrays
+// 3. Determines if session "reverted" (close within cls P25-P75)
+// 4. Returns 22 counter deltas:
+//    [mfe25_t, mfe25_r, mfe25_nxt,
+//     mfe50_t, mfe50_r, mfe50_nxt,
+//     mfe75_t, mfe75_r, mfe75_nxt,
+//     mfe90_t, mfe90_r,
+//     mae25_t, mae25_r, mae25_nxt,
+//     mae50_t, mae50_r, mae50_nxt,
+//     mae75_t, mae75_r, mae75_nxt,
+//     mae90_t, mae90_r]
+
+f_record_session(rng_a, mfe_a, mae_a,
+                 bull_mfe_a, bull_mae_a,
+                 bear_mfe_a, bear_mae_a,
+                 cls_a,
+                 s_open, s_high, s_low, s_close,
+                 hit_mfe90, ret_mfe90,
+                 hit_mfe75, ret_mfe75,
+                 hit_mfe50, ret_mfe50,
+                 hit_mae90, ret_mae90,
+                 hit_mae75, ret_mae75,
+                 hit_mae50, ret_mae50) =>
+
+    mfe = s_high - s_open   // max upside from open
+    mae = s_open - s_low    // max downside from open
+    rng = s_high - s_low
+    cls = s_close - s_open  // signed close deviation
+    is_bull = s_close >= s_open
+
+    // Push to combined arrays
+    array.push(rng_a, rng)
+    array.push(mfe_a, mfe)
+    array.push(mae_a, mae)
+    array.push(cls_a, cls)
+
+    // Push to directional arrays
+    if is_bull
+        array.push(bull_mfe_a, mfe)
+        array.push(bull_mae_a, mae)
+    else
+        array.push(bear_mfe_a, mfe)
+        array.push(bear_mae_a, mae)
+
+    // Trim all arrays to 100 sessions
+    if array.size(rng_a)      > 100
+        array.shift(rng_a)
+    if array.size(mfe_a)      > 100
+        array.shift(mfe_a)
+    if array.size(mae_a)      > 100
+        array.shift(mae_a)
+    if array.size(cls_a)      > 100
+        array.shift(cls_a)
+    if array.size(bull_mfe_a) > 100
+        array.shift(bull_mfe_a)
+    if array.size(bull_mae_a) > 100
+        array.shift(bull_mae_a)
+    if array.size(bear_mfe_a) > 100
+        array.shift(bear_mfe_a)
+    if array.size(bear_mae_a) > 100
+        array.shift(bear_mae_a)
+
+    // MFE level thresholds
+    mfe_p25 = array.size(mfe_a) >= 5 ? array.percentile_nearest_rank(mfe_a, 25) : float(na)
+    mfe_p50 = array.size(mfe_a) >= 5 ? array.percentile_nearest_rank(mfe_a, 50) : float(na)
+    mfe_p75 = array.size(mfe_a) >= 5 ? array.percentile_nearest_rank(mfe_a, 75) : float(na)
+    mfe_p90 = array.size(mfe_a) >= 5 ? array.percentile_nearest_rank(mfe_a, 90) : float(na)
+
+    // MAE level thresholds
+    mae_p25 = array.size(mae_a) >= 5 ? array.percentile_nearest_rank(mae_a, 25) : float(na)
+    mae_p50 = array.size(mae_a) >= 5 ? array.percentile_nearest_rank(mae_a, 50) : float(na)
+    mae_p75 = array.size(mae_a) >= 5 ? array.percentile_nearest_rank(mae_a, 75) : float(na)
+    mae_p90 = array.size(mae_a) >= 5 ? array.percentile_nearest_rank(mae_a, 90) : float(na)
+
+    // MFE counter deltas
+    mfe25_t = not na(mfe_p25) and mfe >= mfe_p25 ? 1 : 0
+    mfe50_t = not na(mfe_p50) and mfe >= mfe_p50 ? 1 : 0
+    mfe75_t = not na(mfe_p75) and mfe >= mfe_p75 ? 1 : 0
+    mfe90_t = not na(mfe_p90) and mfe >= mfe_p90 ? 1 : 0
+
+    // MAE counter deltas
+    mae25_t = not na(mae_p25) and mae >= mae_p25 ? 1 : 0
+    mae50_t = not na(mae_p50) and mae >= mae_p50 ? 1 : 0
+    mae75_t = not na(mae_p75) and mae >= mae_p75 ? 1 : 0
+    mae90_t = not na(mae_p90) and mae >= mae_p90 ? 1 : 0
+
+    // Next-level deltas — reached this level AND the next level in same direction
+    mfe25_nxt = mfe25_t == 1 and mfe50_t == 1 ? 1 : 0
+    mfe50_nxt = mfe50_t == 1 and mfe75_t == 1 ? 1 : 0
+    mfe75_nxt = mfe75_t == 1 and mfe90_t == 1 ? 1 : 0
+    mae25_nxt = mae25_t == 1 and mae50_t == 1 ? 1 : 0
+    mae50_nxt = mae50_t == 1 and mae75_t == 1 ? 1 : 0
+    mae75_nxt = mae75_t == 1 and mae90_t == 1 ? 1 : 0
+
+    // Opposite-direction sequenced deltas
+    // hit_mfe75 then hit_mae25_seq = price went to MFE P75 THEN reversed to MAE P25
+    // hit_mae75 then hit_mfe25_seq = price went to MAE P75 THEN reversed to MFE P25
+    // Same-side retrace deltas — after hitting level, did price retrace to level below?
+    mfe25_opp = 0
+    mfe50_opp = mfe50_t == 1 and ret_mfe50 ? 1 : 0
+    mfe75_opp = mfe75_t == 1 and ret_mfe75 ? 1 : 0
+    mfe90_opp = mfe90_t == 1 and ret_mfe90 ? 1 : 0
+    mae25_opp = 0
+    mae50_opp = mae50_t == 1 and ret_mae50 ? 1 : 0
+    mae75_opp = mae75_t == 1 and ret_mae75 ? 1 : 0
+    mae90_opp = mae90_t == 1 and ret_mae90 ? 1 : 0
+
+    [mfe25_t, mfe25_nxt, mfe25_opp,
+     mfe50_t, mfe50_nxt, mfe50_opp,
+     mfe75_t, mfe75_nxt, mfe75_opp,
+     mfe90_t, mfe90_opp,
+     mae25_t, mae25_nxt, mae25_opp,
+     mae50_t, mae50_nxt, mae50_opp,
+     mae75_t, mae75_nxt, mae75_opp,
+     mae90_t, mae90_opp]
+
+// ─── Call f_record_session at each session end ────────────────────
+
+if asia_end and not na(asia_o) and asia_o != 0
+    [a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20,a21,a22] =
+         f_record_session(asia_rng, asia_mfe, asia_mae,
+                          asia_bull_mfe, asia_bull_mae,
+                          asia_bear_mfe, asia_bear_mae,
+                          asia_cls, asia_o, asia_h, asia_l, close[1],
+                          asia_hit_mfe90, asia_ret_mfe90,
+                          asia_hit_mfe75, asia_ret_mfe75,
+                          asia_hit_mfe50, asia_ret_mfe50,
+                          asia_hit_mae90, asia_ret_mae90,
+                          asia_hit_mae75, asia_ret_mae75,
+                          asia_hit_mae50, asia_ret_mae50)
+    asia_sess_tot += 1
+    if close[1] >= asia_o
+        asia_bull_ct += 1
+    else
+        asia_bear_ct += 1
+    asia_mfe25_tot += a1,  asia_mfe25_nxt += a2,  asia_mfe25_opp += a3
+    asia_mfe50_tot += a4,  asia_mfe50_nxt += a5,  asia_mfe50_opp += a6
+    asia_mfe75_tot += a7,  asia_mfe75_nxt += a8,  asia_mfe75_opp += a9
+    asia_mfe90_tot += a10, asia_mfe90_opp += a11
+    asia_mae25_tot += a12, asia_mae25_nxt += a13, asia_mae25_opp += a14
+    asia_mae50_tot += a15, asia_mae50_nxt += a16, asia_mae50_opp += a17
+    asia_mae75_tot += a18, asia_mae75_nxt += a19, asia_mae75_opp += a20
+    asia_mae90_tot += a21, asia_mae90_opp += a22
+
+if lon_end and not na(lon_o) and lon_o != 0
+    [a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20,a21,a22] =
+         f_record_session(lon_rng, lon_mfe, lon_mae,
+                          lon_bull_mfe, lon_bull_mae,
+                          lon_bear_mfe, lon_bear_mae,
+                          lon_cls, lon_o, lon_h, lon_l, close[1],
+                          lon_hit_mfe90, lon_ret_mfe90,
+                          lon_hit_mfe75, lon_ret_mfe75,
+                          lon_hit_mfe50, lon_ret_mfe50,
+                          lon_hit_mae90, lon_ret_mae90,
+                          lon_hit_mae75, lon_ret_mae75,
+                          lon_hit_mae50, lon_ret_mae50)
+    lon_sess_tot += 1
+    if close[1] >= lon_o
+        lon_bull_ct += 1
+    else
+        lon_bear_ct += 1
+    lon_mfe25_tot += a1,  lon_mfe25_nxt += a2,  lon_mfe25_opp += a3
+    lon_mfe50_tot += a4,  lon_mfe50_nxt += a5,  lon_mfe50_opp += a6
+    lon_mfe75_tot += a7,  lon_mfe75_nxt += a8,  lon_mfe75_opp += a9
+    lon_mfe90_tot += a10, lon_mfe90_opp += a11
+    lon_mae25_tot += a12, lon_mae25_nxt += a13, lon_mae25_opp += a14
+    lon_mae50_tot += a15, lon_mae50_nxt += a16, lon_mae50_opp += a17
+    lon_mae75_tot += a18, lon_mae75_nxt += a19, lon_mae75_opp += a20
+    lon_mae90_tot += a21, lon_mae90_opp += a22
+
+if nyam_end and not na(nyam_o) and nyam_o != 0
+    [a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20,a21,a22] =
+         f_record_session(nyam_rng, nyam_mfe, nyam_mae,
+                          nyam_bull_mfe, nyam_bull_mae,
+                          nyam_bear_mfe, nyam_bear_mae,
+                          nyam_cls, nyam_o, nyam_h, nyam_l, close[1],
+                          nyam_hit_mfe90, nyam_ret_mfe90,
+                          nyam_hit_mfe75, nyam_ret_mfe75,
+                          nyam_hit_mfe50, nyam_ret_mfe50,
+                          nyam_hit_mae90, nyam_ret_mae90,
+                          nyam_hit_mae75, nyam_ret_mae75,
+                          nyam_hit_mae50, nyam_ret_mae50)
+    nyam_sess_tot += 1
+    if close[1] >= nyam_o
+        nyam_bull_ct += 1
+    else
+        nyam_bear_ct += 1
+    nyam_mfe25_tot += a1,  nyam_mfe25_nxt += a2,  nyam_mfe25_opp += a3
+    nyam_mfe50_tot += a4,  nyam_mfe50_nxt += a5,  nyam_mfe50_opp += a6
+    nyam_mfe75_tot += a7,  nyam_mfe75_nxt += a8,  nyam_mfe75_opp += a9
+    nyam_mfe90_tot += a10, nyam_mfe90_opp += a11
+    nyam_mae25_tot += a12, nyam_mae25_nxt += a13, nyam_mae25_opp += a14
+    nyam_mae50_tot += a15, nyam_mae50_nxt += a16, nyam_mae50_opp += a17
+    nyam_mae75_tot += a18, nyam_mae75_nxt += a19, nyam_mae75_opp += a20
+    nyam_mae90_tot += a21, nyam_mae90_opp += a22
+
+if nypm_end and not na(nypm_o) and nypm_o != 0
+    [a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20,a21,a22] =
+         f_record_session(nypm_rng, nypm_mfe, nypm_mae,
+                          nypm_bull_mfe, nypm_bull_mae,
+                          nypm_bear_mfe, nypm_bear_mae,
+                          nypm_cls, nypm_o, nypm_h, nypm_l, close[1],
+                          nypm_hit_mfe90, nypm_ret_mfe90,
+                          nypm_hit_mfe75, nypm_ret_mfe75,
+                          nypm_hit_mfe50, nypm_ret_mfe50,
+                          nypm_hit_mae90, nypm_ret_mae90,
+                          nypm_hit_mae75, nypm_ret_mae75,
+                          nypm_hit_mae50, nypm_ret_mae50)
+    nypm_sess_tot += 1
+    if close[1] >= nypm_o
+        nypm_bull_ct += 1
+    else
+        nypm_bear_ct += 1
+    nypm_mfe25_tot += a1,  nypm_mfe25_nxt += a2,  nypm_mfe25_opp += a3
+    nypm_mfe50_tot += a4,  nypm_mfe50_nxt += a5,  nypm_mfe50_opp += a6
+    nypm_mfe75_tot += a7,  nypm_mfe75_nxt += a8,  nypm_mfe75_opp += a9
+    nypm_mfe90_tot += a10, nypm_mfe90_opp += a11
+    nypm_mae25_tot += a12, nypm_mae25_nxt += a13, nypm_mae25_opp += a14
+    nypm_mae50_tot += a15, nypm_mae50_nxt += a16, nypm_mae50_opp += a17
+    nypm_mae75_tot += a18, nypm_mae75_nxt += a19, nypm_mae75_opp += a20
+    nypm_mae90_tot += a21, nypm_mae90_opp += a22
+
+if cust_end and not na(cust_o) and cust_o != 0
+    [a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20,a21,a22] =
+         f_record_session(cust_rng, cust_mfe, cust_mae,
+                          cust_bull_mfe, cust_bull_mae,
+                          cust_bear_mfe, cust_bear_mae,
+                          cust_cls, cust_o, cust_h, cust_l, close[1],
+                          cust_hit_mfe90, cust_ret_mfe90,
+                          cust_hit_mfe75, cust_ret_mfe75,
+                          cust_hit_mfe50, cust_ret_mfe50,
+                          cust_hit_mae90, cust_ret_mae90,
+                          cust_hit_mae75, cust_ret_mae75,
+                          cust_hit_mae50, cust_ret_mae50)
+    cust_sess_tot += 1
+    if close[1] >= cust_o
+        cust_bull_ct += 1
+    else
+        cust_bear_ct += 1
+    cust_mfe25_tot += a1,  cust_mfe25_nxt += a2,  cust_mfe25_opp += a3
+    cust_mfe50_tot += a4,  cust_mfe50_nxt += a5,  cust_mfe50_opp += a6
+    cust_mfe75_tot += a7,  cust_mfe75_nxt += a8,  cust_mfe75_opp += a9
+    cust_mfe90_tot += a10, cust_mfe90_opp += a11
+    cust_mae25_tot += a12, cust_mae25_nxt += a13, cust_mae25_opp += a14
+    cust_mae50_tot += a15, cust_mae50_nxt += a16, cust_mae50_opp += a17
+    cust_mae75_tot += a18, cust_mae75_nxt += a19, cust_mae75_opp += a20
+    cust_mae90_tot += a21, cust_mae90_opp += a22
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7 — LIVE SCORING
+// Computes on every bar:
+//   curr_sess     : which session is active
+//   curr_open     : session open price
+//   curr_dist     : signed distance from open in points
+//   curr_pct_rank : percentile of current excursion vs history
+//                   (vs MFE array if above open, MAE if below)
+// ═══════════════════════════════════════════════════════════════════
+
+curr_sess =
+     in_asia ? "ASIA" :
+     in_lon  ? "LON"  :
+     in_nyam ? "NYAM" :
+     in_nypm ? "NYPM" :
+     in_cust ? "CUST" : ""
+
+curr_open =
+     in_asia ? asia_o :
+     in_lon  ? lon_o  :
+     in_nyam ? nyam_o :
+     in_nypm ? nypm_o :
+     in_cust ? cust_o : float(na)
+
+curr_dist = not na(curr_open) ? close - curr_open : float(na)
+
+curr_mfe_arr =
+     in_asia ? asia_mfe :
+     in_lon  ? lon_mfe  :
+     in_nyam ? nyam_mfe :
+     in_nypm ? nypm_mfe :
+     in_cust ? cust_mfe : array.new_float(0)
+
+curr_mae_arr =
+     in_asia ? asia_mae :
+     in_lon  ? lon_mae  :
+     in_nyam ? nyam_mae :
+     in_nypm ? nypm_mae :
+     in_cust ? cust_mae : array.new_float(0)
+
+curr_excursion  = not na(curr_dist) ? math.abs(curr_dist) : float(na)
+curr_score_arr  = not na(curr_dist) and curr_dist >= 0 ? curr_mfe_arr : curr_mae_arr
+curr_pct_rank   = not na(curr_excursion) and array.size(curr_score_arr) >= 5 ?
+     f_pct_rank(curr_score_arr, curr_excursion) : int(na)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8 — BAND PLOTTING
+//
+// Three layers per session:
+//   A) Session open line  — dashed, session colour
+//   B) Range bands        — symmetric H-L percentile offsets from open
+//                           style/colour from Range Band inputs
+//   C) MFE/MAE bands      — directional excursion offsets from open
+//                           optionally split bull/bear
+//                           style/colour from MFE/MAE inputs
+//
+// All objects drawn at session start, extended every bar, cleared
+// when the next session begins.
+// Labels track the right edge via label.set_x() every bar.
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Per-session object stores ────────────────────────────────────
+// We use arrays of lines/labels/boxes so any number of levels
+// can be added dynamically without declaring every object up front.
+
+var line[]  asia_lines  = array.new_line()
+var label[] asia_labels = array.new_label()
+var box[]   asia_boxes  = array.new_box()
+var line    asia_oline  = na   // session open line
+
+var line[]  lon_lines   = array.new_line()
+var label[] lon_labels  = array.new_label()
+var box[]   lon_boxes   = array.new_box()
+var line    lon_oline   = na
+
+var line[]  nyam_lines  = array.new_line()
+var label[] nyam_labels = array.new_label()
+var box[]   nyam_boxes  = array.new_box()
+var line    nyam_oline  = na
+
+var line[]  nypm_lines  = array.new_line()
+var label[] nypm_labels = array.new_label()
+var box[]   nypm_boxes  = array.new_box()
+var line    nypm_oline  = na
+
+var line[]  cust_lines  = array.new_line()
+var label[] cust_labels = array.new_label()
+var box[]   cust_boxes  = array.new_box()
+var line    cust_oline  = na
+
+// ─── Clear / extend helpers ───────────────────────────────────────
+
+f_clear(lns, lbs, bxs) =>
+    for ln in lns
+        line.delete(ln)
+    array.clear(lns)
+    for lb in lbs
+        label.delete(lb)
+    array.clear(lbs)
+    for bx in bxs
+        box.delete(bx)
+    array.clear(bxs)
+
+f_extend(lns, lbs, bxs) =>
+    x2 = bar_index + i_proj_bars
+    for ln in lns
+        line.set_x2(ln, x2)
+    for lb in lbs
+        label.set_x(lb, x2)
+    for bx in bxs
+        box.set_right(bx, x2)
+
+// ─── Add a single level line + label ─────────────────────────────
+
+f_add_level(lns, lbs, x1, y, txt, col, ls, lw) =>
+    array.push(lns, line.new(x1, y, x1 + 1, y,
+         color=col, style=ls, width=lw))
+    array.push(lbs, label.new(x1 + 1, y, " " + txt,
+         style=label.style_none, textcolor=color.new(col, 30),
+         color=color.new(color.white, 100),
+         size=f_lbl_size(), text_font_family=font.family_monospace))
+
+// ─── Add a band (two lines + optional fill box) ───────────────────
+
+f_add_band(lns, lbs, bxs, x1, y_hi, y_lo, txt_hi, txt_lo, col, ls, lw) =>
+    array.push(lns, line.new(x1, y_hi, x1 + 1, y_hi,
+         color=col, style=ls, width=lw))
+    array.push(lns, line.new(x1, y_lo, x1 + 1, y_lo,
+         color=col, style=ls, width=lw))
+    array.push(lbs, label.new(x1 + 1, y_hi, " " + txt_hi,
+         style=label.style_none, textcolor=color.new(col, 30),
+         color=color.new(color.white, 100),
+         size=f_lbl_size(), text_font_family=font.family_monospace))
+    array.push(lbs, label.new(x1 + 1, y_lo, " " + txt_lo,
+         style=label.style_none, textcolor=color.new(col, 30),
+         color=color.new(color.white, 100),
+         size=f_lbl_size(), text_font_family=font.family_monospace))
+    if i_rng_fills
+        array.push(bxs, box.new(x1, y_hi, x1 + 1, y_lo,
+             bgcolor=color.new(col, 93), border_width=0))
+
+// ─── Draw all bands for one session ──────────────────────────────
+// Called once at session start. Draws range bands then MFE/MAE bands.
+
+f_draw_bands(lns, lbs, bxs, x1, s_open, slbl, col,
+              rng_a, mfe_a, mae_a,
+              bull_mfe_a, bull_mae_a,
+              bear_mfe_a, bear_mae_a) =>
+
+    rng_ls  = f_line_style(i_rng_style)
+    exc_ls  = f_line_style(i_exc_style)
+
+    // ── A) Range bands (symmetric, H-L percentiles) ──────────────
+    if array.size(rng_a) >= 5
+
+        p10 = f_pct_val(rng_a, 10)
+        p25 = f_pct_val(rng_a, 25)
+        p50 = f_pct_val(rng_a, 50)
+        p75 = f_pct_val(rng_a, 75)
+        p90 = f_pct_val(rng_a, 90)
+        avg = array.size(rng_a) >= 2 ? array.avg(rng_a) : float(na)
+
+        if i_rng_p10p90 and not na(p90)
+            f_add_band(lns, lbs, bxs, x1,
+                 s_open + p90, s_open - p90,
+                 slbl + " P90", slbl + " -P90",
+                 i_col_p10p90, rng_ls, i_rng_width)
+        if i_rng_p10p90 and not na(p10)
+            f_add_band(lns, lbs, bxs, x1,
+                 s_open + p10, s_open - p10,
+                 slbl + " P10", slbl + " -P10",
+                 i_col_p10p90, rng_ls, i_rng_width)
+        if i_rng_iqr and not na(p75)
+            f_add_band(lns, lbs, bxs, x1,
+                 s_open + p75, s_open - p75,
+                 slbl + " P75", slbl + " -P75",
+                 i_col_iqr, rng_ls, i_rng_width)
+        if i_rng_iqr and not na(p25)
+            f_add_band(lns, lbs, bxs, x1,
+                 s_open + p25, s_open - p25,
+                 slbl + " P25", slbl + " -P25",
+                 i_col_iqr, rng_ls, i_rng_width)
+        if i_rng_p50 and not na(p50)
+            f_add_level(lns, lbs, x1, s_open + p50,
+                 slbl + " P50",  i_col_p50, line.style_dashed, i_rng_width)
+            f_add_level(lns, lbs, x1, s_open - p50,
+                 slbl + " -P50", i_col_p50, line.style_dashed, i_rng_width)
+        if i_rng_mean and not na(avg)
+            f_add_level(lns, lbs, x1, s_open + avg,
+                 slbl + " Mean",  i_col_mean, line.style_dashed, i_rng_width)
+            f_add_level(lns, lbs, x1, s_open - avg,
+                 slbl + " -Mean", i_col_mean, line.style_dashed, i_rng_width)
+
+    // ── B) MFE / MAE bands (directional excursion) ───────────────
+    if i_show_exc
+
+        if i_bull_bear
+            // Bull session MFE (upside) levels
+            if array.size(bull_mfe_a) >= 5
+                for p in array.from(25, 50, 75, 90)
+                    v = f_pct_val(bull_mfe_a, p)
+                    if not na(v)
+                        f_add_level(lns, lbs, x1, s_open + v,
+                             slbl + " Bull MFE" + str.tostring(p),
+                             i_col_mfe, exc_ls, i_exc_width)
+            // Bull session MAE (downside) levels
+            if array.size(bull_mae_a) >= 5
+                for p in array.from(25, 50, 75, 90)
+                    v = f_pct_val(bull_mae_a, p)
+                    if not na(v)
+                        f_add_level(lns, lbs, x1, s_open - v,
+                             slbl + " Bull MAE" + str.tostring(p),
+                             i_col_mae, exc_ls, i_exc_width)
+            // Bear session MFE (downside) levels
+            if array.size(bear_mfe_a) >= 5
+                for p in array.from(25, 50, 75, 90)
+                    v = f_pct_val(bear_mfe_a, p)
+                    if not na(v)
+                        f_add_level(lns, lbs, x1, s_open - v,
+                             slbl + " Bear MFE" + str.tostring(p),
+                             i_col_mfe, exc_ls, i_exc_width)
+            // Bear session MAE (upside) levels
+            if array.size(bear_mae_a) >= 5
+                for p in array.from(25, 50, 75, 90)
+                    v = f_pct_val(bear_mae_a, p)
+                    if not na(v)
+                        f_add_level(lns, lbs, x1, s_open + v,
+                             slbl + " Bear MAE" + str.tostring(p),
+                             i_col_mae, exc_ls, i_exc_width)
+        else
+            // Combined MFE (above open)
+            if array.size(mfe_a) >= 5
+                for p in array.from(25, 50, 75, 90)
+                    v = f_pct_val(mfe_a, p)
+                    if not na(v)
+                        f_add_level(lns, lbs, x1, s_open + v,
+                             slbl + " MFE" + str.tostring(p),
+                             i_col_mfe, exc_ls, i_exc_width)
+            // Combined MAE (below open)
+            if array.size(mae_a) >= 5
+                for p in array.from(25, 50, 75, 90)
+                    v = f_pct_val(mae_a, p)
+                    if not na(v)
+                        f_add_level(lns, lbs, x1, s_open - v,
+                             slbl + " MAE" + str.tostring(p),
+                             i_col_mae, exc_ls, i_exc_width)
+
+// ─── Session open line helper ─────────────────────────────────────
+
+f_open_line(s_open, col) =>
+    line.new(bar_index, s_open, bar_index + 1, s_open,
+         color=col, style=line.style_dashed, width=1)
+
+f_open_label(s_open, txt, col) =>
+    label.new(bar_index + i_proj_bars, s_open, " " + txt,
+         style=label.style_none, textcolor=col,
+         color=color.new(color.white, 100),
+         size=f_lbl_size(), text_font_family=font.family_monospace)
+
+// ─── Draw / clear / extend triggers ──────────────────────────────
+// Simple pattern: each session clears and redraws its own bands at
+// start, extends while active. Matches Document 5 working version.
+
+// Asia
+if asia_start and i_show_asia
+    f_clear(asia_lines, asia_labels, asia_boxes)
+    if not na(asia_oline)
+        line.delete(asia_oline)
+    asia_oline := f_open_line(open, i_col_asia)
+    f_open_label(open, "Asia Open", i_col_asia)
+    f_draw_bands(asia_lines, asia_labels, asia_boxes,
+                 bar_index, open, "Asia", i_col_asia,
+                 asia_rng, asia_mfe, asia_mae,
+                 asia_bull_mfe, asia_bull_mae,
+                 asia_bear_mfe, asia_bear_mae)
+
+if in_asia and i_show_asia
+    if not na(asia_oline)
+        line.set_x2(asia_oline, bar_index + i_proj_bars)
+    f_extend(asia_lines, asia_labels, asia_boxes)
+
+// London
+if lon_start and i_show_lon
+    f_clear(lon_lines, lon_labels, lon_boxes)
+    if not na(lon_oline)
+        line.delete(lon_oline)
+    lon_oline := f_open_line(open, i_col_lon)
+    f_open_label(open, "London Open", i_col_lon)
+    f_draw_bands(lon_lines, lon_labels, lon_boxes,
+                 bar_index, open, "Lon", i_col_lon,
+                 lon_rng, lon_mfe, lon_mae,
+                 lon_bull_mfe, lon_bull_mae,
+                 lon_bear_mfe, lon_bear_mae)
+
+if in_lon and i_show_lon
+    if not na(lon_oline)
+        line.set_x2(lon_oline, bar_index + i_proj_bars)
+    f_extend(lon_lines, lon_labels, lon_boxes)
+
+// NY Morning
+if nyam_start and i_show_nyam
+    f_clear(nyam_lines, nyam_labels, nyam_boxes)
+    if not na(nyam_oline)
+        line.delete(nyam_oline)
+    nyam_oline := f_open_line(open, i_col_nyam)
+    f_open_label(open, "NY Morning Open", i_col_nyam)
+    f_draw_bands(nyam_lines, nyam_labels, nyam_boxes,
+                 bar_index, open, "NYAM", i_col_nyam,
+                 nyam_rng, nyam_mfe, nyam_mae,
+                 nyam_bull_mfe, nyam_bull_mae,
+                 nyam_bear_mfe, nyam_bear_mae)
+
+if in_nyam and i_show_nyam
+    if not na(nyam_oline)
+        line.set_x2(nyam_oline, bar_index + i_proj_bars)
+    f_extend(nyam_lines, nyam_labels, nyam_boxes)
+
+// NY Afternoon
+if nypm_start and i_show_nypm
+    f_clear(nypm_lines, nypm_labels, nypm_boxes)
+    if not na(nypm_oline)
+        line.delete(nypm_oline)
+    nypm_oline := f_open_line(open, i_col_nypm)
+    f_open_label(open, "NY Afternoon Open", i_col_nypm)
+    f_draw_bands(nypm_lines, nypm_labels, nypm_boxes,
+                 bar_index, open, "NYPM", i_col_nypm,
+                 nypm_rng, nypm_mfe, nypm_mae,
+                 nypm_bull_mfe, nypm_bull_mae,
+                 nypm_bear_mfe, nypm_bear_mae)
+
+if in_nypm and i_show_nypm
+    if not na(nypm_oline)
+        line.set_x2(nypm_oline, bar_index + i_proj_bars)
+    f_extend(nypm_lines, nypm_labels, nypm_boxes)
+
+// Custom
+if cust_start and i_show_cust
+    f_clear(cust_lines, cust_labels, cust_boxes)
+    if not na(cust_oline)
+        line.delete(cust_oline)
+    cust_oline := f_open_line(open, i_col_cust)
+    f_open_label(open, i_cust_label + " Open", i_col_cust)
+    f_draw_bands(cust_lines, cust_labels, cust_boxes,
+                 bar_index, open, i_cust_label, i_col_cust,
+                 cust_rng, cust_mfe, cust_mae,
+                 cust_bull_mfe, cust_bull_mae,
+                 cust_bear_mfe, cust_bear_mae)
+
+if in_cust and i_show_cust
+    if not na(cust_oline)
+        line.set_x2(cust_oline, bar_index + i_proj_bars)
+    f_extend(cust_lines, cust_labels, cust_boxes)
+
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 9 — OVERVIEW TABLE
+// Always visible. One row per session. Shows range distribution
+// (P25/P50/P75/P90) and bull/bear count for quick context.
+// ═══════════════════════════════════════════════════════════════════
+
+f_tbl1_row(tbl, row, name, rng_a, bull, bear, sess_col, sz) =>
+    n   = array.size(rng_a)
+    bg  = color.new(sess_col, 94)
+    fnt = font.family_monospace
+    c_tc  = color.rgb(50,  50,  50)
+    c_dim = color.rgb(140, 140, 140)
+    table.cell(tbl, 0, row, name,
+         text_size=sz, text_color=sess_col, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 1, row, str.tostring(array.size(rng_a)),
+         text_size=sz, text_color=c_tc, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 2, row, f_fmt_p(f_pct_val(rng_a, 25)),
+         text_size=sz, text_color=c_tc, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 3, row, f_fmt_p(f_pct_val(rng_a, 50)),
+         text_size=sz, text_color=c_tc, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 4, row, f_fmt_p(f_pct_val(rng_a, 75)),
+         text_size=sz, text_color=c_tc, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 5, row, f_fmt_p(f_pct_val(rng_a, 90)),
+         text_size=sz, text_color=c_tc, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 6, row,
+         n >= 2 ? f_fmt_p(array.avg(rng_a)) : "—",
+         text_size=sz, text_color=c_tc, bgcolor=bg, text_font_family=fnt)
+    table.cell(tbl, 7, row,
+         str.tostring(bull) + " / " + str.tostring(bear),
+         text_size=sz, text_color=c_dim, bgcolor=bg, text_font_family=fnt)
+
+if i_tbl1_show and barstate.islast
+
+    var table tbl1 = table.new(f_tpos(i_tbl1_pos), 8, 7,
+         bgcolor      = color.white,
+         border_color = color.rgb(200, 200, 200),
+         frame_color  = color.rgb(160, 160, 160),
+         frame_width  = 1,
+         border_width = 1)
+
+    sz1      = f_tbl_size(i_tbl1_size)
+    fnt      = font.family_monospace
+    c_hdr_bg = color.rgb(30,  30,  30)
+    c_hdr_tc = color.white
+    c_dim    = color.rgb(140, 140, 140)
+    c_ftr_bg = color.rgb(245, 245, 245)
+
+    // Header row
+    table.cell(tbl1, 0, 0, "Session",  text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 1, 0, "N",        text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 2, 0, "P25",      text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 3, 0, "P50",      text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 4, 0, "P75",      text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 5, 0, "P90",      text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 6, 0, "Mean",     text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+    table.cell(tbl1, 7, 0, "Bull/Bear",text_size=sz1, text_color=c_hdr_tc, bgcolor=c_hdr_bg, text_font_family=fnt)
+
+    f_tbl1_row(tbl1, 1, "Asia",         asia_rng,  asia_bull_ct,  asia_bear_ct,  i_col_asia, sz1)
+    f_tbl1_row(tbl1, 2, "London",       lon_rng,   lon_bull_ct,   lon_bear_ct,   i_col_lon,  sz1)
+    f_tbl1_row(tbl1, 3, "NY Morning",   nyam_rng,  nyam_bull_ct,  nyam_bear_ct,  i_col_nyam, sz1)
+    f_tbl1_row(tbl1, 4, "NY Afternoon", nypm_rng,  nypm_bull_ct,  nypm_bear_ct,  i_col_nypm, sz1)
+    f_tbl1_row(tbl1, 5, i_cust_label,   cust_rng,  cust_bull_ct,  cust_bear_ct,  i_col_cust, sz1)
+
+    // Footer
+    table.cell(tbl1, 0, 6, "Lookback: 100 sessions",
+         text_size=sz1, text_color=c_dim, bgcolor=c_ftr_bg, text_font_family=fnt)
+    table.merge_cells(tbl1, 0, 6, 7, 6)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 10 — LIVE LEVEL TABLE
+// Shows MFE/MAE reversion and next-level stats for the active
+// session (or last closed session when no session is running).
+// Columns: Level | Pts | Reached | Reverted | → Next
+// ═══════════════════════════════════════════════════════════════════
+
+// Track last closed session for display when market is between sessions
+var string last_closed = ""
+if asia_end
+    last_closed := "ASIA"
+if lon_end
+    last_closed := "LON"
+if nyam_end
+    last_closed := "NYAM"
+if nypm_end
+    last_closed := "NYPM"
+if cust_end
+    last_closed := "CUST"
+
+if i_tbl2_show and barstate.islast
+
+    display_sess = curr_sess != "" ? curr_sess : last_closed
+    is_live      = curr_sess != ""
+
+    // Resolve metadata for display session
+    string disp_name  = "—"
+    float  disp_open  = na
+    int    disp_n     = 0
+    color  disp_col   = color.gray
+
+    float mfe_p90_pts = na, float mfe_p75_pts = na
+    float mfe_p50_pts = na, float mfe_p25_pts = na
+    float mae_p90_pts = na, float mae_p75_pts = na
+    float mae_p50_pts = na, float mae_p25_pts = na
+
+    int mfe90_t = 0, int mfe90_opp = 0
+    int mfe75_t = 0, int mfe75_nxt = 0, int mfe75_opp = 0
+    int mfe50_t = 0, int mfe50_nxt = 0, int mfe50_opp = 0
+    int mfe25_t = 0, int mfe25_nxt = 0, int mfe25_opp = 0
+    int mae90_t = 0, int mae90_opp = 0
+    int mae75_t = 0, int mae75_nxt = 0, int mae75_opp = 0
+    int mae50_t = 0, int mae50_nxt = 0, int mae50_opp = 0
+    int mae25_t = 0, int mae25_nxt = 0, int mae25_opp = 0
+
+    if display_sess == "ASIA"
+        disp_name    := "Asia  19:00–02:00 ET"
+        disp_open    := asia_o
+        disp_n       := array.size(asia_mfe)
+        disp_col     := i_col_asia
+        mfe_p90_pts  := f_pct_val(asia_mfe, 90)
+        mfe_p75_pts  := f_pct_val(asia_mfe, 75)
+        mfe_p50_pts  := f_pct_val(asia_mfe, 50)
+        mfe_p25_pts  := f_pct_val(asia_mfe, 25)
+        mae_p90_pts  := f_pct_val(asia_mae, 90)
+        mae_p75_pts  := f_pct_val(asia_mae, 75)
+        mae_p50_pts  := f_pct_val(asia_mae, 50)
+        mae_p25_pts  := f_pct_val(asia_mae, 25)
+        mfe90_t := asia_mfe90_tot, mfe90_opp := asia_mfe90_opp
+        mfe75_t := asia_mfe75_tot, mfe75_nxt := asia_mfe75_nxt, mfe75_opp := asia_mfe75_opp
+        mfe50_t := asia_mfe50_tot, mfe50_nxt := asia_mfe50_nxt, mfe50_opp := asia_mfe50_opp
+        mfe25_t := asia_mfe25_tot, mfe25_nxt := asia_mfe25_nxt, mfe25_opp := asia_mfe25_opp
+        mae90_t := asia_mae90_tot, mae90_opp := asia_mae90_opp
+        mae75_t := asia_mae75_tot, mae75_nxt := asia_mae75_nxt, mae75_opp := asia_mae75_opp
+        mae50_t := asia_mae50_tot, mae50_nxt := asia_mae50_nxt, mae50_opp := asia_mae50_opp
+        mae25_t := asia_mae25_tot, mae25_nxt := asia_mae25_nxt, mae25_opp := asia_mae25_opp
+
+    else if display_sess == "LON"
+        disp_name    := "London  02:00–08:00 ET"
+        disp_open    := lon_o
+        disp_n       := array.size(lon_mfe)
+        disp_col     := i_col_lon
+        mfe_p90_pts  := f_pct_val(lon_mfe, 90)
+        mfe_p75_pts  := f_pct_val(lon_mfe, 75)
+        mfe_p50_pts  := f_pct_val(lon_mfe, 50)
+        mfe_p25_pts  := f_pct_val(lon_mfe, 25)
+        mae_p90_pts  := f_pct_val(lon_mae, 90)
+        mae_p75_pts  := f_pct_val(lon_mae, 75)
+        mae_p50_pts  := f_pct_val(lon_mae, 50)
+        mae_p25_pts  := f_pct_val(lon_mae, 25)
+        mfe90_t := lon_mfe90_tot, mfe90_opp := lon_mfe90_opp
+        mfe75_t := lon_mfe75_tot, mfe75_nxt := lon_mfe75_nxt, mfe75_opp := lon_mfe75_opp
+        mfe50_t := lon_mfe50_tot, mfe50_nxt := lon_mfe50_nxt, mfe50_opp := lon_mfe50_opp
+        mfe25_t := lon_mfe25_tot, mfe25_nxt := lon_mfe25_nxt, mfe25_opp := lon_mfe25_opp
+        mae90_t := lon_mae90_tot, mae90_opp := lon_mae90_opp
+        mae75_t := lon_mae75_tot, mae75_nxt := lon_mae75_nxt, mae75_opp := lon_mae75_opp
+        mae50_t := lon_mae50_tot, mae50_nxt := lon_mae50_nxt, mae50_opp := lon_mae50_opp
+        mae25_t := lon_mae25_tot, mae25_nxt := lon_mae25_nxt, mae25_opp := lon_mae25_opp
+
+    else if display_sess == "NYAM"
+        disp_name    := "NY Morning  08:00–12:00 ET"
+        disp_open    := nyam_o
+        disp_n       := array.size(nyam_mfe)
+        disp_col     := i_col_nyam
+        mfe_p90_pts  := f_pct_val(nyam_mfe, 90)
+        mfe_p75_pts  := f_pct_val(nyam_mfe, 75)
+        mfe_p50_pts  := f_pct_val(nyam_mfe, 50)
+        mfe_p25_pts  := f_pct_val(nyam_mfe, 25)
+        mae_p90_pts  := f_pct_val(nyam_mae, 90)
+        mae_p75_pts  := f_pct_val(nyam_mae, 75)
+        mae_p50_pts  := f_pct_val(nyam_mae, 50)
+        mae_p25_pts  := f_pct_val(nyam_mae, 25)
+        mfe90_t := nyam_mfe90_tot, mfe90_opp := nyam_mfe90_opp
+        mfe75_t := nyam_mfe75_tot, mfe75_nxt := nyam_mfe75_nxt, mfe75_opp := nyam_mfe75_opp
+        mfe50_t := nyam_mfe50_tot, mfe50_nxt := nyam_mfe50_nxt, mfe50_opp := nyam_mfe50_opp
+        mfe25_t := nyam_mfe25_tot, mfe25_nxt := nyam_mfe25_nxt, mfe25_opp := nyam_mfe25_opp
+        mae90_t := nyam_mae90_tot, mae90_opp := nyam_mae90_opp
+        mae75_t := nyam_mae75_tot, mae75_nxt := nyam_mae75_nxt, mae75_opp := nyam_mae75_opp
+        mae50_t := nyam_mae50_tot, mae50_nxt := nyam_mae50_nxt, mae50_opp := nyam_mae50_opp
+        mae25_t := nyam_mae25_tot, mae25_nxt := nyam_mae25_nxt, mae25_opp := nyam_mae25_opp
+
+    else if display_sess == "NYPM"
+        disp_name    := "NY Afternoon  12:00–17:00 ET"
+        disp_open    := nypm_o
+        disp_n       := array.size(nypm_mfe)
+        disp_col     := i_col_nypm
+        mfe_p90_pts  := f_pct_val(nypm_mfe, 90)
+        mfe_p75_pts  := f_pct_val(nypm_mfe, 75)
+        mfe_p50_pts  := f_pct_val(nypm_mfe, 50)
+        mfe_p25_pts  := f_pct_val(nypm_mfe, 25)
+        mae_p90_pts  := f_pct_val(nypm_mae, 90)
+        mae_p75_pts  := f_pct_val(nypm_mae, 75)
+        mae_p50_pts  := f_pct_val(nypm_mae, 50)
+        mae_p25_pts  := f_pct_val(nypm_mae, 25)
+        mfe90_t := nypm_mfe90_tot, mfe90_opp := nypm_mfe90_opp
+        mfe75_t := nypm_mfe75_tot, mfe75_nxt := nypm_mfe75_nxt, mfe75_opp := nypm_mfe75_opp
+        mfe50_t := nypm_mfe50_tot, mfe50_nxt := nypm_mfe50_nxt, mfe50_opp := nypm_mfe50_opp
+        mfe25_t := nypm_mfe25_tot, mfe25_nxt := nypm_mfe25_nxt, mfe25_opp := nypm_mfe25_opp
+        mae90_t := nypm_mae90_tot, mae90_opp := nypm_mae90_opp
+        mae75_t := nypm_mae75_tot, mae75_nxt := nypm_mae75_nxt, mae75_opp := nypm_mae75_opp
+        mae50_t := nypm_mae50_tot, mae50_nxt := nypm_mae50_nxt, mae50_opp := nypm_mae50_opp
+        mae25_t := nypm_mae25_tot, mae25_nxt := nypm_mae25_nxt, mae25_opp := nypm_mae25_opp
+
+    else if display_sess == "CUST"
+        disp_name    := i_cust_label + "  " + i_cust_start + "–" + i_cust_end + " ET"
+        disp_open    := cust_o
+        disp_n       := array.size(cust_mfe)
+        disp_col     := i_col_cust
+        mfe_p90_pts  := f_pct_val(cust_mfe, 90)
+        mfe_p75_pts  := f_pct_val(cust_mfe, 75)
+        mfe_p50_pts  := f_pct_val(cust_mfe, 50)
+        mfe_p25_pts  := f_pct_val(cust_mfe, 25)
+        mae_p90_pts  := f_pct_val(cust_mae, 90)
+        mae_p75_pts  := f_pct_val(cust_mae, 75)
+        mae_p50_pts  := f_pct_val(cust_mae, 50)
+        mae_p25_pts  := f_pct_val(cust_mae, 25)
+        mfe90_t := cust_mfe90_tot, mfe90_opp := cust_mfe90_opp
+        mfe75_t := cust_mfe75_tot, mfe75_nxt := cust_mfe75_nxt, mfe75_opp := cust_mfe75_opp
+        mfe50_t := cust_mfe50_tot, mfe50_nxt := cust_mfe50_nxt, mfe50_opp := cust_mfe50_opp
+        mfe25_t := cust_mfe25_tot, mfe25_nxt := cust_mfe25_nxt, mfe25_opp := cust_mfe25_opp
+        mae90_t := cust_mae90_tot, mae90_opp := cust_mae90_opp
+        mae75_t := cust_mae75_tot, mae75_nxt := cust_mae75_nxt, mae75_opp := cust_mae75_opp
+        mae50_t := cust_mae50_tot, mae50_nxt := cust_mae50_nxt, mae50_opp := cust_mae50_opp
+        mae25_t := cust_mae25_tot, mae25_nxt := cust_mae25_nxt, mae25_opp := cust_mae25_opp
+
+    // Live price stats
+    float dist_pts = is_live and not na(disp_open) ? close - disp_open : float(na)
+
+    // Table setup — 5 cols, 12 rows
+    var table tbl2 = table.new(f_tpos(i_tbl2_pos), 5, 12,
+         bgcolor      = color.white,
+         border_color = color.rgb(210, 210, 210),
+         frame_color  = color.rgb(160, 160, 160),
+         frame_width  = 1,
+         border_width = 1)
+
+    sz2      = f_tbl_size(i_tbl2_size)
+    fnt      = font.family_monospace
+    c_hdr_bg = color.new(disp_col, 20)
+    c_hdr_tc = color.white
+    c_col_bg = color.rgb(40,  40,  40)
+    c_col_tc = color.white
+    c_key_bg = color.rgb(245, 245, 245)
+    c_key_tc = color.rgb(60,  60,  60)
+    c_val_tc = color.rgb(30,  30,  30)
+    c_mfe_bg = color.new(i_col_mfe, 92)
+    c_mae_bg = color.new(i_col_mae, 92)
+    c_ftr_bg = color.rgb(245, 245, 245)
+    c_ftr_tc = color.rgb(160, 160, 160)
+
+    dist_tc = not na(dist_pts) ?
+         (dist_pts > 0 ? i_col_mfe : dist_pts < 0 ? i_col_mae : c_val_tc) : c_val_tc
+
+    // Row 0 — session header
+    table.cell(tbl2, 0, 0, disp_name,
+         text_size=sz2, text_color=c_hdr_tc, bgcolor=c_hdr_bg,
+         text_font_family=fnt, text_halign=text.align_left)
+    table.merge_cells(tbl2, 0, 0, 3, 0)
+    table.cell(tbl2, 4, 0, is_live ? "● LIVE" : "○ CLOSED",
+         text_size=sz2, text_color=c_hdr_tc, bgcolor=c_hdr_bg,
+         text_font_family=fnt, text_halign=text.align_right)
+
+    // Row 1 — open + distance
+    open_str = not na(disp_open) ? str.format("{0,number,#.##}", disp_open) : "—"
+    table.cell(tbl2, 0, 1, "Open: " + open_str,
+         text_size=sz2, text_color=c_key_tc, bgcolor=c_key_bg,
+         text_font_family=fnt, text_halign=text.align_left)
+    table.merge_cells(tbl2, 0, 1, 2, 1)
+    table.cell(tbl2, 3, 1, is_live ? f_fmt_pts(dist_pts) : "—",
+         text_size=sz2, text_color=dist_tc, bgcolor=c_key_bg,
+         text_font_family=fnt, text_halign=text.align_right)
+    table.merge_cells(tbl2, 3, 1, 4, 1)
+
+    // Row 2 — column headers
+    table.cell(tbl2, 0, 2, "Level",    text_size=sz2, text_color=c_col_tc, bgcolor=c_col_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 2, "Pts",       text_size=sz2, text_color=c_col_tc, bgcolor=c_col_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 2, "Reached",   text_size=sz2, text_color=c_col_tc, bgcolor=c_col_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 2, "→ Next",    text_size=sz2, text_color=c_col_tc, bgcolor=c_col_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 2, "↓ Retrace",  text_size=sz2, text_color=c_col_tc, bgcolor=c_col_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    // ─── MFE rows ─────────────────────────────────────────────────
+    // col 3 = → Next (continued to next level up)
+    // col 4 = ↓ Reversal (hit P75 THEN reversed to MAE P25) — only P75 and P90
+    table.cell(tbl2, 0, 3, "MFE P90 ▲", text_size=sz2, text_color=c_key_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 3, f_fmt_p(mfe_p90_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 3, str.tostring(mfe90_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 3, "—", text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 3, f_rev_str(mfe90_t, mfe90_opp), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    table.cell(tbl2, 0, 4, "MFE P75 ▲", text_size=sz2, text_color=c_key_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 4, f_fmt_p(mfe_p75_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 4, str.tostring(mfe75_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 4, f_rev_str(mfe75_t, mfe75_nxt), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 4, f_rev_str(mfe75_t, mfe75_opp), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    table.cell(tbl2, 0, 5, "MFE P50 ▲", text_size=sz2, text_color=c_key_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 5, f_fmt_p(mfe_p50_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 5, str.tostring(mfe50_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 5, f_rev_str(mfe50_t, mfe50_nxt), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 5, f_rev_str(mfe50_t, mfe50_opp), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    table.cell(tbl2, 0, 6, "MFE P25 ▲", text_size=sz2, text_color=c_key_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 6, f_fmt_p(mfe_p25_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 6, str.tostring(mfe25_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 6, f_rev_str(mfe25_t, mfe25_nxt), text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 6, "—", text_size=sz2, text_color=c_val_tc, bgcolor=c_mfe_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    // ─── MAE rows ─────────────────────────────────────────────────
+    table.cell(tbl2, 0, 7, "MAE P25 ▼", text_size=sz2, text_color=c_key_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 7, f_fmt_p(mae_p25_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 7, str.tostring(mae25_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 7, f_rev_str(mae25_t, mae25_nxt), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 7, "—", text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    table.cell(tbl2, 0, 8, "MAE P50 ▼", text_size=sz2, text_color=c_key_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 8, f_fmt_p(mae_p50_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 8, str.tostring(mae50_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 8, f_rev_str(mae50_t, mae50_nxt), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 8, f_rev_str(mae50_t, mae50_opp), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    table.cell(tbl2, 0, 9, "MAE P75 ▼", text_size=sz2, text_color=c_key_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 9, f_fmt_p(mae_p75_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 9, str.tostring(mae75_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 9, f_rev_str(mae75_t, mae75_nxt), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 9, f_rev_str(mae75_t, mae75_opp), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    table.cell(tbl2, 0, 10, "MAE P90 ▼", text_size=sz2, text_color=c_key_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_left)
+    table.cell(tbl2, 1, 10, f_fmt_p(mae_p90_pts), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 2, 10, str.tostring(mae90_t), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 3, 10, "—", text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+    table.cell(tbl2, 4, 10, f_rev_str(mae90_t, mae90_opp), text_size=sz2, text_color=c_val_tc, bgcolor=c_mae_bg, text_font_family=fnt, text_halign=text.align_right)
+
+    // Row 11 — footer
+    table.cell(tbl2, 0, 11,
+         str.tostring(disp_n) + " sessions  |  Lookback: 100",
+         text_size=sz2, text_color=c_ftr_tc, bgcolor=c_ftr_bg,
+         text_font_family=fnt, text_halign=text.align_left)
+    table.merge_cells(tbl2, 0, 11, 4, 11)

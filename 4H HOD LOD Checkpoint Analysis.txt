@@ -1,0 +1,956 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lucymatos
+
+//@version=5
+indicator("4H HOD/LOD Checkpoint Analysis", shorttitle="4h checkpoints", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ============================================================
+// INPUTS
+// ============================================================
+
+show_4h_boxes = input.bool(true, "Show 4H Candle Boxes", group="Display")
+show_hod_lod_lines = input.bool(true, "Show HOD/LOD Lines", group="Display")
+show_checkpoint_table = input.bool(true, "Show Checkpoint Analysis", group="Tables")
+
+checkpoint_table_pos = input.string("Top Right", "Checkpoint Table Position", 
+     options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Right"], group="Tables")
+table_size_input = input.string("Small", "Table Size", 
+     options=["Tiny", "Small", "Normal"], group="Tables")
+
+color_6pm = input.color(color.new(#808080, 85), "6pm", inline="c1", group="Colors")
+color_10pm = input.color(color.new(#2962FF, 85), "10pm", inline="c1", group="Colors")
+color_2am = input.color(color.new(#9C27B0, 85), "2am", inline="c2", group="Colors")
+color_6am = input.color(color.new(#FF6D00, 85), "6am", inline="c2", group="Colors")
+color_10am = input.color(color.new(#26A69A, 85), "10am", inline="c3", group="Colors")
+color_2pm = input.color(color.new(#EF5350, 85), "2pm", inline="c3", group="Colors")
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+get_table_position(pos) =>
+    switch pos
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Right" => position.middle_right
+
+get_table_size(size) =>
+    switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+
+// ============================================================
+// SESSIONS
+// ============================================================
+
+sess_6pm = "1800-2200"
+sess_10pm = "2200-0200"
+sess_2am = "0200-0600"
+sess_6am = "0600-1000"
+sess_10am = "1000-1400"
+sess_2pm = "1400-1700"
+
+in_6pm = not na(time("", sess_6pm, "America/New_York"))
+in_10pm = not na(time("", sess_10pm, "America/New_York"))
+in_2am = not na(time("", sess_2am, "America/New_York"))
+in_6am = not na(time("", sess_6am, "America/New_York"))
+in_10am = not na(time("", sess_10am, "America/New_York"))
+in_2pm = not na(time("", sess_2pm, "America/New_York"))
+
+// ============================================================
+// DATA TYPES
+// ============================================================
+
+type candle_data
+    float hi = na
+    float lo = na
+    float op = na
+    float cl = na
+    int start_bar = na
+    int end_bar = na
+    box candle_box = na
+    bool completed = false
+    bool is_hod = false
+    bool is_lod = false
+    bool high_eliminated = false
+    bool low_eliminated = false
+    bool is_bullish = false
+    bool is_bearish = false
+    string name = ""
+    color box_color = na
+
+// ============================================================
+// VARIABLES
+// ============================================================
+
+var bool new_trading_day = false
+
+var candle_data c_6pm = candle_data.new(name="6pm", box_color=color_6pm)
+var candle_data c_10pm = candle_data.new(name="10pm", box_color=color_10pm)
+var candle_data c_2am = candle_data.new(name="2am", box_color=color_2am)
+var candle_data c_6am = candle_data.new(name="6am", box_color=color_6am)
+var candle_data c_10am = candle_data.new(name="10am", box_color=color_10am)
+var candle_data c_2pm = candle_data.new(name="2pm", box_color=color_2pm)
+
+var float session_hod = na
+var float session_lod = na
+var string hod_candle_name = ""
+var string lod_candle_name = ""
+var int hod_bar = na
+var int lod_bar = na
+
+var line hod_line = na
+var line lod_line = na
+var label hod_label = na
+var label lod_label = na
+
+var array<box> all_boxes = array.new<box>()
+
+// ============================================================
+// CHECKPOINT STATE VARIABLES (LOCKED AT CHECKPOINT)
+// ============================================================
+
+var string current_checkpoint = "none"
+var int locked_num_highs_eliminated = 0
+var int locked_num_lows_eliminated = 0
+var string locked_structure_high = "none"
+var string locked_structure_low = "none"
+var string locked_prev_status_h = "prev_survived"
+var string locked_prev_status_l = "prev_survived"
+
+// ============================================================
+// NEW TRADING DAY
+// ============================================================
+
+new_trading_day := in_6pm and not in_6pm[1]
+
+if new_trading_day
+    c_6pm.completed := false
+    c_10pm.completed := false
+    c_2am.completed := false
+    c_6am.completed := false
+    c_10am.completed := false
+    c_2pm.completed := false
+    
+    c_6pm.is_hod := false
+    c_10pm.is_hod := false
+    c_2am.is_hod := false
+    c_6am.is_hod := false
+    c_10am.is_hod := false
+    c_2pm.is_hod := false
+    
+    c_6pm.is_lod := false
+    c_10pm.is_lod := false
+    c_2am.is_lod := false
+    c_6am.is_lod := false
+    c_10am.is_lod := false
+    c_2pm.is_lod := false
+    
+    c_6pm.high_eliminated := false
+    c_10pm.high_eliminated := false
+    c_2am.high_eliminated := false
+    c_6am.high_eliminated := false
+    c_10am.high_eliminated := false
+    
+    c_6pm.low_eliminated := false
+    c_10pm.low_eliminated := false
+    c_2am.low_eliminated := false
+    c_6am.low_eliminated := false
+    c_10am.low_eliminated := false
+    
+    c_6pm.is_bullish := false
+    c_10pm.is_bullish := false
+    c_2am.is_bullish := false
+    c_6am.is_bullish := false
+    c_10am.is_bullish := false
+    c_2pm.is_bullish := false
+    
+    c_6pm.is_bearish := false
+    c_10pm.is_bearish := false
+    c_2am.is_bearish := false
+    c_6am.is_bearish := false
+    c_10am.is_bearish := false
+    c_2pm.is_bearish := false
+    
+    session_hod := na
+    session_lod := na
+    hod_candle_name := ""
+    lod_candle_name := ""
+    hod_bar := na
+    lod_bar := na
+    
+    current_checkpoint := "none"
+    locked_num_highs_eliminated := 0
+    locked_num_lows_eliminated := 0
+    locked_structure_high := "none"
+    locked_structure_low := "none"
+    locked_prev_status_h := "prev_survived"
+    locked_prev_status_l := "prev_survived"
+    
+    if not na(hod_line)
+        line.delete(hod_line)
+        hod_line := na
+    if not na(lod_line)
+        line.delete(lod_line)
+        lod_line := na
+    if not na(hod_label)
+        label.delete(hod_label)
+        hod_label := na
+    if not na(lod_label)
+        label.delete(lod_label)
+        lod_label := na
+    
+    while array.size(all_boxes) > 20
+        box.delete(array.shift(all_boxes))
+
+// ============================================================
+// UPDATE CANDLES
+// ============================================================
+
+update_candle(candle_data c, bool in_session) =>
+    if in_session and not in_session[1]
+        c.hi := high
+        c.lo := low
+        c.op := open
+        c.start_bar := bar_index
+        c.completed := false
+        
+        if show_4h_boxes
+            c.candle_box := box.new(bar_index, high, bar_index, low,
+                 bgcolor=c.box_color,
+                 border_color=color.new(c.box_color, 0),
+                 border_width=1)
+    
+    if in_session and in_session[1]
+        if na(c.hi)
+            c.hi := high
+        else
+            c.hi := math.max(c.hi, high)
+        
+        if na(c.lo)
+            c.lo := low
+        else
+            c.lo := math.min(c.lo, low)
+        
+        if na(c.start_bar)
+            c.start_bar := bar_index
+            c.op := open
+        
+        if show_4h_boxes and na(c.candle_box)
+            c.candle_box := box.new(c.start_bar, c.hi, bar_index, c.lo,
+                 bgcolor=c.box_color,
+                 border_color=color.new(c.box_color, 0),
+                 border_width=1)
+        
+        if show_4h_boxes and not na(c.candle_box)
+            box.set_top(c.candle_box, c.hi)
+            box.set_bottom(c.candle_box, c.lo)
+            box.set_right(c.candle_box, bar_index)
+    
+    if not in_session and in_session[1]
+        c.cl := close[1]
+        c.end_bar := bar_index - 1
+        c.completed := true
+        
+        if not na(c.cl) and not na(c.op)
+            c.is_bullish := c.cl > c.op
+            c.is_bearish := c.cl < c.op
+        
+        if show_4h_boxes and not na(c.candle_box)
+            box.set_right(c.candle_box, c.end_bar)
+            array.push(all_boxes, c.candle_box)
+
+update_candle(c_6pm, in_6pm)
+update_candle(c_10pm, in_10pm)
+update_candle(c_2am, in_2am)
+update_candle(c_6am, in_6am)
+update_candle(c_10am, in_10am)
+update_candle(c_2pm, in_2pm)
+
+// ============================================================
+// TRACK SESSION HOD/LOD
+// ============================================================
+
+if not new_trading_day
+    if na(session_hod) or high > session_hod
+        session_hod := high
+        hod_bar := bar_index
+        
+        if in_6pm or (not c_6pm.completed and c_6pm.start_bar <= bar_index)
+            hod_candle_name := "6pm"
+            c_6pm.is_hod := true
+            c_10pm.is_hod := false
+            c_2am.is_hod := false
+            c_6am.is_hod := false
+            c_10am.is_hod := false
+            c_2pm.is_hod := false
+        else if in_10pm or (not c_10pm.completed and c_10pm.start_bar <= bar_index)
+            hod_candle_name := "10pm"
+            c_10pm.is_hod := true
+            c_6pm.is_hod := false
+            c_2am.is_hod := false
+            c_6am.is_hod := false
+            c_10am.is_hod := false
+            c_2pm.is_hod := false
+        else if in_2am or (not c_2am.completed and c_2am.start_bar <= bar_index)
+            hod_candle_name := "2am"
+            c_2am.is_hod := true
+            c_6pm.is_hod := false
+            c_10pm.is_hod := false
+            c_6am.is_hod := false
+            c_10am.is_hod := false
+            c_2pm.is_hod := false
+        else if in_6am or (not c_6am.completed and c_6am.start_bar <= bar_index)
+            hod_candle_name := "6am"
+            c_6am.is_hod := true
+            c_6pm.is_hod := false
+            c_10pm.is_hod := false
+            c_2am.is_hod := false
+            c_10am.is_hod := false
+            c_2pm.is_hod := false
+        else if in_10am or (not c_10am.completed and c_10am.start_bar <= bar_index)
+            hod_candle_name := "10am"
+            c_10am.is_hod := true
+            c_6pm.is_hod := false
+            c_10pm.is_hod := false
+            c_2am.is_hod := false
+            c_6am.is_hod := false
+            c_2pm.is_hod := false
+        else if in_2pm or (not c_2pm.completed and c_2pm.start_bar <= bar_index)
+            hod_candle_name := "2pm"
+            c_2pm.is_hod := true
+            c_6pm.is_hod := false
+            c_10pm.is_hod := false
+            c_2am.is_hod := false
+            c_6am.is_hod := false
+            c_10am.is_hod := false
+    
+    if na(session_lod) or low < session_lod
+        session_lod := low
+        lod_bar := bar_index
+        
+        if in_6pm or (not c_6pm.completed and c_6pm.start_bar <= bar_index)
+            lod_candle_name := "6pm"
+            c_6pm.is_lod := true
+            c_10pm.is_lod := false
+            c_2am.is_lod := false
+            c_6am.is_lod := false
+            c_10am.is_lod := false
+            c_2pm.is_lod := false
+        else if in_10pm or (not c_10pm.completed and c_10pm.start_bar <= bar_index)
+            lod_candle_name := "10pm"
+            c_10pm.is_lod := true
+            c_6pm.is_lod := false
+            c_2am.is_lod := false
+            c_6am.is_lod := false
+            c_10am.is_lod := false
+            c_2pm.is_lod := false
+        else if in_2am or (not c_2am.completed and c_2am.start_bar <= bar_index)
+            lod_candle_name := "2am"
+            c_2am.is_lod := true
+            c_6pm.is_lod := false
+            c_10pm.is_lod := false
+            c_6am.is_lod := false
+            c_10am.is_lod := false
+            c_2pm.is_lod := false
+        else if in_6am or (not c_6am.completed and c_6am.start_bar <= bar_index)
+            lod_candle_name := "6am"
+            c_6am.is_lod := true
+            c_6pm.is_lod := false
+            c_10pm.is_lod := false
+            c_2am.is_lod := false
+            c_10am.is_lod := false
+            c_2pm.is_lod := false
+        else if in_10am or (not c_10am.completed and c_10am.start_bar <= bar_index)
+            lod_candle_name := "10am"
+            c_10am.is_lod := true
+            c_6pm.is_lod := false
+            c_10pm.is_lod := false
+            c_2am.is_lod := false
+            c_6am.is_lod := false
+            c_2pm.is_lod := false
+        else if in_2pm or (not c_2pm.completed and c_2pm.start_bar <= bar_index)
+            lod_candle_name := "2pm"
+            c_2pm.is_lod := true
+            c_6pm.is_lod := false
+            c_10pm.is_lod := false
+            c_2am.is_lod := false
+            c_6am.is_lod := false
+            c_10am.is_lod := false
+
+// ============================================================
+// CHECKPOINT DETECTION AND STATE LOCKING
+// ============================================================
+
+// Detect when we enter a new checkpoint
+bool entering_10pm_checkpoint = not in_6pm and in_6pm[1]
+bool entering_2am_checkpoint = not in_10pm and in_10pm[1]
+bool entering_6am_checkpoint = not in_2am and in_2am[1]
+bool entering_10am_checkpoint = not in_6am and in_6am[1]
+bool entering_2pm_checkpoint = not in_10am and in_10am[1]
+
+// Function to count eliminations and determine structure
+count_and_lock_state() =>
+    int num_h_elim = 0
+    int num_l_elim = 0
+    
+    // Count eliminations based on completed candles
+    if c_6pm.completed and c_6pm.high_eliminated
+        num_h_elim += 1
+    if c_6pm.completed and c_6pm.low_eliminated
+        num_l_elim += 1
+    
+    if c_10pm.completed and c_10pm.high_eliminated
+        num_h_elim += 1
+    if c_10pm.completed and c_10pm.low_eliminated
+        num_l_elim += 1
+    
+    if c_2am.completed and c_2am.high_eliminated
+        num_h_elim += 1
+    if c_2am.completed and c_2am.low_eliminated
+        num_l_elim += 1
+    
+    if c_6am.completed and c_6am.high_eliminated
+        num_h_elim += 1
+    if c_6am.completed and c_6am.low_eliminated
+        num_l_elim += 1
+    
+    if c_10am.completed and c_10am.high_eliminated
+        num_h_elim += 1
+    if c_10am.completed and c_10am.low_eliminated
+        num_l_elim += 1
+    
+    // Determine structure for highs
+    string struct_h = "none"
+    if num_h_elim > 0
+        bool is_seq_h = true
+        if num_h_elim >= 1 and c_10pm.high_eliminated and not c_6pm.high_eliminated
+            is_seq_h := false
+        if num_h_elim >= 2 and c_2am.high_eliminated and not c_10pm.high_eliminated
+            is_seq_h := false
+        if num_h_elim >= 3 and c_6am.high_eliminated and not c_2am.high_eliminated
+            is_seq_h := false
+        if num_h_elim >= 4 and c_10am.high_eliminated and not c_6am.high_eliminated
+            is_seq_h := false
+        struct_h := is_seq_h ? "sequential" : "skip"
+    
+    // Determine structure for lows
+    string struct_l = "none"
+    if num_l_elim > 0
+        bool is_seq_l = true
+        if num_l_elim >= 1 and c_10pm.low_eliminated and not c_6pm.low_eliminated
+            is_seq_l := false
+        if num_l_elim >= 2 and c_2am.low_eliminated and not c_10pm.low_eliminated
+            is_seq_l := false
+        if num_l_elim >= 3 and c_6am.low_eliminated and not c_2am.low_eliminated
+            is_seq_l := false
+        if num_l_elim >= 4 and c_10am.low_eliminated and not c_6am.low_eliminated
+            is_seq_l := false
+        struct_l := is_seq_l ? "sequential" : "skip"
+    
+    [num_h_elim, num_l_elim, struct_h, struct_l]
+
+// Lock state at checkpoints
+if entering_10pm_checkpoint
+    current_checkpoint := "10pm"
+    [num_h, num_l, str_h, str_l] = count_and_lock_state()
+    locked_num_highs_eliminated := num_h
+    locked_num_lows_eliminated := num_l
+    locked_structure_high := str_h
+    locked_structure_low := str_l
+    locked_prev_status_h := "prev_survived"
+    locked_prev_status_l := "prev_survived"
+
+if entering_2am_checkpoint
+    current_checkpoint := "2am"
+    [num_h, num_l, str_h, str_l] = count_and_lock_state()
+    locked_num_highs_eliminated := num_h
+    locked_num_lows_eliminated := num_l
+    locked_structure_high := str_h
+    locked_structure_low := str_l
+    
+    // Check if 10pm eliminated 6pm
+    locked_prev_status_h := (not na(c_10pm.hi) and not na(c_6pm.hi) and c_10pm.hi > c_6pm.hi) ? "prev_eliminated" : "prev_survived"
+    locked_prev_status_l := (not na(c_10pm.lo) and not na(c_6pm.lo) and c_10pm.lo < c_6pm.lo) ? "prev_eliminated" : "prev_survived"
+
+if entering_6am_checkpoint
+    current_checkpoint := "6am"
+    [num_h, num_l, str_h, str_l] = count_and_lock_state()
+    locked_num_highs_eliminated := num_h
+    locked_num_lows_eliminated := num_l
+    locked_structure_high := str_h
+    locked_structure_low := str_l
+    
+    // Check if 2am eliminated 10pm
+    locked_prev_status_h := (not na(c_2am.hi) and not na(c_10pm.hi) and c_2am.hi > c_10pm.hi) ? "prev_eliminated" : "prev_survived"
+    locked_prev_status_l := (not na(c_2am.lo) and not na(c_10pm.lo) and c_2am.lo < c_10pm.lo) ? "prev_eliminated" : "prev_survived"
+
+if entering_10am_checkpoint
+    current_checkpoint := "10am"
+    [num_h, num_l, str_h, str_l] = count_and_lock_state()
+    locked_num_highs_eliminated := num_h
+    locked_num_lows_eliminated := num_l
+    locked_structure_high := str_h
+    locked_structure_low := str_l
+    
+    // Check if 6am eliminated 2am
+    locked_prev_status_h := (not na(c_6am.hi) and not na(c_2am.hi) and c_6am.hi > c_2am.hi) ? "prev_eliminated" : "prev_survived"
+    locked_prev_status_l := (not na(c_6am.lo) and not na(c_2am.lo) and c_6am.lo < c_2am.lo) ? "prev_eliminated" : "prev_survived"
+
+if entering_2pm_checkpoint
+    current_checkpoint := "2pm"
+    [num_h, num_l, str_h, str_l] = count_and_lock_state()
+    locked_num_highs_eliminated := num_h
+    locked_num_lows_eliminated := num_l
+    locked_structure_high := str_h
+    locked_structure_low := str_l
+    
+    // Check if 10am eliminated 6am
+    locked_prev_status_h := (not na(c_10am.hi) and not na(c_6am.hi) and c_10am.hi > c_6am.hi) ? "prev_eliminated" : "prev_survived"
+    locked_prev_status_l := (not na(c_10am.lo) and not na(c_6am.lo) and c_10am.lo < c_6am.lo) ? "prev_eliminated" : "prev_survived"
+
+// ============================================================
+// UPDATE ELIMINATIONS (for display purposes only)
+// ============================================================
+
+current_high = high
+current_low = low
+
+if c_6pm.completed and not na(c_6pm.hi) and not na(c_6pm.lo)
+    if current_high > c_6pm.hi
+        c_6pm.high_eliminated := true
+    if current_low < c_6pm.lo
+        c_6pm.low_eliminated := true
+
+if c_10pm.completed and not na(c_10pm.hi) and not na(c_10pm.lo)
+    if current_high > c_10pm.hi
+        c_10pm.high_eliminated := true
+    if current_low < c_10pm.lo
+        c_10pm.low_eliminated := true
+
+if c_2am.completed and not na(c_2am.hi) and not na(c_2am.lo)
+    if current_high > c_2am.hi
+        c_2am.high_eliminated := true
+    if current_low < c_2am.lo
+        c_2am.low_eliminated := true
+
+if c_6am.completed and not na(c_6am.hi) and not na(c_6am.lo)
+    if current_high > c_6am.hi
+        c_6am.high_eliminated := true
+    if current_low < c_6am.lo
+        c_6am.low_eliminated := true
+
+if c_10am.completed and not na(c_10am.hi) and not na(c_10am.lo)
+    if current_high > c_10am.hi
+        c_10am.high_eliminated := true
+    if current_low < c_10am.lo
+        c_10am.low_eliminated := true
+
+// ============================================================
+// PROBABILITY LOOKUP USING LOCKED STATE
+// ============================================================
+
+get_hod_prob(checkpoint, elims, structure, prev) =>
+    float prob_in = 50.0
+    int sample = 0
+    
+    if checkpoint == "10pm"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 13.50
+            sample := 3133
+    
+    else if checkpoint == "2am"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 22.60
+            sample := 1876
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 8.52
+            sample := 1256
+    
+    else if checkpoint == "6am"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 40.31
+            sample := 784
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 31.97
+            sample := 463
+        else if elims == 1 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 26.28
+            sample := 274
+        else if elims == 2 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 17.84
+            sample := 1614
+    
+    else if checkpoint == "10am"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 68.90
+            sample := 582
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 53.92
+            sample := 102
+        else if elims == 1 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 55.73
+            sample := 192
+        else if elims == 2 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 46.67
+            sample := 165
+        else if elims == 2 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 56.01
+            sample := 316
+        else if elims == 2 and structure == "skip" and prev == "prev_eliminated"
+            prob_in := 47.62
+            sample := 21
+        else if elims == 3 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 29.81
+            sample := 1758
+    
+    else if checkpoint == "2pm"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 95.19
+            sample := 645
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 86.60
+            sample := 97
+        else if elims == 1 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 85.71
+            sample := 105
+        else if elims == 2 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 70.73
+            sample := 41
+        else if elims == 2 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 84.62
+            sample := 195
+        else if elims == 2 and structure == "skip" and prev == "prev_eliminated"
+            prob_in := 71.43
+            sample := 28
+        else if elims == 3 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 67.14
+            sample := 70
+        else if elims == 3 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 75.66
+            sample := 341
+        else if elims == 3 and structure == "skip" and prev == "prev_eliminated"
+            prob_in := 76.79
+            sample := 56
+        else if elims == 4 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 48.51
+            sample := 1542
+    
+    [prob_in, sample]
+
+get_lod_prob(checkpoint, elims, structure, prev) =>
+    float prob_in = 50.0
+    int sample = 0
+    
+    if checkpoint == "10pm"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 21.29
+            sample := 3133
+    
+    else if checkpoint == "2am"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 31.20
+            sample := 2138
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 11.47
+            sample := 994
+    
+    else if checkpoint == "6am"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 47.29
+            sample := 1051
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 36.91
+            sample := 596
+        else if elims == 1 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 30.09
+            sample := 216
+        else if elims == 2 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 22.01
+            sample := 1272
+    
+    else if checkpoint == "10am"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 73.63
+            sample := 785
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 63.70
+            sample := 135
+        else if elims == 1 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 58.65
+            sample := 208
+        else if elims == 2 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 48.96
+            sample := 241
+        else if elims == 2 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 51.93
+            sample := 285
+        else if elims == 2 and structure == "skip" and prev == "prev_eliminated"
+            prob_in := 48.39
+            sample := 31
+        else if elims == 3 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 34.60
+            sample := 1451
+    
+    else if checkpoint == "2pm"
+        if elims == 0 and structure == "none" and prev == "prev_survived"
+            prob_in := 95.44
+            sample := 811
+        else if elims == 1 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 94.17
+            sample := 103
+        else if elims == 1 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 87.72
+            sample := 114
+        else if elims == 2 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 83.33
+            sample := 42
+        else if elims == 2 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 86.80
+            sample := 197
+        else if elims == 2 and structure == "skip" and prev == "prev_eliminated"
+            prob_in := 83.33
+            sample := 24
+        else if elims == 3 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 75.51
+            sample := 98
+        else if elims == 3 and structure == "sequential" and prev == "prev_survived"
+            prob_in := 80.25
+            sample := 319
+        else if elims == 3 and structure == "skip" and prev == "prev_eliminated"
+            prob_in := 72.50
+            sample := 40
+        else if elims == 4 and structure == "sequential" and prev == "prev_eliminated"
+            prob_in := 61.22
+            sample := 1372
+    
+    [prob_in, sample]
+
+[hod_prob_in, hod_sample] = get_hod_prob(current_checkpoint, locked_num_highs_eliminated, locked_structure_high, locked_prev_status_h)
+[lod_prob_in, lod_sample] = get_lod_prob(current_checkpoint, locked_num_lows_eliminated, locked_structure_low, locked_prev_status_l)
+
+// ============================================================
+// DRAW HOD/LOD LINES
+// ============================================================
+
+if show_hod_lod_lines and barstate.islast and not na(session_hod) and not na(hod_bar)
+    if not na(hod_line)
+        line.delete(hod_line)
+    if not na(hod_label)
+        label.delete(hod_label)
+    
+    hod_line := line.new(hod_bar, session_hod, bar_index + 10, session_hod,
+         color=color.new(color.black, 0), width=1, style=line.style_solid, extend=extend.right)
+    
+    hod_label_text = "HOD: " + hod_candle_name + " | " + str.tostring(session_hod, "#.##")
+    hod_label := label.new(bar_index, session_hod, hod_label_text,
+         style=label.style_none,
+         color=color.new(color.blue, 20),
+         textcolor=color.black,
+         size=size.normal,
+         text_font_family=font.family_monospace)
+
+if show_hod_lod_lines and barstate.islast and not na(session_lod) and not na(lod_bar)
+    if not na(lod_line)
+        line.delete(lod_line)
+    if not na(lod_label)
+        label.delete(lod_label)
+    
+    lod_line := line.new(lod_bar, session_lod, bar_index + 10, session_lod,
+         color=color.new(color.black, 0), width=1, style=line.style_solid, extend=extend.right)
+    
+    lod_label_text = "LOD: " + lod_candle_name + " | " + str.tostring(session_lod, "#.##")
+    lod_label := label.new(bar_index, session_lod, lod_label_text,
+         style=label.style_none,
+         color=color.new(color.purple, 20),
+         textcolor=color.black,
+         size=size.normal,
+         text_font_family=font.family_monospace)
+
+// ============================================================
+// CHECKPOINT TABLE
+// ============================================================
+
+if show_checkpoint_table and barstate.islast
+    var table checkpoint_table = table.new(
+         get_table_position(checkpoint_table_pos),
+         columns=20,
+         rows=50,
+         bgcolor=color.new(color.white, 10),
+         border_color=color.gray,
+         border_width=2)
+    
+    row = 0
+    
+    bool at_checkpoint = current_checkpoint != "none"
+    string checkpoint_label = current_checkpoint == "10pm" ? "🎯 10PM CHECKPOINT" :
+                              current_checkpoint == "2am" ? "🎯 2AM CHECKPOINT" :
+                              current_checkpoint == "6am" ? "🎯 6AM CHECKPOINT" :
+                              current_checkpoint == "10am" ? "🎯 10AM CHECKPOINT" :
+                              current_checkpoint == "2pm" ? "🎯 2PM CHECKPOINT" : "⏳ PRE-CHECKPOINT"
+    
+    table.cell(checkpoint_table, 0, row, checkpoint_label,
+         bgcolor=color.new(color.blue, 20), text_color=color.white,
+         text_size=get_table_size(table_size_input), text_font_family=font.family_monospace)
+    table.merge_cells(checkpoint_table, 0, row, 1, row)
+    row += 1
+    
+    if at_checkpoint
+        table.cell(checkpoint_table, 0, row, "━━━━━━━━━━━━━", text_color=color.gray, text_size=get_table_size(table_size_input))
+        table.merge_cells(checkpoint_table, 0, row, 2, row)
+        row += 1
+        
+        // Header row
+        table.cell(checkpoint_table, 0, row, "METRIC", bgcolor=color.new(color.gray, 80), text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 1, row, "HOD", bgcolor=color.new(color.green, 85), text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, "LOD", bgcolor=color.new(color.red, 85), text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Eliminations
+        table.cell(checkpoint_table, 0, row, "Eliminations", text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 1, row, str.tostring(locked_num_highs_eliminated), text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, str.tostring(locked_num_lows_eliminated), text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Structure
+        table.cell(checkpoint_table, 0, row, "Structure", text_size=get_table_size(table_size_input))
+        
+        string struct_h = locked_structure_high == "sequential" ? "Sequential" : locked_structure_high == "skip" ? "Skip" : "None"
+        string struct_l = locked_structure_low == "sequential" ? "Sequential" : locked_structure_low == "skip" ? "Skip" : "None"
+        
+        color struct_color_h = locked_structure_high == "skip" ? color.new(color.orange, 85) : color.white
+        color struct_color_l = locked_structure_low == "skip" ? color.new(color.orange, 85) : color.white
+        
+        table.cell(checkpoint_table, 1, row, struct_h, bgcolor=struct_color_h, text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, struct_l, bgcolor=struct_color_l, text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Previous Candle
+        table.cell(checkpoint_table, 0, row, "Prev Candle", text_size=get_table_size(table_size_input))
+        
+        string prev_h = locked_prev_status_h == "prev_eliminated" ? "Eliminated" : "Survived"
+        string prev_l = locked_prev_status_l == "prev_eliminated" ? "Eliminated" : "Survived"
+        
+        color prev_color_h = locked_prev_status_h == "prev_eliminated" ? color.new(color.red, 85) : color.new(color.blue, 85)
+        color prev_color_l = locked_prev_status_l == "prev_eliminated" ? color.new(color.red, 85) : color.new(color.blue, 85)
+        
+        table.cell(checkpoint_table, 1, row, prev_h, bgcolor=prev_color_h, text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, prev_l, bgcolor=prev_color_l, text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Pattern
+        table.cell(checkpoint_table, 0, row, "Pattern", text_size=get_table_size(table_size_input))
+        
+        string pattern_h = ""
+        color pattern_h_color = color.white
+        if locked_structure_high == "skip"
+            pattern_h := "Skip/Chop"
+            pattern_h_color := color.new(color.orange, 85)
+        else if locked_structure_high == "sequential" and locked_prev_status_h == "prev_eliminated"
+            pattern_h := "Relentless"
+            pattern_h_color := color.new(color.red, 85)
+        else if locked_structure_high == "sequential" and locked_prev_status_h == "prev_survived"
+            pattern_h := "Paused"
+            pattern_h_color := color.new(color.blue, 85)
+        else
+            pattern_h := "Early"
+            pattern_h_color := color.new(color.gray, 85)
+        
+        string pattern_l = ""
+        color pattern_l_color = color.white
+        if locked_structure_low == "skip"
+            pattern_l := "Skip/Chop"
+            pattern_l_color := color.new(color.orange, 85)
+        else if locked_structure_low == "sequential" and locked_prev_status_l == "prev_eliminated"
+            pattern_l := "Relentless"
+            pattern_l_color := color.new(color.red, 85)
+        else if locked_structure_low == "sequential" and locked_prev_status_l == "prev_survived"
+            pattern_l := "Paused"
+            pattern_l_color := color.new(color.blue, 85)
+        else
+            pattern_l := "Early"
+            pattern_l_color := color.new(color.gray, 85)
+        
+        table.cell(checkpoint_table, 1, row, pattern_h, bgcolor=pattern_h_color, text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, pattern_l, bgcolor=pattern_l_color, text_size=get_table_size(table_size_input))
+        row += 1
+        
+        table.cell(checkpoint_table, 0, row, "━━━━━━━━━━━━━", text_color=color.gray, text_size=get_table_size(table_size_input))
+        table.merge_cells(checkpoint_table, 0, row, 2, row)
+        row += 1
+        
+        // Probabilities
+        table.cell(checkpoint_table, 0, row, "Prob Already In", text_size=get_table_size(table_size_input))
+        
+        color hod_color = hod_prob_in >= 75 ? color.green : hod_prob_in >= 45 ? color.yellow : color.red
+        color lod_color = lod_prob_in >= 75 ? color.green : lod_prob_in >= 45 ? color.yellow : color.red
+        
+        table.cell(checkpoint_table, 1, row, str.tostring(hod_prob_in, "#.#") + "%",
+             bgcolor=color.new(hod_color, 70), text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, str.tostring(lod_prob_in, "#.#") + "%",
+             bgcolor=color.new(lod_color, 70), text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Sample sizes
+        table.cell(checkpoint_table, 0, row, "Sample Size", text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 1, row, "n=" + str.tostring(hod_sample), text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, "n=" + str.tostring(lod_sample), text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Current extremes
+        table.cell(checkpoint_table, 0, row, "Current", text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 1, row, hod_candle_name,
+             bgcolor=hod_candle_name != "" ? color.new(color.yellow, 70) : color.white,
+             text_size=get_table_size(table_size_input))
+        table.cell(checkpoint_table, 2, row, lod_candle_name,
+             bgcolor=lod_candle_name != "" ? color.new(color.yellow, 70) : color.white,
+             text_size=get_table_size(table_size_input))
+        row += 1
+        
+        // Pattern guide
+        if locked_num_highs_eliminated >= 2 or locked_num_lows_eliminated >= 2
+            table.cell(checkpoint_table, 0, row, "━━━━━━━━━━━━━", text_color=color.gray, text_size=get_table_size(table_size_input))
+            table.merge_cells(checkpoint_table, 0, row, 2, row)
+            row += 1
+            
+            table.cell(checkpoint_table, 0, row, "PATTERN GUIDE", bgcolor=color.new(color.blue, 80), text_size=get_table_size(table_size_input))
+            table.merge_cells(checkpoint_table, 0, row, 2, row)
+            row += 1
+            
+            if locked_num_highs_eliminated >= 2
+                string guide_h = ""
+                if locked_structure_high == "skip"
+                    guide_h := "📈 Skip: Choppy - Next session likely"
+                else if locked_structure_high == "sequential" and locked_prev_status_h == "prev_eliminated"
+                    guide_h := "📈 Relentless: Breaking higher"
+                else if locked_structure_high == "sequential" and locked_prev_status_h == "prev_survived"
+                    guide_h := "📈 Paused: 2pm more likely"
+                
+                if guide_h != ""
+                    table.cell(checkpoint_table, 0, row, guide_h, text_size=get_table_size(table_size_input))
+                    table.merge_cells(checkpoint_table, 0, row, 2, row)
+                    row += 1
+            
+            if locked_num_lows_eliminated >= 2
+                string guide_l = ""
+                if locked_structure_low == "skip"
+                    guide_l := "📉 Skip: Choppy - Next session likely"
+                else if locked_structure_low == "sequential" and locked_prev_status_l == "prev_eliminated"
+                    guide_l := "📉 Relentless: Breaking lower"
+                else if locked_structure_low == "sequential" and locked_prev_status_l == "prev_survived"
+                    guide_l := "📉 Paused: 2pm more likely"
+                
+                if guide_l != ""
+                    table.cell(checkpoint_table, 0, row, guide_l, text_size=get_table_size(table_size_input))
+                    table.merge_cells(checkpoint_table, 0, row, 2, row)
+    
+    else
+        table.cell(checkpoint_table, 0, row, "Waiting for checkpoint...", text_size=get_table_size(table_size_input))
+        table.merge_cells(checkpoint_table, 0, row, 1, row)
+        row += 1
+        
+        table.cell(checkpoint_table, 0, row, "First checkpoint at 10pm", text_size=get_table_size(table_size_input))
+        table.merge_cells(checkpoint_table, 0, row, 1, row)

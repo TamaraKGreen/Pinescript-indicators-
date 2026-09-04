@@ -1,0 +1,43 @@
+//@version=5
+indicator("ATR Breakout", overlay=false)
+
+// Inputs
+ATRMultiple = input.float(4.0, "ATR Multiple")
+BreakoutLength = input.int(6, "Breakout Length")
+Lookback = input.int(7, "Lookback")
+ATRPeriod = input.int(14, "ATR Period")
+alertAbove = input.bool(true, "Enable Alert for Cross Above midline")
+alertBelow = input.bool(true, "Enable Alert for Cross Below midline")
+
+// Calculate True Range
+trueRange = ta.atr(ATRPeriod)
+
+// Initialize xColor variable
+var color xColor = color.teal
+
+// Logic for determining xColor
+for i = Lookback to 0
+    if ((close[i] - open[i + BreakoutLength]) > trueRange[i] * ATRMultiple)
+        xColor := color.green
+    else if ((open[i + BreakoutLength] - close[i]) > trueRange[i] * ATRMultiple)
+        xColor := color.red
+    else
+        xColor := color.gray  // Explicitly set to gray if no condition is met
+
+// Calculate True Range Percent Rank
+trueRangePR = ta.percentrank(trueRange, 100)
+
+// Detect crosses
+crossAbove = ta.crossover(trueRangePR, 50.0)
+crossBelow = ta.crossunder(trueRangePR, 50.0)
+
+// Plots
+plot(trueRangePR, title="True Range Percent Rank", color=color.blue)
+plot(50.0, title="Midline", color=xColor, style=plot.style_cross)
+
+// Alerts
+if crossAbove and alertAbove
+    alert("True Range Percent Rank crossed above midline", alert.freq_once_per_bar)
+
+if crossBelow and alertBelow
+    alert("True Range Percent Rank crossed below midline", alert.freq_once_per_bar)

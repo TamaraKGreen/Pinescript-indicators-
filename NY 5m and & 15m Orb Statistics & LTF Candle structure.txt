@@ -1,0 +1,1189 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © npg
+
+//@version=5
+indicator(title='NY Opening Range (Enhanced with LTF)', shorttitle='NY ORB', overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_bars_back=5000)
+
+//-------------------------------------------------------------------------------------------------
+// Inputs - 5-Minute ORB
+//-------------------------------------------------------------------------------------------------
+var g_5MIN = "━━━━━━━━━ 5-MINUTE ORB ━━━━━━━━━"
+show_5min = input.bool(true, "Show 5-Minute ORB", group=g_5MIN)
+
+// 5-min Colors
+bullish_color_5m = input.color(color.rgb(0, 255, 149), "Bullish Color", inline="5mc", group=g_5MIN)
+bearish_color_5m = input.color(color.rgb(195, 0, 255), "Bearish Color", inline="5mc", group=g_5MIN)
+bullish_fill_5m = input.color(color.rgb(0, 255, 149, 85), "Bullish Fill", inline="5mf", group=g_5MIN)
+bearish_fill_5m = input.color(color.rgb(195, 0, 255, 85), "Bearish Fill", inline="5mf", group=g_5MIN)
+
+// 5-min Line Styles
+boxStyle_5m = input.string("Solid", "Range Style", options=["Solid", "Dashed", "Dotted"], inline="5box", group=g_5MIN)
+borderWidth_5m = input.int(1, 'Width', 1, 10, inline="5box", group=g_5MIN)
+show_midLine_5m = input.bool(true, "Show Midline", inline="5mid", group=g_5MIN)
+lineStyle_5m = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="5mid", group=g_5MIN)
+lineWidth_5m = input.int(1, 'Width', 1, 10, inline="5mid", group=g_5MIN)
+
+// 5-min Median Extensions
+show_extensions_5m = input.bool(true, "Show Median Extensions", inline="5ext", group=g_5MIN)
+ext_line_style_5m = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="5ext", group=g_5MIN)
+ext_line_width_5m = input.int(1, "Width", minval=1, maxval=5, inline="5ext", group=g_5MIN)
+show_ext_labels_5m = input.bool(true, "Show Extension Labels", group=g_5MIN)
+
+// 5-min LTF Candles
+show_ltf_5m = input.bool(true, "Show LTF Candles", group=g_5MIN)
+ltf_5m_count = input.int(5, "  └─ Number of Candles", minval=1, maxval=20, group=g_5MIN)
+ltf_offset_5m = input.int(5, "  └─ Offset (bars from right)", minval=1, maxval=100, group=g_5MIN)
+ltf_spacing_5m = input.int(3, "  └─ Candle Spacing", minval=1, maxval=5, group=g_5MIN)
+ltf_width_5m = input.int(2, "  └─ Candle Width", minval=1, maxval=5, group=g_5MIN)
+ltf_bull_color_5m = input.color(color.rgb(0, 255, 149, 60), "  └─ LTF Bullish Color", group=g_5MIN)
+ltf_bear_color_5m = input.color(color.rgb(195, 0, 255, 60), "  └─ LTF Bearish Color", group=g_5MIN)
+show_ltf_range_5m = input.bool(true, "  └─ Show LTF High/Low Lines", group=g_5MIN)
+ltf_range_style_5m = input.string("Dotted", "  └─ LTF Range Style", options=["Solid", "Dashed", "Dotted"], group=g_5MIN)
+ltf_range_width_5m = input.int(1, "  └─ LTF Range Width", minval=1, maxval=5, group=g_5MIN)
+ltf_range_color_5m = input.color(color.rgb(0, 255, 149, 50), "  └─ LTF Range Color", group=g_5MIN)
+
+//-------------------------------------------------------------------------------------------------
+// Inputs - 15-Minute ORB
+//-------------------------------------------------------------------------------------------------
+var g_15MIN = "━━━━━━━━━ 15-MINUTE ORB ━━━━━━━━━"
+show_15min = input.bool(true, "Show 15-Minute ORB", group=g_15MIN)
+
+// 15-min Colors
+bullish_color_15m = input.color(color.rgb(33, 150, 243), "Bullish Color", inline="15mc", group=g_15MIN)
+bearish_color_15m = input.color(color.rgb(255, 152, 0), "Bearish Color", inline="15mc", group=g_15MIN)
+bullish_fill_15m = input.color(color.rgb(33, 150, 243, 85), "Bullish Fill", inline="15mf", group=g_15MIN)
+bearish_fill_15m = input.color(color.rgb(255, 152, 0, 85), "Bearish Fill", inline="15mf", group=g_15MIN)
+
+// 15-min Line Styles
+boxStyle_15m = input.string("Solid", "Range Style", options=["Solid", "Dashed", "Dotted"], inline="15box", group=g_15MIN)
+borderWidth_15m = input.int(1, 'Width', 1, 10, inline="15box", group=g_15MIN)
+show_midLine_15m = input.bool(true, "Show Midline", inline="15mid", group=g_15MIN)
+lineStyle_15m = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="15mid", group=g_15MIN)
+lineWidth_15m = input.int(1, 'Width', 1, 10, inline="15mid", group=g_15MIN)
+
+// 15-min Median Extensions
+show_extensions_15m = input.bool(true, "Show Median Extensions", inline="15ext", group=g_15MIN)
+ext_line_style_15m = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], inline="15ext", group=g_15MIN)
+ext_line_width_15m = input.int(1, "Width", minval=1, maxval=5, inline="15ext", group=g_15MIN)
+show_ext_labels_15m = input.bool(true, "Show Extension Labels", group=g_15MIN)
+
+// 15-min LTF Candles
+show_ltf_15m = input.bool(true, "Show LTF Candles", group=g_15MIN)
+ltf_15m_count = input.int(15, "  └─ Number of Candles", minval=1, maxval=20, group=g_15MIN)
+ltf_offset_15m = input.int(35, "  └─ Offset (bars from right)", minval=1, maxval=100, group=g_15MIN)
+ltf_spacing_15m = input.int(3, "  └─ Candle Spacing", minval=1, maxval=5, group=g_15MIN)
+ltf_width_15m = input.int(2, "  └─ Candle Width", minval=1, maxval=5, group=g_15MIN)
+ltf_bull_color_15m = input.color(color.rgb(0, 255, 149, 60), "  └─ LTF Bullish Color", group=g_15MIN)
+ltf_bear_color_15m = input.color(color.rgb(195, 0, 255, 60), "  └─ LTF Bearish Color", group=g_15MIN)
+show_ltf_range_15m = input.bool(true, "  └─ Show LTF High/Low Lines", group=g_15MIN)
+ltf_range_style_15m = input.string("Dotted", "  └─ LTF Range Style", options=["Solid", "Dashed", "Dotted"], group=g_15MIN)
+ltf_range_width_15m = input.int(1, "  └─ LTF Range Width", minval=1, maxval=5, group=g_15MIN)
+ltf_range_color_15m = input.color(color.rgb(33, 150, 243, 50), "  └─ LTF Range Color", group=g_15MIN)
+
+//-------------------------------------------------------------------------------------------------
+// Inputs - Labels & Display
+//-------------------------------------------------------------------------------------------------
+var g_LABELS = "Labels & Display"
+showL = input.bool(true, "Show High/Low/Mid Labels", inline="Labels", group=g_LABELS)
+showP = input.bool(false, "Show Prices", inline="Labels", group=g_LABELS)
+pos = input.string("Left", "Position", options=["Left", "Right"], group=g_LABELS)
+
+//-------------------------------------------------------------------------------------------------
+// Inputs - Statistics Table
+//-------------------------------------------------------------------------------------------------
+var g_TABLE = "Statistics Table"
+show_stats_table = input.bool(true, "Show Statistics Table", group=g_TABLE)
+stats_table_pos = input.string("Top Right", "Table Position", 
+     options=["Bottom Center", "Bottom Left", "Bottom Right", "Middle Center", 
+              "Middle Left", "Middle Right", "Top Center", "Top Left", "Top Right"], group=g_TABLE)
+stats_table_size = input.string("Small", "Table Size", 
+     options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group=g_TABLE)
+
+//-------------------------------------------------------------------------------------------------
+// Functions
+//-------------------------------------------------------------------------------------------------
+get_style(style) =>
+    switch style
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+
+get_label_size(size) =>
+    switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+
+get_table_position(pos) =>
+    switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+get_table_text_size(size) =>
+    switch size
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+// Median extension statistics (from analysis)
+MEDIAN_EXT_5M_HIGH = 0.411  // % above 5-min high
+MEDIAN_EXT_5M_LOW = 0.450   // % below 5-min low
+MEDIAN_EXT_15M_HIGH = 0.380 // % above 15-min high
+MEDIAN_EXT_15M_LOW = 0.415  // % below 15-min low
+
+// Hardcoded sessions
+string tz = "America/New_York"
+
+//-------------------------------------------------------------------------------------------------
+// UDT for LTF Candles
+//-------------------------------------------------------------------------------------------------
+type LTFCandles
+    array<box> bodies
+    array<line> wicks_high
+    array<line> wicks_low
+    array<float> opens
+    array<float> highs
+    array<float> lows
+    array<float> closes
+
+//-------------------------------------------------------------------------------------------------
+// Variables
+//-------------------------------------------------------------------------------------------------
+
+// 5-MINUTE ORB VARIABLES
+var float or5_high = na
+var float or5_low = na
+var float or5_mid = na
+var float or5_open = na
+var float or5_close = na
+var int or5_start_bar = na
+var int or5_end_bar = na
+var bool or5_captured = false
+var string or5_extreme_first = "none"
+
+var line or5_top_line = na
+var line or5_bot_line = na
+var line or5_mid_line = na
+var linefill or5_fill = na
+var label or5_high_label = na
+var label or5_low_label = na
+var label or5_mid_label = na
+var line or5_ext_high = na
+var line or5_ext_low = na
+var label or5_ext_high_label = na
+var label or5_ext_low_label = na
+
+// 5-MIN LTF CANDLES DATA - PERMANENT STORAGE (frozen at session end)
+var array<float> or5_ltf_opens_frozen = array.new<float>()
+var array<float> or5_ltf_highs_frozen = array.new<float>()
+var array<float> or5_ltf_lows_frozen = array.new<float>()
+var array<float> or5_ltf_closes_frozen = array.new<float>()
+var bool or5_ltf_frozen = false
+
+// 5-MIN LTF DRAWING OBJECTS
+var ltf5 = LTFCandles.new(
+     array.new<box>(),
+     array.new<line>(),
+     array.new<line>(),
+     array.new<float>(),
+     array.new<float>(),
+     array.new<float>(),
+     array.new<float>())
+var line or5_ltf_high_line = na
+var line or5_ltf_low_line = na
+
+// 15-MINUTE ORB VARIABLES
+var float or15_high = na
+var float or15_low = na
+var float or15_mid = na
+var float or15_open = na
+var float or15_close = na
+var int or15_start_bar = na
+var int or15_end_bar = na
+var bool or15_captured = false
+var string or15_extreme_first = "none"
+
+var line or15_top_line = na
+var line or15_bot_line = na
+var line or15_mid_line = na
+var linefill or15_fill = na
+var label or15_high_label = na
+var label or15_low_label = na
+var label or15_mid_label = na
+var line or15_ext_high = na
+var line or15_ext_low = na
+var label or15_ext_high_label = na
+var label or15_ext_low_label = na
+
+// 15-MIN LTF CANDLES DATA - PERMANENT STORAGE (frozen at session end)
+var array<float> or15_ltf_opens_frozen = array.new<float>()
+var array<float> or15_ltf_highs_frozen = array.new<float>()
+var array<float> or15_ltf_lows_frozen = array.new<float>()
+var array<float> or15_ltf_closes_frozen = array.new<float>()
+var bool or15_ltf_frozen = false
+
+// 15-MIN LTF DRAWING OBJECTS
+var ltf15 = LTFCandles.new(
+     array.new<box>(),
+     array.new<line>(),
+     array.new<line>(),
+     array.new<float>(),
+     array.new<float>(),
+     array.new<float>(),
+     array.new<float>())
+var line or15_ltf_high_line = na
+var line or15_ltf_low_line = na
+
+// Breakout tracking for stats table
+var bool or5_high_broken = false
+var bool or5_low_broken = false
+var bool or15_high_broken = false
+var bool or15_low_broken = false
+var bool or5_mid_retested = false
+var bool or15_mid_retested = false
+
+// EXTENSION LEVEL TRACKING - NEW VARIABLES
+var bool or5_ext_high_reached = false
+var bool or5_ext_low_reached = false
+var bool or15_ext_high_reached = false
+var bool or15_ext_low_reached = false
+
+// INITIAL BALANCE (IB) TRACKING
+var float ib_high = na
+var float ib_low = na
+var float ib_open = na
+var float ib_close = na
+var bool ib_captured = false
+var bool ib_is_bullish = false
+
+//-------------------------------------------------------------------------------------------------
+// Session Detection & Data Retrieval
+//-------------------------------------------------------------------------------------------------
+
+// 5-minute ORB (9:30-9:35)
+is_5m_session = not na(time(timeframe.period, "0930-0935", tz))
+is_5m_start = is_5m_session and not is_5m_session[1]
+is_5m_end = is_5m_session[1] and not is_5m_session
+
+// 15-minute ORB (9:30-9:45)
+is_15m_session = not na(time(timeframe.period, "0930-0945", tz))
+is_15m_start = is_15m_session and not is_15m_session[1]
+is_15m_end = is_15m_session[1] and not is_15m_session
+
+// Initial Balance (9:30-10:30)
+is_ib_session = not na(time(timeframe.period, "0930-1030", tz))
+is_ib_start = is_ib_session and not is_ib_session[1]
+is_ib_end = is_ib_session[1] and not is_ib_session
+
+// NY cash session end (4:00 PM)
+is_ny_session = not na(time(timeframe.period, "0930-1600", tz))
+is_ny_session_end = is_ny_session[1] and not is_ny_session
+
+// Get 5-minute data
+[H5, L5, M5, O5, C5] = request.security(ticker.standard(syminfo.tickerid), "5", 
+     [high, low, hl2, open, close], lookahead=barmerge.lookahead_on)
+
+// Get 15-minute data
+[H15, L15, M15, O15, C15] = request.security(ticker.standard(syminfo.tickerid), "15", 
+     [high, low, hl2, open, close], lookahead=barmerge.lookahead_on)
+
+// Get 1-minute data for extreme detection and LTF candles
+[high_1m, low_1m, open_1m, close_1m] = request.security_lower_tf(ticker.standard(syminfo.tickerid), "1", 
+     [high, low, open, close])
+
+_style = pos == "Left" ? label.style_label_right : label.style_label_left
+
+//-------------------------------------------------------------------------------------------------
+// Initial Balance Capture
+//-------------------------------------------------------------------------------------------------
+
+if is_ib_start
+    ib_high := high
+    ib_low := low
+    ib_open := open
+    ib_close := close
+    ib_captured := false
+
+// Update IB values during the session
+if is_ib_session
+    ib_high := math.max(ib_high, high)
+    ib_low := math.min(ib_low, low)
+    ib_close := close
+
+if is_ib_end and not na(ib_high) and not na(ib_low)
+    ib_is_bullish := ib_close >= ib_open
+    ib_captured := true
+
+//-------------------------------------------------------------------------------------------------
+// LTF Candle Drawing Function
+//-------------------------------------------------------------------------------------------------
+draw_ltf_candles(ltf, o_array, h_array, l_array, c_array, bull_color, bear_color, offset_from_right, max_candles, spacing, width) =>
+    if array.size(o_array) > 0
+        // Clear old candles
+        while array.size(ltf.bodies) > 0
+            box.delete(ltf.bodies.shift())
+        while array.size(ltf.wicks_high) > 0
+            line.delete(ltf.wicks_high.shift())
+        while array.size(ltf.wicks_low) > 0
+            line.delete(ltf.wicks_low.shift())
+        ltf.highs.clear()
+        ltf.lows.clear()
+        
+        // Only show the last N candles
+        start_index = math.max(0, array.size(o_array) - max_candles)
+        num_candles = array.size(o_array) - start_index
+        
+        // Draw new candles positioned to the right of current bar
+        for i = start_index to array.size(o_array) - 1
+            o = array.get(o_array, i)
+            h = array.get(h_array, i)
+            l = array.get(l_array, i)
+            c = array.get(c_array, i)
+            
+            is_bull = c >= o
+            candle_color = is_bull ? bull_color : bear_color
+            
+            // Calculate position - offset from current bar to the right
+            candle_index = i - start_index
+            x_start = bar_index + offset_from_right + (candle_index * spacing)
+            x_end = x_start + width
+            x_mid = math.round(x_start + (width / 2))
+            
+            // Draw candle body
+            body_top = math.max(o, c)
+            body_bottom = math.min(o, c)
+            ltf.bodies.push(box.new(x_start, body_top, x_end, body_bottom, 
+                 border_color=candle_color, bgcolor=candle_color, border_width=1))
+            
+            // Draw wicks
+            ltf.wicks_high.push(line.new(x_mid, body_top, x_mid, h, 
+                 color=candle_color, width=1))
+            ltf.wicks_low.push(line.new(x_mid, body_bottom, x_mid, l, 
+                 color=candle_color, width=1))
+            
+            // Track highs and lows
+            ltf.highs.push(h)
+            ltf.lows.push(l)
+        
+        // Return the x positions for the range lines
+        ltf_start_x = bar_index + offset_from_right
+        ltf_end_x = bar_index + offset_from_right + (num_candles * spacing) + width
+        [ltf_start_x, ltf_end_x]
+
+//-------------------------------------------------------------------------------------------------
+// 5-MINUTE ORB LOGIC
+//-------------------------------------------------------------------------------------------------
+
+if show_5min
+    // Initialize session at start
+    if is_5m_start
+        // Delete old drawings
+        line.delete(or5_top_line)
+        line.delete(or5_bot_line)
+        line.delete(or5_mid_line)
+        linefill.delete(or5_fill)
+        label.delete(or5_high_label)
+        label.delete(or5_low_label)
+        label.delete(or5_mid_label)
+        line.delete(or5_ext_high)
+        line.delete(or5_ext_low)
+        label.delete(or5_ext_high_label)
+        label.delete(or5_ext_low_label)
+        line.delete(or5_ltf_high_line)
+        line.delete(or5_ltf_low_line)
+        
+        or5_start_bar := bar_index
+        or5_captured := false
+        or5_high_broken := false
+        or5_low_broken := false
+        or5_extreme_first := "none"
+        or5_mid_retested := false
+        or5_ltf_frozen := false
+        or5_ext_high_reached := false
+        or5_ext_low_reached := false
+        
+        // Clear frozen LTF arrays for new session
+        or5_ltf_opens_frozen.clear()
+        or5_ltf_highs_frozen.clear()
+        or5_ltf_lows_frozen.clear()
+        or5_ltf_closes_frozen.clear()
+        
+        // Reset drawing objects
+        or5_top_line := na
+        or5_bot_line := na
+        or5_mid_line := na
+        or5_fill := na
+        or5_high_label := na
+        or5_low_label := na
+        or5_mid_label := na
+        or5_ext_high := na
+        or5_ext_low := na
+        or5_ext_high_label := na
+        or5_ext_low_label := na
+    
+    // UPDATE data continuously while IN session
+    if is_5m_session and not na(H5) and not na(L5)
+        or5_high := H5
+        or5_low := L5
+        or5_mid := M5
+        or5_open := O5
+        or5_close := C5
+    
+    // Mark as captured when session ends
+    if is_5m_end
+        or5_end_bar := bar_index
+        or5_captured := true
+    
+    // ACCUMULATE LTF data DURING the session (bar by bar)
+    if is_5m_session and not or5_ltf_frozen and not na(open_1m) and array.size(open_1m) > 0
+        // Add ALL 1-minute candles from current bar to frozen storage
+        for i = 0 to array.size(open_1m) - 1
+            or5_ltf_opens_frozen.push(array.get(open_1m, i))
+            or5_ltf_highs_frozen.push(array.get(high_1m, i))
+            or5_ltf_lows_frozen.push(array.get(low_1m, i))
+            or5_ltf_closes_frozen.push(array.get(close_1m, i))
+    
+    // FREEZE at session END (just set the flag)
+    if is_5m_end and not or5_ltf_frozen
+        or5_ltf_frozen := true
+        
+        // Determine which extreme formed first
+        if or5_extreme_first == "none" and array.size(or5_ltf_highs_frozen) > 0
+            for i = 0 to array.size(or5_ltf_highs_frozen) - 1
+                h_1m = array.get(or5_ltf_highs_frozen, i)
+                l_1m = array.get(or5_ltf_lows_frozen, i)
+                
+                if h_1m >= or5_high
+                    or5_extreme_first := "high"
+                    break
+                else if l_1m <= or5_low
+                    or5_extreme_first := "low"
+                    break
+    
+    // Check if midpoint has been retested
+    if or5_captured and not or5_mid_retested
+        if (high >= or5_mid and low <= or5_mid) or (close[1] < or5_mid and close >= or5_mid) or (close[1] > or5_mid and close <= or5_mid)
+            or5_mid_retested := true
+    
+    // Draw OR elements
+    if or5_captured and not na(or5_high) and not na(or5_low) and na(or5_top_line)
+        is_bullish = or5_close >= or5_open
+        _color = is_bullish ? bullish_color_5m : bearish_color_5m
+        _fillcolor = is_bullish ? bullish_fill_5m : bearish_fill_5m
+        
+        // Draw high, low, mid
+        or5_top_line := line.new(or5_start_bar, or5_high, bar_index, or5_high, 
+             color=_color, style=get_style(boxStyle_5m), width=borderWidth_5m)
+        or5_bot_line := line.new(or5_start_bar, or5_low, bar_index, or5_low, 
+             color=_color, style=get_style(boxStyle_5m), width=borderWidth_5m)
+        or5_fill := linefill.new(or5_top_line, or5_bot_line, _fillcolor)
+        
+        if show_midLine_5m
+            or5_mid_line := line.new(or5_start_bar, or5_mid, bar_index, or5_mid, 
+                 color=_color, style=get_style(lineStyle_5m), width=lineWidth_5m)
+        
+        // Draw median extension levels
+        if show_extensions_5m
+            ext_high_price = or5_high * (1 + MEDIAN_EXT_5M_HIGH / 100)
+            ext_low_price = or5_low * (1 - MEDIAN_EXT_5M_LOW / 100)
+            
+            or5_ext_high := line.new(or5_start_bar, ext_high_price, bar_index, ext_high_price, 
+                 color=_color, style=get_style(ext_line_style_5m), width=ext_line_width_5m)
+            or5_ext_low := line.new(or5_start_bar, ext_low_price, bar_index, ext_low_price, 
+                 color=_color, style=get_style(ext_line_style_5m), width=ext_line_width_5m)
+        
+        // Labels
+        x = pos == "Left" ? or5_start_bar : bar_index
+        
+        if showL
+            or5_high_label := label.new(x, or5_high, "5m High" + (showP ? " (" + str.tostring(or5_high, format.mintick) + ")" : ""), 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+            or5_low_label := label.new(x, or5_low, "5m Low" + (showP ? " (" + str.tostring(or5_low, format.mintick) + ")" : ""), 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+            
+            if show_midLine_5m
+                or5_mid_label := label.new(x, or5_mid, "5m Mid" + (showP ? " (" + str.tostring(or5_mid, format.mintick) + ")" : ""), 
+                     style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+        
+        if show_extensions_5m and show_ext_labels_5m
+            ext_high_price = or5_high * (1 + MEDIAN_EXT_5M_HIGH / 100)
+            ext_low_price = or5_low * (1 - MEDIAN_EXT_5M_LOW / 100)
+            
+            or5_ext_high_label := label.new(x, ext_high_price, "Med Ext +0.41%", 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Small"))
+            or5_ext_low_label := label.new(x, ext_low_price, "Med Ext -0.45%", 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Small"))
+    
+    // Draw LTF candles using FROZEN data (only after frozen)
+    if or5_captured and show_ltf_5m and or5_ltf_frozen and array.size(or5_ltf_opens_frozen) > 0 and is_ny_session
+        [ltf_start_x, ltf_end_x] = draw_ltf_candles(ltf5, or5_ltf_opens_frozen, or5_ltf_highs_frozen, 
+             or5_ltf_lows_frozen, or5_ltf_closes_frozen, 
+             ltf_bull_color_5m, ltf_bear_color_5m, ltf_offset_5m, ltf_5m_count, ltf_spacing_5m, ltf_width_5m)
+        
+        // Draw LTF range lines
+        if show_ltf_range_5m and array.size(ltf5.highs) > 0
+            line.delete(or5_ltf_high_line)
+            line.delete(or5_ltf_low_line)
+            
+            ltf_high = array.max(ltf5.highs)
+            ltf_low = array.min(ltf5.lows)
+            
+            or5_ltf_high_line := line.new(ltf_start_x, ltf_high, ltf_end_x, ltf_high, 
+                 color=ltf_range_color_5m, style=get_style(ltf_range_style_5m), width=ltf_range_width_5m)
+            or5_ltf_low_line := line.new(ltf_start_x, ltf_low, ltf_end_x, ltf_low, 
+                 color=ltf_range_color_5m, style=get_style(ltf_range_style_5m), width=ltf_range_width_5m)
+    
+    // Extend lines during NY session
+    if or5_captured and not na(or5_top_line) and is_ny_session
+        or5_end_bar := bar_index
+        
+        if not na(or5_top_line)
+            line.set_x2(or5_top_line, bar_index)
+        if not na(or5_bot_line)
+            line.set_x2(or5_bot_line, bar_index)
+        if not na(or5_mid_line) and show_midLine_5m
+            line.set_x2(or5_mid_line, bar_index)
+        if not na(or5_ext_high) and show_extensions_5m
+            line.set_x2(or5_ext_high, bar_index)
+        if not na(or5_ext_low) and show_extensions_5m
+            line.set_x2(or5_ext_low, bar_index)
+        
+        // Update labels if Right position
+        if showL and pos == "Right"
+            if not na(or5_high_label)
+                label.set_x(or5_high_label, bar_index)
+            if not na(or5_low_label)
+                label.set_x(or5_low_label, bar_index)
+            if not na(or5_mid_label) and show_midLine_5m
+                label.set_x(or5_mid_label, bar_index)
+        
+        if show_extensions_5m and show_ext_labels_5m and pos == "Right"
+            if not na(or5_ext_high_label)
+                label.set_x(or5_ext_high_label, bar_index)
+            if not na(or5_ext_low_label)
+                label.set_x(or5_ext_low_label, bar_index)
+        
+        // Track breakouts (after 9:35 AM)
+        if not is_5m_session
+            if not or5_high_broken and high > or5_high
+                or5_high_broken := true
+            if not or5_low_broken and low < or5_low
+                or5_low_broken := true
+            
+            // Track when extension levels are reached
+            if show_extensions_5m
+                ext_high_price = or5_high * (1 + MEDIAN_EXT_5M_HIGH / 100)
+                ext_low_price = or5_low * (1 - MEDIAN_EXT_5M_LOW / 100)
+                
+                if not or5_ext_high_reached and high > ext_high_price
+                    or5_ext_high_reached := true
+                if not or5_ext_low_reached and low < ext_low_price
+                    or5_ext_low_reached := true
+
+//-------------------------------------------------------------------------------------------------
+// 15-MINUTE ORB LOGIC
+//-------------------------------------------------------------------------------------------------
+
+if show_15min
+    // Initialize session at start
+    if is_15m_start
+        // Delete old drawings
+        line.delete(or15_top_line)
+        line.delete(or15_bot_line)
+        line.delete(or15_mid_line)
+        linefill.delete(or15_fill)
+        label.delete(or15_high_label)
+        label.delete(or15_low_label)
+        label.delete(or15_mid_label)
+        line.delete(or15_ext_high)
+        line.delete(or15_ext_low)
+        label.delete(or15_ext_high_label)
+        label.delete(or15_ext_low_label)
+        line.delete(or15_ltf_high_line)
+        line.delete(or15_ltf_low_line)
+        
+        or15_start_bar := bar_index
+        or15_captured := false
+        or15_high_broken := false
+        or15_low_broken := false
+        or15_extreme_first := "none"
+        or15_mid_retested := false
+        or15_ltf_frozen := false
+        or15_ext_high_reached := false
+        or15_ext_low_reached := false
+        
+        // Clear frozen LTF arrays for new session
+        or15_ltf_opens_frozen.clear()
+        or15_ltf_highs_frozen.clear()
+        or15_ltf_lows_frozen.clear()
+        or15_ltf_closes_frozen.clear()
+        
+        // Reset drawing objects
+        or15_top_line := na
+        or15_bot_line := na
+        or15_mid_line := na
+        or15_fill := na
+        or15_high_label := na
+        or15_low_label := na
+        or15_mid_label := na
+        or15_ext_high := na
+        or15_ext_low := na
+        or15_ext_high_label := na
+        or15_ext_low_label := na
+    
+    // UPDATE data continuously while IN session
+    if is_15m_session and not na(H15) and not na(L15)
+        or15_high := H15
+        or15_low := L15
+        or15_mid := M15
+        or15_open := O15
+        or15_close := C15
+    
+    // Mark as captured when session ends
+    if is_15m_end
+        or15_end_bar := bar_index
+        or15_captured := true
+    
+    // ACCUMULATE LTF data DURING the session (bar by bar)
+    if is_15m_session and not or15_ltf_frozen and not na(open_1m) and array.size(open_1m) > 0
+        // Add ALL 1-minute candles from current bar to frozen storage
+        for i = 0 to array.size(open_1m) - 1
+            or15_ltf_opens_frozen.push(array.get(open_1m, i))
+            or15_ltf_highs_frozen.push(array.get(high_1m, i))
+            or15_ltf_lows_frozen.push(array.get(low_1m, i))
+            or15_ltf_closes_frozen.push(array.get(close_1m, i))
+    
+    // FREEZE at session END (just set the flag)
+    if is_15m_end and not or15_ltf_frozen
+        or15_ltf_frozen := true
+        
+        // Determine which extreme formed first
+        if or15_extreme_first == "none" and array.size(or15_ltf_highs_frozen) > 0
+            for i = 0 to array.size(or15_ltf_highs_frozen) - 1
+                h_1m = array.get(or15_ltf_highs_frozen, i)
+                l_1m = array.get(or15_ltf_lows_frozen, i)
+                
+                if h_1m >= or15_high
+                    or15_extreme_first := "high"
+                    break
+                else if l_1m <= or15_low
+                    or15_extreme_first := "low"
+                    break
+    
+    // Check if midpoint has been retested
+    if or15_captured and not or15_mid_retested
+        if (high >= or15_mid and low <= or15_mid) or (close[1] < or15_mid and close >= or15_mid) or (close[1] > or15_mid and close <= or15_mid)
+            or15_mid_retested := true
+    
+    // Draw OR elements
+    if or15_captured and not na(or15_high) and not na(or15_low) and na(or15_top_line)
+        is_bullish = or15_close >= or15_open
+        _color = is_bullish ? bullish_color_15m : bearish_color_15m
+        _fillcolor = is_bullish ? bullish_fill_15m : bearish_fill_15m
+        
+        // Draw high, low, mid
+        or15_top_line := line.new(or15_start_bar, or15_high, bar_index, or15_high, 
+             color=_color, style=get_style(boxStyle_15m), width=borderWidth_15m)
+        or15_bot_line := line.new(or15_start_bar, or15_low, bar_index, or15_low, 
+             color=_color, style=get_style(boxStyle_15m), width=borderWidth_15m)
+        or15_fill := linefill.new(or15_top_line, or15_bot_line, _fillcolor)
+        
+        if show_midLine_15m
+            or15_mid_line := line.new(or15_start_bar, or15_mid, bar_index, or15_mid, 
+                 color=_color, style=get_style(lineStyle_15m), width=lineWidth_15m)
+        
+        // Draw median extension levels
+        if show_extensions_15m
+            ext_high_price = or15_high * (1 + MEDIAN_EXT_15M_HIGH / 100)
+            ext_low_price = or15_low * (1 - MEDIAN_EXT_15M_LOW / 100)
+            
+            or15_ext_high := line.new(or15_start_bar, ext_high_price, bar_index, ext_high_price, 
+                 color=_color, style=get_style(ext_line_style_15m), width=ext_line_width_15m)
+            or15_ext_low := line.new(or15_start_bar, ext_low_price, bar_index, ext_low_price, 
+                 color=_color, style=get_style(ext_line_style_15m), width=ext_line_width_15m)
+        
+        // Labels
+        x = pos == "Left" ? or15_start_bar : bar_index
+        
+        if showL
+            or15_high_label := label.new(x, or15_high, "15m High" + (showP ? " (" + str.tostring(or15_high, format.mintick) + ")" : ""), 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+            or15_low_label := label.new(x, or15_low, "15m Low" + (showP ? " (" + str.tostring(or15_low, format.mintick) + ")" : ""), 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+            
+            if show_midLine_15m
+                or15_mid_label := label.new(x, or15_mid, "15m Mid" + (showP ? " (" + str.tostring(or15_mid, format.mintick) + ")" : ""), 
+                     style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Normal"))
+        
+        if show_extensions_15m and show_ext_labels_15m
+            ext_high_price = or15_high * (1 + MEDIAN_EXT_15M_HIGH / 100)
+            ext_low_price = or15_low * (1 - MEDIAN_EXT_15M_LOW / 100)
+            
+            or15_ext_high_label := label.new(x, ext_high_price, "Med Ext +0.38%", 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Small"))
+            or15_ext_low_label := label.new(x, ext_low_price, "Med Ext -0.42%", 
+                 style=_style, color=color.new(_color, 100), textcolor=_color, size=get_label_size("Small"))
+    
+    // Draw LTF candles using FROZEN data (only after frozen)
+    if or15_captured and show_ltf_15m and or15_ltf_frozen and array.size(or15_ltf_opens_frozen) > 0 and is_ny_session
+        [ltf_start_x, ltf_end_x] = draw_ltf_candles(ltf15, or15_ltf_opens_frozen, or15_ltf_highs_frozen, 
+             or15_ltf_lows_frozen, or15_ltf_closes_frozen, 
+             ltf_bull_color_15m, ltf_bear_color_15m, ltf_offset_15m, ltf_15m_count, ltf_spacing_15m, ltf_width_15m)
+        
+        // Draw LTF range lines
+        if show_ltf_range_15m and array.size(ltf15.highs) > 0
+            line.delete(or15_ltf_high_line)
+            line.delete(or15_ltf_low_line)
+            
+            ltf_high = array.max(ltf15.highs)
+            ltf_low = array.min(ltf15.lows)
+            
+            or15_ltf_high_line := line.new(ltf_start_x, ltf_high, ltf_end_x, ltf_high, 
+                 color=ltf_range_color_15m, style=get_style(ltf_range_style_15m), width=ltf_range_width_15m)
+            or15_ltf_low_line := line.new(ltf_start_x, ltf_low, ltf_end_x, ltf_low, 
+                 color=ltf_range_color_15m, style=get_style(ltf_range_style_15m), width=ltf_range_width_15m)
+    
+    // Extend lines during NY session
+    if or15_captured and not na(or15_top_line) and is_ny_session
+        or15_end_bar := bar_index
+        
+        if not na(or15_top_line)
+            line.set_x2(or15_top_line, bar_index)
+        if not na(or15_bot_line)
+            line.set_x2(or15_bot_line, bar_index)
+        if not na(or15_mid_line) and show_midLine_15m
+            line.set_x2(or15_mid_line, bar_index)
+        if not na(or15_ext_high) and show_extensions_15m
+            line.set_x2(or15_ext_high, bar_index)
+        if not na(or15_ext_low) and show_extensions_15m
+            line.set_x2(or15_ext_low, bar_index)
+        
+        // Update labels if Right position
+        if showL and pos == "Right"
+            if not na(or15_high_label)
+                label.set_x(or15_high_label, bar_index)
+            if not na(or15_low_label)
+                label.set_x(or15_low_label, bar_index)
+            if not na(or15_mid_label) and show_midLine_15m
+                label.set_x(or15_mid_label, bar_index)
+        
+        if show_extensions_15m and show_ext_labels_15m and pos == "Right"
+            if not na(or15_ext_high_label)
+                label.set_x(or15_ext_high_label, bar_index)
+            if not na(or15_ext_low_label)
+                label.set_x(or15_ext_low_label, bar_index)
+        
+        // Track breakouts (after 9:45 AM)
+        if not is_15m_session
+            if not or15_high_broken and high > or15_high
+                or15_high_broken := true
+            if not or15_low_broken and low < or15_low
+                or15_low_broken := true
+            
+            // Track when extension levels are reached
+            if show_extensions_15m
+                ext_high_price = or15_high * (1 + MEDIAN_EXT_15M_HIGH / 100)
+                ext_low_price = or15_low * (1 - MEDIAN_EXT_15M_LOW / 100)
+                
+                if not or15_ext_high_reached and high > ext_high_price
+                    or15_ext_high_reached := true
+                if not or15_ext_low_reached and low < ext_low_price
+                    or15_ext_low_reached := true
+
+//-------------------------------------------------------------------------------------------------
+// Statistics Table
+//-------------------------------------------------------------------------------------------------
+
+if show_stats_table and (or5_captured or or15_captured)
+    var table stats_table = na
+    table.delete(stats_table[1])
+    
+    table_pos = get_table_position(stats_table_pos)
+    table_size = get_table_text_size(stats_table_size)
+    
+    // Colors
+    header_bg = color.rgb(64, 64, 64)
+    header_text = color.white
+    cell_bg = color.white
+    cell_text = color.rgb(64, 64, 64)
+    pending_bg = color.rgb(255, 235, 59)  // Yellow
+    pending_text = color.rgb(64, 64, 64)
+    validated_bg = color.rgb(0, 150, 136)  // Teal
+    validated_text = color.white
+    
+    // Declare status variables used throughout the table
+    color status_bg = na
+    color status_text = na
+    string status_symbol = na
+    
+    stats_table := table.new(table_pos, 3, 35, border_width=1, border_color=color.rgb(64, 64, 64), bgcolor=cell_bg)
+    
+    // Check if session has ended (4:00 PM)
+    session_ended = is_ny_session_end or not is_ny_session
+    
+    row = 0
+    
+    // Header
+    table.cell(stats_table, 0, row, "━━━ ORB STATISTICS ━━━", bgcolor=header_bg, text_color=header_text, 
+         text_size=table_size, text_font_family=font.family_monospace)
+    table.merge_cells(stats_table, 0, row, 2, row)
+    row := row + 1
+    
+    // 5-MINUTE ORB STATS
+    if show_5min and or5_captured
+        is_bull_5m = or5_close >= or5_open
+        extreme_5m = or5_extreme_first
+        
+        table.cell(stats_table, 0, row, "━━━ 5-MIN ORB ━━━", bgcolor=header_bg, text_color=header_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+        
+        table.cell(stats_table, 0, row, "Direction", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        dir_text = is_bull_5m ? "Bullish" : "Bearish"
+        dir_color = is_bull_5m ? bullish_color_5m : bearish_color_5m
+        table.cell(stats_table, 1, row, dir_text, bgcolor=cell_bg, text_color=dir_color, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        table.cell(stats_table, 0, row, "Extreme First", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        extreme_text = extreme_5m == "high" ? "High First" : extreme_5m == "low" ? "Low First" : "Unknown"
+        table.cell(stats_table, 1, row, extreme_text, bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        // Extension Probability - FIXED VALIDATION
+        table.cell(stats_table, 0, row, "Extension ↑", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "84.9%", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        ext_up_validated = or5_ext_high_reached
+        status_bg := ext_up_validated ? validated_bg : pending_bg
+        status_text := ext_up_validated ? validated_text : pending_text
+        status_symbol := ext_up_validated ? "Validated" : "Pending"
+        table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        table.cell(stats_table, 0, row, "Extension ↓", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "81.0%", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        ext_down_validated = or5_ext_low_reached
+        status_bg := ext_down_validated ? validated_bg : pending_bg
+        status_text := ext_down_validated ? validated_text : pending_text
+        status_symbol := ext_down_validated ? "Validated" : "Pending"
+        table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        // Midpoint Retest Probability
+        if extreme_5m != "none"
+            retest_prob = 0.0
+            
+            if is_bull_5m and extreme_5m == "high"
+                retest_prob := 88.4
+            else if is_bull_5m and extreme_5m == "low"
+                retest_prob := 81.8
+            else if not is_bull_5m and extreme_5m == "high"
+                retest_prob := 82.7
+            else if not is_bull_5m and extreme_5m == "low"
+                retest_prob := 85.6
+            
+            table.cell(stats_table, 0, row, "Midpoint Retest", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, str.tostring(retest_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            status_bg := or5_mid_retested ? validated_bg : pending_bg
+            status_text := or5_mid_retested ? validated_text : pending_text
+            status_symbol := or5_mid_retested ? "Validated" : "Pending"
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // IB Direction Prediction
+        if extreme_5m != "none"
+            ib_prob = 0.0
+            ib_dir = ""
+            
+            if is_bull_5m and extreme_5m == "low"
+                ib_prob := 68.7
+                ib_dir := "Bullish"
+            else if is_bull_5m and extreme_5m == "high"
+                ib_prob := 61.6
+                ib_dir := "Bullish"
+            else if not is_bull_5m and extreme_5m == "high"
+                ib_prob := 64.8
+                ib_dir := "Bearish"
+            else if not is_bull_5m and extreme_5m == "low"
+                ib_prob := 58.6
+                ib_dir := "Bearish"
+            
+            table.cell(stats_table, 0, row, "IB Prediction", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, ib_dir + " " + str.tostring(ib_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            ib_prediction_correct = ib_captured and ((ib_dir == "Bullish" and ib_is_bullish) or (ib_dir == "Bearish" and not ib_is_bullish))
+            status_bg := ib_prediction_correct ? validated_bg : (ib_captured ? color.rgb(244, 67, 54) : pending_bg)
+            status_text := ib_prediction_correct ? validated_text : (ib_captured ? color.white : pending_text)
+            status_symbol := ib_prediction_correct ? "Validated" : (ib_captured ? "Invalid" : "Pending")
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // Predict next break - FIXED LOGIC
+        if extreme_5m != "none"
+            break_prob = 0.0
+            break_dir = ""
+            
+            if is_bull_5m and extreme_5m == "low"
+                break_prob := 79.9
+                break_dir := "High"
+            else if is_bull_5m and extreme_5m == "high"
+                break_prob := 33.7  // If high broke first in bullish ORB, 66.3% says high breaks again, so 33.7% for low
+                break_dir := "Low"
+            else if not is_bull_5m and extreme_5m == "high"
+                break_prob := 74.6
+                break_dir := "Low"
+            else if not is_bull_5m and extreme_5m == "low"
+                break_prob := 32.6  // If low broke first in bearish ORB, 67.4% says low breaks again, so 32.6% for high
+                break_dir := "High"
+            
+            table.cell(stats_table, 0, row, "Next Break", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, break_dir + " " + str.tostring(break_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            break_validated = (break_dir == "High" and or5_high_broken) or (break_dir == "Low" and or5_low_broken)
+            status_bg := break_validated ? validated_bg : pending_bg
+            status_text := break_validated ? validated_text : pending_text
+            status_symbol := break_validated ? "Validated" : "Pending"
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // Session close prediction
+        if or5_high_broken or or5_low_broken
+            close_prob = 0.0
+            close_dir = ""
+            
+            if is_bull_5m and or5_high_broken
+                close_prob := 67.1
+                close_dir := "Bullish"
+            else if is_bull_5m and or5_low_broken
+                close_prob := 53.2
+                close_dir := "Bullish"
+            else if not is_bull_5m and or5_high_broken
+                close_prob := 60.8
+                close_dir := "Bullish"
+            else if not is_bull_5m and or5_low_broken
+                close_prob := 60.5
+                close_dir := "Bearish"
+            
+            table.cell(stats_table, 0, row, "Session Close", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, close_dir + " " + str.tostring(close_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            status_bg := session_ended ? validated_bg : pending_bg
+            status_text := session_ended ? validated_text : pending_text
+            status_symbol := session_ended ? "Validated" : "Pending"
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // Separator
+        table.cell(stats_table, 0, row, "", bgcolor=cell_bg, text_color=cell_text, text_size=table_size)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+    
+    // 15-MINUTE ORB STATS
+    if show_15min and or15_captured
+        is_bull_15m = or15_close >= or15_open
+        extreme_15m = or15_extreme_first
+        
+        table.cell(stats_table, 0, row, "━━━ 15-MIN ORB ━━━", bgcolor=header_bg, text_color=header_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.merge_cells(stats_table, 0, row, 2, row)
+        row := row + 1
+        
+        table.cell(stats_table, 0, row, "Direction", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        dir_text = is_bull_15m ? "Bullish" : "Bearish"
+        dir_color = is_bull_15m ? bullish_color_15m : bearish_color_15m
+        table.cell(stats_table, 1, row, dir_text, bgcolor=cell_bg, text_color=dir_color, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        table.cell(stats_table, 0, row, "Extreme First", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        extreme_text = extreme_15m == "high" ? "High First" : extreme_15m == "low" ? "Low First" : "Unknown"
+        table.cell(stats_table, 1, row, extreme_text, bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 2, row, "", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        // Extension Probability - FIXED VALIDATION
+        table.cell(stats_table, 0, row, "Extension ↑", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "77.2%", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        ext_up_validated = or15_ext_high_reached
+        status_bg := ext_up_validated ? validated_bg : pending_bg
+        status_text := ext_up_validated ? validated_text : pending_text
+        status_symbol := ext_up_validated ? "Validated" : "Pending"
+        table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        table.cell(stats_table, 0, row, "Extension ↓", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        table.cell(stats_table, 1, row, "73.5%", bgcolor=cell_bg, text_color=cell_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        ext_down_validated = or15_ext_low_reached
+        status_bg := ext_down_validated ? validated_bg : pending_bg
+        status_text := ext_down_validated ? validated_text : pending_text
+        status_symbol := ext_down_validated ? "Validated" : "Pending"
+        table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+             text_size=table_size, text_font_family=font.family_monospace)
+        row := row + 1
+        
+        // Midpoint Retest Probability
+        if extreme_15m != "none"
+            retest_prob = 0.0
+            
+            if is_bull_15m and extreme_15m == "high"
+                retest_prob := 80.8
+            else if is_bull_15m and extreme_15m == "low"
+                retest_prob := 71.4
+            else if not is_bull_15m and extreme_15m == "high"
+                retest_prob := 72.8
+            else if not is_bull_15m and extreme_15m == "low"
+                retest_prob := 83.8
+            
+            table.cell(stats_table, 0, row, "Midpoint Retest", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, str.tostring(retest_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            status_bg := or15_mid_retested ? validated_bg : pending_bg
+            status_text := or15_mid_retested ? validated_text : pending_text
+            status_symbol := or15_mid_retested ? "Validated" : "Pending"
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // IB Direction Prediction
+        if extreme_15m != "none"
+            ib_prob = 0.0
+            ib_dir = ""
+            
+            if is_bull_15m and extreme_15m == "low"
+                ib_prob := 74.0
+                ib_dir := "Bullish"
+            else if is_bull_15m and extreme_15m == "high"
+                ib_prob := 59.6
+                ib_dir := "Bullish"
+            else if not is_bull_15m and extreme_15m == "high"
+                ib_prob := 73.2
+                ib_dir := "Bearish"
+            else if not is_bull_15m and extreme_15m == "low"
+                ib_prob := 50.3
+                ib_dir := "Bearish"
+            
+            table.cell(stats_table, 0, row, "IB Prediction", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, ib_dir + " " + str.tostring(ib_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            ib_prediction_correct = ib_captured and ((ib_dir == "Bullish" and ib_is_bullish) or (ib_dir == "Bearish" and not ib_is_bullish))
+            status_bg := ib_prediction_correct ? validated_bg : (ib_captured ? color.rgb(244, 67, 54) : pending_bg)
+            status_text := ib_prediction_correct ? validated_text : (ib_captured ? color.white : pending_text)
+            status_symbol := ib_prediction_correct ? "Validated" : (ib_captured ? "Invalid" : "Pending")
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // Predict next break - FIXED LOGIC
+        if extreme_15m != "none"
+            break_prob = 0.0
+            break_dir = ""
+            
+            if is_bull_15m and extreme_15m == "low"
+                break_prob := 75.3
+                break_dir := "High"
+            else if is_bull_15m and extreme_15m == "high"
+                break_prob := 40.4  // If high broke first in bullish ORB, 59.6% says high breaks again, so 40.4% for low
+                break_dir := "Low"
+            else if not is_bull_15m and extreme_15m == "high"
+                break_prob := 74.4
+                break_dir := "Low"
+            else if not is_bull_15m and extreme_15m == "low"
+                break_prob := 38.2  // If low broke first in bearish ORB, 61.8% says low breaks again, so 38.2% for high
+                break_dir := "High"
+            
+            table.cell(stats_table, 0, row, "Next Break", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, break_dir + " " + str.tostring(break_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            break_validated = (break_dir == "High" and or15_high_broken) or (break_dir == "Low" and or15_low_broken)
+            status_bg := break_validated ? validated_bg : pending_bg
+            status_text := break_validated ? validated_text : pending_text
+            status_symbol := break_validated ? "Validated" : "Pending"
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
+        
+        // Session close prediction
+        if or15_high_broken or or15_low_broken
+            close_prob = 0.0
+            close_dir = ""
+            
+            if is_bull_15m and or15_high_broken
+                close_prob := 74.3
+                close_dir := "Bullish"
+            else if is_bull_15m and or15_low_broken
+                close_prob := 49.7
+                close_dir := "Bullish"
+            else if not is_bull_15m and or15_high_broken
+                close_prob := 57.0
+                close_dir := "Bullish"
+            else if not is_bull_15m and or15_low_broken
+                close_prob := 66.0
+                close_dir := "Bearish"
+            
+            table.cell(stats_table, 0, row, "Session Close", bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            table.cell(stats_table, 1, row, close_dir + " " + str.tostring(close_prob, "#.#") + "%", 
+                 bgcolor=cell_bg, text_color=cell_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            status_bg := session_ended ? validated_bg : pending_bg
+            status_text := session_ended ? validated_text : pending_text
+            status_symbol := session_ended ? "Validated" : "Pending"
+            table.cell(stats_table, 2, row, status_symbol, bgcolor=status_bg, text_color=status_text, 
+                 text_size=table_size, text_font_family=font.family_monospace)
+            row := row + 1
